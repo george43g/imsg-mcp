@@ -4,6 +4,9 @@
  */
 
 import { IMessageDatabase, type ChatRow, type MessageRow } from 'imessage-parser';
+import Database from 'better-sqlite3';
+import { homedir } from 'os';
+import { join } from 'path';
 import type { Message, Conversation } from './types.js';
 
 // macOS epoch offset (seconds between 1970-01-01 and 2001-01-01)
@@ -24,9 +27,13 @@ function macTimestampToDate(timestamp: number | null): Date | null {
  */
 export class IMessageDB {
   private db: IMessageDatabase;
+  private raw: Database.Database;
+  private dbPath: string;
 
   constructor(dbPath?: string) {
-    this.db = new IMessageDatabase(dbPath);
+    this.dbPath = dbPath || join(homedir(), 'Library', 'Messages', 'chat.db');
+    this.db = new IMessageDatabase(this.dbPath);
+    this.raw = new Database(this.dbPath, { readonly: true });
   }
 
   /**
@@ -45,8 +52,9 @@ export class IMessageDB {
         );
         
         for (const msg of messages) {
+          const enriched = this.fetchFlagsForMessage(msg.ROWID);
           const parsed = this.db.parseMessage(msg);
-          allMessages.push(this.convertMessage(msg, parsed.text, chat.chat_identifier));
+          allMessages.push(this.convertMessage({ ...msg, ...enriched }, parsed.text, chat.chat_identifier));
         }
       } catch {
         // Skip chats that fail to load
@@ -69,8 +77,9 @@ export class IMessageDB {
     const messages = await this.db.getMessagesFromChat(chat.ROWID, limit);
     
     return messages.map(msg => {
+      const enriched = this.fetchFlagsForMessage(msg.ROWID);
       const parsed = this.db.parseMessage(msg);
-      return this.convertMessage(msg, parsed.text, chatIdentifier);
+      return this.convertMessage({ ...msg, ...enriched }, parsed.text, chatIdentifier);
     });
   }
 
@@ -79,9 +88,42 @@ export class IMessageDB {
    * Note: imessage-parser doesn't expose is_read, so this returns recent incoming messages
    */
   async getUnreadMessages(): Promise<Message[]> {
-    const messages = await this.getRecentMessages(100);
-    // Filter to incoming messages only since we can't check read status
-    return messages.filter(m => !m.isFromMe);
+    // Query unread incoming directly via raw DB for accuracy
+    const stmt = this.raw.prepare(`
+      SELECT 
+        m.ROWID as rowid,
+        m.is_from_me,
+        m.is_read,
+        m.date_read,
+        h.id as handle_id,
+        c.chat_identifier
+      FROM message m
+      LEFT JOIN handle h ON m.handle_id = h.ROWID
+      LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+      LEFT JOIN chat c ON cmj.chat_id = c.ROWID
+      WHERE m.is_from_me = 0 AND m.is_read = 0
+      ORDER BY m.date DESC
+      LIMIT 100
+    `);
+
+    const flags = stmt.all() as any[];
+
+    // Fetch messages with parser and merge
+    const result: Message[] = [];
+    for (const f of flags) {
+      if (!f.chat_identifier) continue;
+      // Get full message row via parser API by chat
+      // We don't have a direct getMessageByRowId, so approximate by fetching recent for chat
+      const chat = await this.findChatByIdentifier(f.chat_identifier);
+      if (!chat) continue;
+      const msgs = await this.db.getMessagesFromChat(chat.ROWID, 50);
+      const match = msgs.find(m => m.ROWID === f.rowid);
+      if (!match) continue;
+      const parsed = this.db.parseMessage(match);
+      result.push(this.convertMessage({ ...match, ...f }, parsed.text, chat.chat_identifier));
+    }
+
+    return result;
   }
 
   /**
@@ -182,16 +224,33 @@ export class IMessageDB {
   /**
    * Convert imessage-parser message to our Message type
    */
-  private convertMessage(raw: MessageRow, text: string | null, chatId: string): Message {
+  private convertMessage(raw: MessageRow & { is_read?: number; date_read?: number; handle_id?: string | null }, text: string | null, chatId: string): Message {
+    // Clean up text - handle object replacement characters and other special chars
+    let cleanText = text || raw.text || null;
+    if (cleanText) {
+      // U+FFFC is Object Replacement Character (inline attachment placeholder)
+      // U+FFFD is Replacement Character (invalid UTF-8)
+      // Replace consecutive attachment placeholders with a single marker
+      cleanText = cleanText
+        .replace(/\uFFFC+/g, '📎 ')  // Use paperclip emoji for inline attachments
+        .replace(/\uFFFD/g, '')
+        .trim();
+      
+      // If only attachment markers remain, indicate it's an attachment-only message
+      if (!cleanText || cleanText === '📎' || /^(📎\s*)+$/.test(cleanText)) {
+        cleanText = '(image/attachment)';
+      }
+    }
+    
     return {
       id: raw.ROWID,
       guid: raw.guid,
-      text: text || raw.text || null,
-      handle: raw.handle_id || 'unknown',
+      text: cleanText,
+      handle: raw.is_from_me ? 'me' : (raw.handle_id || 'unknown'),
       isFromMe: Boolean(raw.is_from_me),
       date: macTimestampToDate(raw.date) || new Date(0),
-      dateRead: null, // Not exposed by imessage-parser
-      isRead: true,   // Assume read since we can't check
+      dateRead: macTimestampToDate((raw as any).date_read ?? null),
+      isRead: (raw as any).is_read != null ? Boolean((raw as any).is_read) : true,
       chatId: chatId,
       service: 'iMessage', // Default to iMessage
     };
@@ -202,5 +261,20 @@ export class IMessageDB {
    */
   async close(): Promise<void> {
     await this.db.close();
+    this.raw.close();
+  }
+
+  /**
+   * Fetch message flags for a given rowid using raw DB (is_read, date_read, handle_id)
+   */
+  private fetchFlagsForMessage(rowid: number): { is_read?: number; date_read?: number; handle_id?: string | null } {
+    const stmt = this.raw.prepare(`
+      SELECT m.is_read, m.date_read, h.id as handle_id
+      FROM message m
+      LEFT JOIN handle h ON m.handle_id = h.ROWID
+      WHERE m.ROWID = ?
+      LIMIT 1
+    `);
+    return stmt.get(rowid) as any || {};
   }
 }
