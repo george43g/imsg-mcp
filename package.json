@@ -1,0 +1,46 @@
+{
+  "name": "imsg-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for iMessage on macOS - enables AI agents to send/receive messages",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "imsg-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "prepare": "pnpm build"
+  },
+  "keywords": [
+    "mcp",
+    "imessage",
+    "sms",
+    "macos",
+    "ai-agent",
+    "applescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "imessage-parser": "^0.1.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
