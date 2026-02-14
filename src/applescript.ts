@@ -1,28 +1,35 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { SendMessageResult } from './types.js';
+import { setLastSendError } from './logger.js';
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Execute AppleScript code via osascript
+ * Execute AppleScript code via osascript.
+ * On failure, captures stderr/stdout/code for get_last_send_error.
  */
-async function runAppleScript(script: string): Promise<string> {
+async function runAppleScript(script: string, captureErrorForSend: boolean = false): Promise<string> {
   try {
     const { stdout, stderr } = await execFileAsync('osascript', ['-e', script], {
       timeout: 30000, // 30 second timeout
     });
-    
     if (stderr && stderr.trim()) {
       console.error('[osascript] stderr:', stderr);
     }
-    
     return stdout.trim();
   } catch (error: any) {
+    if (captureErrorForSend) {
+      setLastSendError({
+        message: error.message || String(error),
+        stderr: error.stderr ?? undefined,
+        stdout: error.stdout ?? undefined,
+        code: error.code ?? undefined,
+      });
+    }
     if (error.code === 'ENOENT') {
       throw new Error('osascript not found. This tool requires macOS.');
     }
-    // osascript returns exit code 1 on script errors
     if (error.stderr) {
       throw new Error(`AppleScript error: ${error.stderr}`);
     }
@@ -63,13 +70,9 @@ export async function sendMessage(
       send "${escapedMessage}" to targetBuddy
     end tell
   `;
-  
   try {
-    await runAppleScript(script);
-    return {
-      success: true,
-      timestamp: new Date(),
-    };
+    await runAppleScript(script, true);
+    return { success: true, timestamp: new Date() };
   } catch (error: any) {
     return {
       success: false,
@@ -96,13 +99,9 @@ export async function sendMessageAlt(
   `;
   
   try {
-    await runAppleScript(script);
-    return {
-      success: true,
-      timestamp: new Date(),
-    };
+    await runAppleScript(script, true);
+    return { success: true, timestamp: new Date() };
   } catch (error: any) {
-    // Try SMS relay as fallback
     return sendSMS(recipient, message);
   }
 }
@@ -126,11 +125,8 @@ export async function sendSMS(
   `;
   
   try {
-    await runAppleScript(script);
-    return {
-      success: true,
-      timestamp: new Date(),
-    };
+    await runAppleScript(script, true);
+    return { success: true, timestamp: new Date() };
   } catch (error: any) {
     return {
       success: false,
