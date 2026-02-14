@@ -1,4 +1,45 @@
 /**
+ * Tapback reaction types
+ * 2000-2005: Add reaction, 3000-3005: Remove reaction
+ */
+export type TapbackType = 
+  | 'love' | 'like' | 'dislike' | 'laugh' | 'emphasize' | 'question'
+  | 'emoji'  // iOS 18+ custom emoji
+  | 'sticker'
+  | 'unknown';
+
+/**
+ * Represents a tapback reaction on a message
+ */
+export interface Reaction {
+  type: TapbackType;
+  emoji?: string;  // For custom emoji reactions (iOS 18+)
+  fromHandle: string;
+  isRemoval: boolean;  // true if this removes a previous reaction
+  targetMessageGuid: string;
+  targetMessagePart: number;  // Which part of a multi-part message
+}
+
+/**
+ * Represents a reply context
+ */
+export interface ReplyContext {
+  replyToGuid: string;
+  replyToText?: string | null;  // The text of the message being replied to
+}
+
+/**
+ * Rich message content types
+ */
+export type RichContentType = 
+  | 'link_preview'
+  | 'location'
+  | 'digital_touch'
+  | 'handwriting'
+  | 'app_message'
+  | 'unknown';
+
+/**
  * Represents a message from the iMessage database
  */
 export interface Message {
@@ -12,6 +53,38 @@ export interface Message {
   isRead: boolean;
   chatId: string;
   service: 'iMessage' | 'SMS';
+  
+  // Reaction info (if this message is a tapback)
+  isReaction: boolean;
+  reaction?: Reaction;
+  
+  // Reply context (if this message is a reply to another)
+  isReply: boolean;
+  replyTo?: ReplyContext;
+  
+  // Reactions received on this message
+  reactions?: Reaction[];
+  
+  // Rich content
+  richContentType?: RichContentType;
+  
+  // Edit/retract status (iOS 16+)
+  isEdited: boolean;
+  isRetracted: boolean;
+  
+  // Attachments
+  hasAttachments: boolean;
+  attachments?: Attachment[];
+}
+
+/**
+ * Represents an attachment
+ */
+export interface Attachment {
+  filename: string;
+  mimeType: string | null;
+  transferName: string | null;
+  totalBytes: number;
 }
 
 /**

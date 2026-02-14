@@ -4,6 +4,7 @@
  * Enables AI agents to send and receive iMessages on macOS
  */
 
+import { execSync } from 'child_process';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -12,8 +13,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { IMessageDB } from './imessage-db.js';
-import { sendMessage, sendMessageAlt, checkMessagesAvailable } from './applescript.js';
-import type { Message, WaitForReplyResult } from './types.js';
+import { sendMessageAlt, checkMessagesAvailable } from './applescript.js';
+import { appendLog, getLogs, getLastSendError } from './logger.js';
+import type { Message } from './types.js';
 
 // Tool input schemas
 const GetMessagesSchema = z.object({
@@ -43,6 +45,13 @@ const SearchMessagesSchema = z.object({
   query: z.string().describe('Search query'),
   limit: z.number().min(1).max(50).default(20).describe('Number of results'),
 });
+
+const GetLogsSchema = z.object({
+  tail: z.number().min(1).max(500).optional().describe('Return only last N lines (default: all)'),
+});
+
+const RunBuildSchema = z.object({});
+const RequestRestartSchema = z.object({});
 
 // Tool definitions
 const TOOLS = [
@@ -113,6 +122,31 @@ const TOOLS = [
       required: ['query'],
     },
   },
+  {
+    name: 'get_logs',
+    description: 'Return in-memory debug log lines from this MCP server (errors and send failures are appended). Use to inspect why send_message failed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tail: { type: 'number', description: 'Return only last N lines (default: all)' },
+      },
+    },
+  },
+  {
+    name: 'get_last_send_error',
+    description: 'Return the last send_message/send failure details (stderr, stdout, code from osascript). Use to debug why texting failed.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'run_build',
+    description: 'Run `pnpm build` in the project directory and return stdout/stderr. Restart the MCP server after building to load new code.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'request_restart',
+    description: 'Exit the MCP server process so the client can restart it and load new code. Call after run_build to apply changes.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];
 
 /**
@@ -180,10 +214,19 @@ class IMessageMCPServer {
             return await this.handleListConversations(args);
           case 'search_messages':
             return await this.handleSearchMessages(args);
+          case 'get_logs':
+            return await this.handleGetLogs(args);
+          case 'get_last_send_error':
+            return await this.handleGetLastSendError();
+          case 'run_build':
+            return await this.handleRunBuild();
+          case 'request_restart':
+            return await this.handleRequestRestart();
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error: any) {
+        appendLog('error', 'Tool error', { tool: name, error: error.message || String(error) });
         return {
           content: [
             {
@@ -195,6 +238,54 @@ class IMessageMCPServer {
         };
       }
     });
+  }
+
+  private async handleGetLogs(args: unknown) {
+    const { tail } = GetLogsSchema.parse(args ?? {});
+    const lines = getLogs(tail);
+    const text = lines.length === 0 ? 'No log lines yet.' : lines.join('\n');
+    return { content: [{ type: 'text', text }] };
+  }
+
+  private async handleGetLastSendError() {
+    const err = getLastSendError();
+    if (!err) {
+      return { content: [{ type: 'text', text: 'No send failure recorded. Last send either succeeded or occurred before this server run.' }] };
+    }
+    const text = [
+      'Last send_message failure:',
+      `  message: ${err.message}`,
+      `  timestamp: ${err.timestamp}`,
+      err.stderr != null ? `  stderr: ${err.stderr}` : '',
+      err.stdout != null ? `  stdout: ${err.stdout}` : '',
+      err.code != null ? `  code: ${err.code}` : '',
+    ].filter(Boolean).join('\n');
+    return { content: [{ type: 'text', text }] };
+  }
+
+  private async handleRunBuild(): Promise<any> {
+    try {
+      const out = execSync('pnpm build', {
+        encoding: 'utf-8',
+        maxBuffer: 2 * 1024 * 1024,
+        cwd: process.cwd(),
+      });
+      return { content: [{ type: 'text', text: `Build succeeded.\n\nstdout:\n${out}` }] };
+    } catch (error: any) {
+      const stderr = error.stderr?.toString?.() ?? error.message ?? '';
+      const stdout = error.stdout?.toString?.() ?? '';
+      appendLog('error', 'run_build failed', { stderr, stdout });
+      return {
+        content: [{ type: 'text', text: `Build failed.\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}` }],
+        isError: true,
+      };
+    }
+  }
+
+  private async handleRequestRestart(): Promise<any> {
+    const msg = 'Restart requested. Please restart the MCP server in your client (e.g. Cursor) to load new code.';
+    setImmediate(() => process.exit(0));
+    return { content: [{ type: 'text', text: msg }] };
   }
 
   private async handleGetMessages(args: unknown) {
@@ -283,11 +374,12 @@ class IMessageMCPServer {
         ],
       };
     } else {
+      appendLog('error', 'send_message failed', { recipient, error: result.error });
       return {
         content: [
           {
             type: 'text',
-            text: `Failed to send message: ${result.error}`,
+            text: `Failed to send message: ${result.error}. Use get_last_send_error to see osascript stderr/stdout.`,
           },
         ],
         isError: true,
@@ -408,6 +500,7 @@ class IMessageMCPServer {
   async run(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
+    appendLog('info', 'iMessage MCP Server running on stdio');
     console.error('iMessage MCP Server running on stdio');
   }
 }
