@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "prepare": "pnpm build"
+    "prepare": "pnpm build",
+    "rebuild": "pnpm rebuild better-sqlite3"
   },
   "keywords": [
     "mcp",
@@ -44,5 +45,8 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "volta": {
+    "node": "24.13.0"
   }
 }
