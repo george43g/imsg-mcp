@@ -214,19 +214,66 @@ export class IMessageDB {
   }
 
   /**
-   * List all conversations with metadata
+   * List all conversations with metadata, sorted by last message date (newest first).
+   * Populates lastMessageDate, lastMessageSnippet, and unreadCount to match Messages.app left pane.
    */
   async listConversations(): Promise<Conversation[]> {
     const chats = await this.db.getChats();
-    
-    return chats.map(chat => ({
-      chatId: chat.guid,
-      chatIdentifier: chat.chat_identifier,
-      displayName: chat.display_name || null,
-      participants: [chat.chat_identifier], // Single participant for 1:1 chats
-      lastMessageDate: null, // Would need additional query
-      unreadCount: 0,
-    }));
+
+    // Last message per chat (date, snippet from text column; attributedBody-only messages may have empty snippet)
+    const lastMsgStmt = this.raw.prepare(`
+      SELECT chat_id, last_date, last_message_id, snippet FROM (
+        SELECT cmj.chat_id, m.date as last_date, m.ROWID as last_message_id,
+          COALESCE(TRIM(SUBSTR(m.text, 1, 200)), '') as snippet,
+          ROW_NUMBER() OVER (PARTITION BY cmj.chat_id ORDER BY m.date DESC) as rn
+        FROM ${Tables.MESSAGE} m
+        JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+        WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
+      ) WHERE rn = 1
+    `);
+    const lastByChat = (lastMsgStmt.all() as { chat_id: number; last_date: number; last_message_id: number; snippet: string }[])
+      .reduce((acc, row) => {
+        acc[row.chat_id] = {
+          lastDate: row.last_date,
+          snippet: row.snippet || null,
+        };
+        return acc;
+      }, {} as Record<number, { lastDate: number; snippet: string | null }>);
+
+    // Unread count per chat (incoming, not read, normal messages only)
+    const unreadStmt = this.raw.prepare(`
+      SELECT cmj.chat_id, COUNT(*) as unread
+      FROM ${Tables.MESSAGE} m
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND m.is_from_me = 0 AND m.is_read = 0
+      GROUP BY cmj.chat_id
+    `);
+    const unreadByChat = (unreadStmt.all() as { chat_id: number; unread: number }[])
+      .reduce((acc, row) => { acc[row.chat_id] = row.unread; return acc; }, {} as Record<number, number>);
+
+    const result: Conversation[] = chats.map(chat => {
+      const last = lastByChat[chat.ROWID];
+      const lastDate = last ? macTimestampToDate(last.lastDate) : null;
+      const snippet = last?.snippet ?? null;
+      return {
+        chatId: chat.guid,
+        chatIdentifier: chat.chat_identifier,
+        displayName: chat.display_name || null,
+        participants: [chat.chat_identifier],
+        lastMessageDate: lastDate,
+        lastMessageSnippet: snippet && snippet.length > 0 ? snippet : null,
+        unreadCount: unreadByChat[chat.ROWID] ?? 0,
+      };
+    });
+
+    // Sort by last message date descending (newest first), then by chat
+    result.sort((a, b) => {
+      const aTime = a.lastMessageDate?.getTime() ?? 0;
+      const bTime = b.lastMessageDate?.getTime() ?? 0;
+      return bTime - aTime;
+    });
+    return result;
   }
 
   /**
@@ -251,6 +298,7 @@ export class IMessageDB {
       displayName: found.display_name || null,
       participants: [found.chat_identifier],
       lastMessageDate: null,
+      lastMessageSnippet: null,
       unreadCount: 0,
     };
   }

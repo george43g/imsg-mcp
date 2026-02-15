@@ -96,6 +96,8 @@ export interface Conversation {
   displayName: string | null;
   participants: string[];
   lastMessageDate: Date | null;
+  /** Last message text preview (may be empty if stored in attributedBody only). */
+  lastMessageSnippet: string | null;
   unreadCount: number;
 }
 
