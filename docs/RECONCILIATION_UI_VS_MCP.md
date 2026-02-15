@@ -7,12 +7,12 @@ This document maps the macOS Messages.app UI (screenshot reference) to the data 
 | UI Element | MCP / DB Source | Notes |
 |------------|-----------------|--------|
 | **Contact/group row** | `chat` table: `chat_identifier`, `display_name` | UI shows `display_name` when set (e.g. "Alice Example", "George Example"); otherwise formatted phone (e.g. "+1 555 555 0101"). MCP `list_conversations` returns `chatIdentifier`, `displayName`. |
-| **Last message snippet** | Last message in that chat (`message.text` or parsed `attributedBody`) | Messages.app shows a short preview. MCP `list_conversations` currently does **not** return last message text or date; `lastMessageDate` is null in the implementation. To reconcile fully, add a query for last message per chat. |
-| **Timestamp (e.g. "8:00 AM", "Yesterday")** | `message.date` (Mac epoch) for the last message in the chat | Same as above; we’d derive this when adding last-message info to `list_conversations`. |
-| **Ordering** | By last message time descending | UI sorts by most recent activity. MCP `list_conversations` returns chats in whatever order `imessage-parser`’s `getChats()` returns; ordering may differ from UI if not explicitly sorted by last message date. |
-| **Unread indicator** | `message.is_read = 0` for incoming, aggregated per chat | UI can show a dot/badge. MCP returns `unreadCount` (currently 0); implementation could aggregate unread from `message` + `chat_message_join`. |
+| **Last message snippet** | Last message in that chat (`message.text` or parsed `attributedBody`) | Messages.app shows a short preview. MCP `list_conversations` now returns `lastMessageSnippet` from `message.text`; this can be empty/null when content exists only in `attributedBody`. |
+| **Timestamp (e.g. "8:00 AM", "Yesterday")** | `message.date` (Mac epoch) for the last message in the chat | MCP `list_conversations` now returns `lastMessageDate`; client formatting (“Today”, “Yesterday”, etc.) is display logic. |
+| **Ordering** | By last message time descending | MCP `list_conversations` now sorts by last message date descending to match UI ordering. |
+| **Unread indicator** | `message.is_read = 0` for incoming, aggregated per chat | MCP now returns aggregated `unreadCount` per chat (incoming unread, normal messages). |
 
-**Reconciliation gap:** `list_conversations` does not yet populate `lastMessageDate` or last-message snippet. The left pane is fully reproducible only after adding per-chat “last message” query and sorting by that date.
+**Reconciliation (implemented):** `list_conversations` now populates `lastMessageDate`, `lastMessageSnippet` (from `message.text`; may be empty when content is in `attributedBody` only), and `unreadCount`, and sorts by last message date descending to match the left pane.
 
 ---
 
@@ -52,10 +52,10 @@ This document maps the macOS Messages.app UI (screenshot reference) to the data 
 
 | Area | Aligned | Gap / Action |
 |------|---------|----------------|
-| Left pane: display name, chat list | Yes (chat_id, display_name) | Add last message date + snippet and sort by last message for full parity. |
+| Left pane: display name, chat list | Yes (chat_id, display_name) | `lastMessageDate`, `lastMessageSnippet` (text-column based), and sort-by-last-message are implemented. |
 | Right pane: messages, order, sent/received, read status | Yes | Match by chat_identifier; display name → identifier may need contact/lookup. |
 | Reactions | Yes (DB + optional MCP) | Default behavior hides reaction rows; use options to include when needed. |
 | Timestamps | Yes (Mac epoch → Date) | “Today”/“Yesterday” is display logic, not in MCP. |
 | +15555550100 | N/A | Not visible in screenshot; MCP can still target it by number. |
 
-This reconciliation is based on the current imessage MCP implementation and `docs/IMESSAGE_DB_SCHEMA.md`. Implement “last message per chat” and optional “sort by last message” in `list_conversations` to fully mirror the left pane.
+This reconciliation is based on the current imessage MCP implementation and `docs/IMESSAGE_DB_SCHEMA.md`. Remaining UI differences are mainly presentation-layer details (display labels like “Today/Yesterday” and snippet quality when text is only present in `attributedBody`).

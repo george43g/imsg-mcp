@@ -460,9 +460,10 @@ class IMessageMCPServer {
     const formatted = limited.map(conv => {
       const name = conv.displayName || conv.chatIdentifier;
       const participants = conv.participants.length > 0 ? ` (${conv.participants.join(', ')})` : '';
-      const lastDate = conv.lastMessageDate ? ` - Last: ${conv.lastMessageDate.toLocaleDateString()}` : '';
+      const lastDate = conv.lastMessageDate ? ` - Last: ${conv.lastMessageDate.toLocaleString()}` : '';
+      const snippet = conv.lastMessageSnippet ? ` - "${conv.lastMessageSnippet.length > 50 ? conv.lastMessageSnippet.slice(0, 47) + '...' : conv.lastMessageSnippet}"` : '';
       const unread = conv.unreadCount > 0 ? ` [${conv.unreadCount} unread]` : '';
-      return `• ${name}${participants}${lastDate}${unread}`;
+      return `• ${name}${participants}${lastDate}${snippet}${unread}`;
     }).join('\n');
 
     return {
