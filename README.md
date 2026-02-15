@@ -166,6 +166,35 @@ AI Agent: "Got it! Proceeding with PostgreSQL..."
 
 ## Troubleshooting
 
+### "better_sqlite3.node was compiled against a different Node.js version" (ERR_DLOPEN_FAILED)
+
+The native module `better-sqlite3` was built for a different Node version than the one running the server. Fix it by rebuilding with the **same** Node you use to run the app:
+
+```bash
+# Use the same Node that will run the server (e.g. switch with nvm if needed)
+node -p "process.versions.modules"   # note the MODULE_VERSION
+pnpm rebuild better-sqlite3
+```
+
+If you use multiple Node versions (e.g. nvm, fnm), run `pnpm rebuild` with that Node active. Then run `pnpm debug` or `pnpm start` from the same environment so the same `node` is used.
+
+If your repo uses `pnpm-workspace.yaml`, ensure sqlite native builds are allowed:
+
+```yaml
+ignoredBuiltDependencies:
+  - esbuild
+onlyBuiltDependencies:
+  - better-sqlite3
+  - sqlite3
+```
+
+Then reinstall/rebuild:
+
+```bash
+pnpm install
+pnpm rebuild sqlite3
+```
+
 ### "Operation not permitted" error
 
 This means Full Disk Access hasn't been granted. See the Permissions Setup section above.
@@ -206,6 +235,29 @@ pnpm typecheck
 # Lint
 pnpm lint
 ```
+
+### Debug console (interactive)
+
+Run a **user-friendly REPL** to send messages, fetch messages, list conversations, and call any MCP tool with clear prompts and readable output:
+
+```bash
+pnpm build   # build first (server runs from dist/index.js)
+pnpm debug   # starts REPL + MCP server
+```
+
+On start you’ll see a short **help** with all commands. Example commands:
+
+- `send +15555550100 "Hello"` — send an iMessage/SMS
+- `messages` or `messages +15555550100 10` — get recent messages
+- `unread` — get all unread messages
+- `conversations 20` — list chats with last message snippet
+- `search "meeting"` — search message text
+- `wait +15555550100 120` — wait for a reply (120s)
+- `tools` — list available MCP tools
+- `help` — show usage again
+- `quit` — exit
+
+Server stderr (e.g. from the MCP server process) is shown with a `[server]` prefix.
 
 ## License
 
