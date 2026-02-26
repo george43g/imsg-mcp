@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "imessage": {
+      "command": "/Users/george/.volta/bin/node",
+      "args": ["/Users/george/repos/imsg-mcp/dist/index.js"]
+    }
+  }
+}
