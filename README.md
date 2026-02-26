@@ -10,6 +10,9 @@ MCP (Model Context Protocol) server for iMessage on macOS. Enables AI agents to 
 - **Wait for Reply** - Poll for new messages with configurable timeout (ideal for AI agents waiting for human responses)
 - **List Conversations** - View all your conversations with metadata
 - **Search Messages** - Search through your message history
+- **Contact Integration** - Automatically resolves phone numbers/emails to contact display names
+- **Rich Content Detection** - Identifies and parses link previews, location shares, and other rich message content
+- **Delivery & Read Receipts** - Shows message delivery and read status with timestamps
 
 ## Requirements
 
@@ -36,13 +39,15 @@ pnpm build
 
 ### 1. Full Disk Access (Required for reading messages)
 
-The iMessage database is stored at `~/Library/Messages/chat.db` and requires Full Disk Access to read:
+The iMessage database is stored at `~/Library/Messages/chat.db` and the Contacts database at `~/Library/Application Support/AddressBook/AddressBook-v22.abcddb`. Full Disk Access is required to read both:
 
 1. Open **System Preferences** > **Security & Privacy** > **Privacy** > **Full Disk Access**
 2. Click the lock icon to make changes
 3. Click **+** and add your terminal app (Terminal, iTerm2, Warp, etc.)
 4. Also add any IDEs that will run this server (VS Code, Cursor, etc.)
 5. **Restart the application** after granting access
+
+**Note**: The server will work without Contacts access but will show raw phone numbers/emails instead of contact names.
 
 ### 2. Automation Permission (Required for sending messages)
 

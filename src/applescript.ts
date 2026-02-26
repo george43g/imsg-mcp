@@ -136,6 +136,56 @@ export async function sendSMS(
 }
 
 /**
+ * Send a message to a named group chat.
+ * The group must have a display name set in Messages.app.
+ */
+export async function sendToChat(
+  chatName: string,
+  message: string
+): Promise<SendMessageResult> {
+  const escapedName = appleScriptEscape(chatName);
+  const escapedMessage = appleScriptEscape(message);
+
+  const script = `
+    tell application "Messages"
+      send "${escapedMessage}" to chat "${escapedName}"
+    end tell
+  `;
+
+  try {
+    await runAppleScript(script, true);
+    return { success: true, timestamp: new Date() };
+  } catch (error: any) {
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
+ * Send a message to a chat by its internal text chat ID (guid from chat.db).
+ * Fragile across macOS versions but works as a fallback for unnamed groups.
+ */
+export async function sendToChatId(
+  chatId: string,
+  message: string
+): Promise<SendMessageResult> {
+  const escapedId = appleScriptEscape(chatId);
+  const escapedMessage = appleScriptEscape(message);
+
+  const script = `
+    tell application "Messages"
+      send "${escapedMessage}" to text chat id "${escapedId}"
+    end tell
+  `;
+
+  try {
+    await runAppleScript(script, true);
+    return { success: true, timestamp: new Date() };
+  } catch (error: any) {
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
  * Check if Messages.app is available and accessible
  */
 export async function checkMessagesAvailable(): Promise<boolean> {

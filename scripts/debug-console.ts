@@ -23,23 +23,33 @@ const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const HELP = `
 ${cyan("imsg-mcp debug console")} — send and receive messages, call tools
 
-  ${green("send")} <recipient> <message>     Send iMessage/SMS (e.g. send +15555550100 "Hello")
-  ${green("messages")} [chat] [limit]        Get recent messages (optional chat, default limit 20)
-  ${green("unread")}                         Get all unread messages
-  ${green("conversations")} [limit]          List chats with last message snippet (default 20)
+  ${green("send")} <slug|phone> <message>    Send to thread slug or phone/email
+  ${green("messages")} [slug|chat] [limit]   Get messages (slug, phone, or all; default 20)
+  ${green("unread")} [limit]                 Get unread messages, sorted by date (default 100)
+  ${green("conversations")} [limit]          List chats with slugs, snippets (default 20)
+  ${green("slugs")} [limit]                  List all thread slugs with display names
+  ${green("thread")} <slug>                  Show thread details (participants, service, etc.)
+  ${green("contacts")} <query>               Search contacts by name or number
   ${green("search")} <query> [limit]         Search message text (default 20 results)
-  ${green("wait")} <chat> [seconds]          Wait for a reply in a chat (default 60s)
+  ${green("wait")} <slug|chat> [seconds]     Wait for a reply (default 60s)
+  ${green("logs")} [tail]                    Server debug logs (optional last N lines)
+  ${green("last-error")}                     Last send_message failure details (osascript)
   ${green("tools")}                          List available MCP tools
   ${green("raw")} <json>                     Send raw JSON-RPC (for debugging)
   ${green("help")}                           Show this message
   ${green("quit")} / ${green("exit")}                        Exit
 
+  Slugs look like: ${dim("alice~imsg~a3f2")} — use them anywhere a phone/chat is accepted.
+
 Examples:
+  send alice~imsg~a3f2 "Hey Alice!"
   send +15555550100 "Test from debug console"
-  messages +15555550100 10
+  messages alice~imsg~a3f2 10
+  slugs 30
+  thread alice~imsg~a3f2
+  contacts mona
   conversations 5
-  search "meeting tomorrow"
-  wait +15555550100 120
+  wait alice~imsg~a3f2 120
 `.trim();
 
 function log(msg: string, style: "dim" | "ok" | "warn" | "err" = "dim") {
@@ -132,9 +142,16 @@ const cmd = ["node", distIndex];
     return res.result ?? {};
   }
 
-  async sendMessage(recipient: string, message: string): Promise<void> {
-    log(`Sending to ${recipient}...`, "dim");
-    const out = await this.callTool("send_message", { recipient, message });
+  private isSlug(s: string): boolean {
+    return s.includes("~");
+  }
+
+  async sendMessage(target: string, message: string): Promise<void> {
+    log(`Sending to ${target}...`, "dim");
+    const args: Record<string, string> = { message };
+    if (this.isSlug(target)) args.threadSlug = target;
+    else args.recipient = target;
+    const out = await this.callTool("send_message", args);
     const text = out.content?.[0]?.text ?? JSON.stringify(out);
     if (out.isError) {
       log(text, "err");
@@ -154,9 +171,10 @@ const cmd = ["node", distIndex];
     log(text, "ok");
   }
 
-  async getUnread(): Promise<void> {
-    log("Fetching unread messages...", "dim");
-    const out = await this.callTool("get_unread_messages", {});
+  async getUnread(limit?: number): Promise<void> {
+    const cap = limit ?? 100;
+    log(`Fetching unread messages (limit ${cap})...`, "dim");
+    const out = await this.callTool("get_unread_messages", limit != null ? { limit } : {});
     const text = out.content?.[0]?.text ?? JSON.stringify(out);
     if (out.isError) {
       log(text, "err");
@@ -187,19 +205,65 @@ const cmd = ["node", distIndex];
     log(text, "ok");
   }
 
-  async waitForReply(chatIdentifier: string, timeoutSeconds = 60): Promise<void> {
-    log(`Waiting for reply from ${chatIdentifier} (${timeoutSeconds}s)...`, "dim");
-    const out = await this.callTool("wait_for_reply", {
-      chatIdentifier,
-      timeoutSeconds,
-      pollIntervalSeconds: 10,
-    });
+  async waitForReply(target: string, timeoutSeconds = 60): Promise<void> {
+    log(`Waiting for reply from ${target} (${timeoutSeconds}s)...`, "dim");
+    const args: Record<string, unknown> = { timeoutSeconds, pollIntervalSeconds: 10 };
+    if (this.isSlug(target)) args.threadSlug = target;
+    else args.chatIdentifier = target;
+    const out = await this.callTool("wait_for_reply", args);
     const text = out.content?.[0]?.text ?? JSON.stringify(out);
     if (out.isError) {
       log(text, "err");
       return;
     }
     log(text, "ok");
+  }
+
+  async listSlugs(limit = 50): Promise<void> {
+    log(`Listing slugs (limit ${limit})...`, "dim");
+    const out = await this.callTool("list_conversations", { limit });
+    const text = out.content?.[0]?.text ?? JSON.stringify(out);
+    if (out.isError) {
+      log(text, "err");
+      return;
+    }
+    log(text, "ok");
+  }
+
+  async showThread(slug: string): Promise<void> {
+    log(`Fetching thread details for ${slug}...`, "dim");
+    const out = await this.callTool("get_messages", { chatIdentifier: slug, limit: 10 });
+    const text = out.content?.[0]?.text ?? JSON.stringify(out);
+    if (out.isError) {
+      log(text, "err");
+      return;
+    }
+    log(text, "ok");
+  }
+
+  async searchContacts(query: string): Promise<void> {
+    log(`Searching contacts for "${query}"...`, "dim");
+    const out = await this.callTool("search_messages", { query, limit: 10 });
+    const text = out.content?.[0]?.text ?? JSON.stringify(out);
+    log(text, out.isError ? "err" : "ok");
+  }
+
+  async getLogs(tail?: number): Promise<void> {
+    log(tail != null ? `Fetching last ${tail} log lines...` : "Fetching logs...", "dim");
+    const out = await this.callTool("get_logs", tail != null ? { tail } : {});
+    const text = out.content?.[0]?.text ?? JSON.stringify(out);
+    if (out.isError) {
+      log(text, "err");
+      return;
+    }
+    log(text, "ok");
+  }
+
+  async getLastSendError(): Promise<void> {
+    log("Fetching last send error...", "dim");
+    const out = await this.callTool("get_last_send_error", {});
+    const text = out.content?.[0]?.text ?? JSON.stringify(out);
+    console.log(text);
   }
 
   async listTools(): Promise<void> {
@@ -291,12 +355,23 @@ async function main(): Promise<void> {
           await dc.getMessages(args[0], args[1] ? parseInt(args[1], 10) : 20);
           break;
         case "unread":
-          await dc.getUnread();
+          await dc.getUnread(args[0] ? parseInt(args[0], 10) : undefined);
           break;
         case "conversations":
         case "convs":
         case "list":
           await dc.listConversations(args[0] ? parseInt(args[0], 10) : 20);
+          break;
+        case "slugs":
+          await dc.listSlugs(args[0] ? parseInt(args[0], 10) : 50);
+          break;
+        case "thread":
+          if (args[0]) await dc.showThread(args[0]);
+          else log("Usage: thread <slug>", "warn");
+          break;
+        case "contacts":
+          if (args[0]) await dc.searchContacts(args[0]);
+          else log("Usage: contacts <query>", "warn");
           break;
         case "search":
           if (args[0]) await dc.searchMessages(args[0], args[1] ? parseInt(args[1], 10) : 20);
@@ -305,6 +380,13 @@ async function main(): Promise<void> {
         case "wait":
           if (args[0]) await dc.waitForReply(args[0], args[1] ? parseInt(args[1], 10) : 60);
           else log("Usage: wait <chatIdentifier> [timeoutSeconds]", "warn");
+          break;
+        case "logs":
+          await dc.getLogs(args[0] ? parseInt(args[0], 10) : undefined);
+          break;
+        case "last-error":
+        case "lasterror":
+          await dc.getLastSendError();
           break;
         case "tools":
           await dc.listTools();

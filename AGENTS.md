@@ -7,6 +7,7 @@ MCP server for iMessage on macOS. Lets AI agents send and receive iMessages (and
 - **Stack**: TypeScript (ESM), Node 18+, MCP SDK, `better-sqlite3`, `imessage-parser`, Zod.
 - **Sending**: AppleScript via `osascript` to Messages.app.
 - **Reading**: SQLite at `~/Library/Messages/chat.db` (macOS only; needs Full Disk Access).
+- **Contacts**: Reads `~/Library/Application Support/AddressBook/AddressBook-v22.abcddb` to resolve phone numbers/emails to contact names.
 
 ## Commands
 

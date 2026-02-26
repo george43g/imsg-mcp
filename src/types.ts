@@ -47,10 +47,13 @@ export interface Message {
   guid: string;
   text: string | null;
   handle: string; // phone number or email
+  displayName?: string; // Resolved contact name (if available)
   isFromMe: boolean;
   date: Date;
   dateRead: Date | null;
+  dateDelivered: Date | null;
   isRead: boolean;
+  isDelivered: boolean;
   chatId: string;
   service: 'iMessage' | 'SMS';
   
@@ -67,6 +70,7 @@ export interface Message {
   
   // Rich content
   richContentType?: RichContentType;
+  richContentSummary?: string; // Parsed summary from message_summary_info BLOB
   
   // Edit/retract status (iOS 16+)
   isEdited: boolean;
@@ -93,12 +97,19 @@ export interface Attachment {
 export interface Conversation {
   chatId: string;
   chatIdentifier: string; // phone/email or group identifier
-  displayName: string | null;
+  displayName: string | null; // Contact display name or group name
+  rawIdentifier: string; // Original phone/email before contact lookup
   participants: string[];
   lastMessageDate: Date | null;
   /** Last message text preview (may be empty if stored in attributedBody only). */
   lastMessageSnippet: string | null;
   unreadCount: number;
+  /** Stable human-readable thread slug (e.g. "alice~imsg~a3f2"). */
+  threadSlug: string;
+  /** True for group conversations (multiple participants). */
+  isGroupChat: boolean;
+  /** Service type for this conversation. */
+  serviceType: 'iMessage' | 'SMS';
 }
 
 /**

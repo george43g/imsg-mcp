@@ -13,7 +13,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { IMessageDB } from './imessage-db.js';
-import { sendMessageAlt, checkMessagesAvailable } from './applescript.js';
+import { sendMessageAlt, sendToChat, sendToChatId, checkMessagesAvailable } from './applescript.js';
 import { appendLog, getLogs, getLastSendError } from './logger.js';
 import type { Message } from './types.js';
 
@@ -23,15 +23,19 @@ const GetMessagesSchema = z.object({
   chatIdentifier: z.string().optional().describe('Phone number, email, or chat ID to filter by'),
 });
 
-const GetUnreadMessagesSchema = z.object({});
+const GetUnreadMessagesSchema = z.object({
+  limit: z.number().min(1).max(500).optional().describe('Max number of unread messages to return (default 100)'),
+});
 
 const SendMessageSchema = z.object({
-  recipient: z.string().describe('Phone number or email address to send to'),
+  recipient: z.string().optional().describe('Phone number or email address to send to'),
+  threadSlug: z.string().optional().describe('Thread slug (from list_conversations) to send to — works for groups too'),
   message: z.string().describe('Message text to send'),
 });
 
 const WaitForReplySchema = z.object({
-  chatIdentifier: z.string().describe('Phone number, email, or chat ID to monitor'),
+  chatIdentifier: z.string().optional().describe('Phone number, email, or chat ID to monitor'),
+  threadSlug: z.string().optional().describe('Thread slug (from list_conversations) to monitor'),
   timeoutSeconds: z.number().min(10).max(3600).default(300).describe('Timeout in seconds (default 5 minutes)'),
   pollIntervalSeconds: z.number().min(5).max(60).default(10).describe('How often to check for replies'),
   afterMessageId: z.number().optional().describe('Only return messages after this ID'),
@@ -68,36 +72,39 @@ const TOOLS = [
   },
   {
     name: 'get_unread_messages',
-    description: 'Get all unread iMessages across all conversations.',
+    description: 'Get unread iMessages across all conversations, sorted by date descending (newest first).',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        limit: { type: 'number', description: 'Max number of unread messages to return (1-500, default 100)' },
+      },
     },
   },
   {
     name: 'send_message',
-    description: 'Send an iMessage or SMS to a recipient. Requires the recipient\'s phone number or email address.',
+    description: 'Send an iMessage or SMS. Use recipient (phone/email) for 1-on-1 or threadSlug (from list_conversations) for any thread including groups.',
     inputSchema: {
       type: 'object',
       properties: {
         recipient: { type: 'string', description: 'Phone number (e.g., +1234567890) or email address' },
+        threadSlug: { type: 'string', description: 'Thread slug from list_conversations — works for groups too' },
         message: { type: 'string', description: 'Message text to send' },
       },
-      required: ['recipient', 'message'],
+      required: ['message'],
     },
   },
   {
     name: 'wait_for_reply',
-    description: 'Wait for a reply in a specific conversation. Polls the database until a new message arrives or timeout is reached. Useful for AI agents that need to wait for human responses.',
+    description: 'Wait for a reply in a specific conversation. Use chatIdentifier (phone/email) or threadSlug. Polls until a new message arrives or timeout.',
     inputSchema: {
       type: 'object',
       properties: {
         chatIdentifier: { type: 'string', description: 'Phone number, email, or chat ID to monitor' },
+        threadSlug: { type: 'string', description: 'Thread slug from list_conversations' },
         timeoutSeconds: { type: 'number', description: 'Timeout in seconds (10-3600, default 300)', default: 300 },
         pollIntervalSeconds: { type: 'number', description: 'How often to check for replies (5-60 seconds)', default: 10 },
         afterMessageId: { type: 'number', description: 'Only return messages after this ID' },
       },
-      required: ['chatIdentifier'],
     },
   },
   {
@@ -150,13 +157,50 @@ const TOOLS = [
 ];
 
 /**
- * Format a message for output
+ * Format a date as a relative short string ("Today 12:05 AM", "Yesterday 3:14 PM", or "2/14 9:00 AM").
+ */
+function relativeDate(d: Date): string {
+  const now = new Date();
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (sameDay) return `Today ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.getFullYear() === yesterday.getFullYear() && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate()) {
+    return `Yesterday ${time}`;
+  }
+  return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
+
+/**
+ * Format a message for output with display name, service, relative date, and delivery status.
  */
 function formatMessage(msg: Message): string {
   const direction = msg.isFromMe ? '→' : '←';
-  const dateStr = msg.date.toLocaleString();
-  const readStatus = msg.isRead ? '' : ' [UNREAD]';
-  return `[${dateStr}] ${direction} ${msg.handle}: ${msg.text || '(no text)'}${readStatus}`;
+  const dateStr = relativeDate(msg.date);
+  const svcTag = msg.service === 'SMS' ? ' [SMS]' : '';
+
+  let sender: string;
+  if (msg.isFromMe) {
+    sender = 'me';
+  } else if (msg.displayName && msg.displayName !== msg.handle) {
+    sender = `${msg.displayName} (${msg.handle})`;
+  } else {
+    sender = msg.handle;
+  }
+
+  let status = '';
+  if (!msg.isFromMe && !msg.isRead) {
+    status = ' [UNREAD]';
+  } else if (msg.isFromMe) {
+    if (msg.dateRead) {
+      status = ` [Read ${msg.dateRead.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}]`;
+    } else if (msg.isDelivered) {
+      status = ' [Delivered]';
+    }
+  }
+
+  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${msg.text || '(no text)'}${status}`;
 }
 
 /**
@@ -205,7 +249,7 @@ class IMessageMCPServer {
           case 'get_messages':
             return await this.handleGetMessages(args);
           case 'get_unread_messages':
-            return await this.handleGetUnreadMessages();
+            return await this.handleGetUnreadMessages(args);
           case 'send_message':
             return await this.handleSendMessage(args);
           case 'wait_for_reply':
@@ -290,17 +334,25 @@ class IMessageMCPServer {
 
   private async handleGetMessages(args: unknown) {
     const { limit, chatIdentifier } = GetMessagesSchema.parse(args);
-    
+
     let messages: Message[];
+    let threadHeader = '';
     if (chatIdentifier) {
       messages = await this.db.getMessagesForChat(chatIdentifier, limit);
+      const conv = await this.db.findChatByHandle(chatIdentifier);
+      if (conv) {
+        const name = conv.displayName || conv.rawIdentifier;
+        const ident = conv.displayName ? ` (${conv.rawIdentifier})` : '';
+        const kind = conv.isGroupChat ? 'Group' : '1-on-1';
+        threadHeader = `Thread: ${conv.threadSlug} | ${name}${ident} | ${conv.serviceType} | ${kind}\n\n`;
+      }
     } else {
       messages = await this.db.getRecentMessages(limit);
     }
 
     if (messages.length === 0) {
       return {
-        content: [{ type: 'text', text: 'No messages found.' }],
+        content: [{ type: 'text', text: `${threadHeader}No messages found.` }],
       };
     }
 
@@ -309,14 +361,15 @@ class IMessageMCPServer {
       content: [
         {
           type: 'text',
-          text: `Found ${messages.length} message(s):\n\n${formatted}`,
+          text: `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}`,
         },
       ],
     };
   }
 
-  private async handleGetUnreadMessages() {
-    const messages = await this.db.getUnreadMessages();
+  private async handleGetUnreadMessages(args: unknown) {
+    const { limit } = GetUnreadMessagesSchema.parse(args ?? {});
+    const messages = await this.db.getUnreadMessages(limit ?? 100);
 
     if (messages.length === 0) {
       return {
@@ -336,74 +389,103 @@ class IMessageMCPServer {
   }
 
   private async handleSendMessage(args: unknown) {
-    const { recipient, message } = SendMessageSchema.parse(args);
+    const { recipient, threadSlug, message } = SendMessageSchema.parse(args);
 
-    // Check if Messages.app is accessible
-    const available = await checkMessagesAvailable();
-    if (!available) {
+    if (!recipient && !threadSlug) {
       return {
-        content: [
-          {
-            type: 'text',
-            text: 'Messages.app is not running or accessible. Please ensure Messages is open and you have granted necessary permissions.',
-          },
-        ],
+        content: [{ type: 'text', text: 'Either recipient or threadSlug is required.' }],
         isError: true,
       };
     }
 
-    // Try to send the message
-    const result = await sendMessageAlt(recipient, message);
+    const available = await checkMessagesAvailable();
+    if (!available) {
+      return {
+        content: [{ type: 'text', text: 'Messages.app is not running or accessible.' }],
+        isError: true,
+      };
+    }
+
+    let result: { success: boolean; error?: string; timestamp?: Date };
+    let resolvedTarget = recipient ?? threadSlug ?? '';
+
+    if (threadSlug) {
+      const slugRecord = this.db.getSlugRecord(threadSlug);
+      if (!slugRecord) {
+        return {
+          content: [{ type: 'text', text: `Unknown thread slug: ${threadSlug}. Use list_conversations to see available slugs.` }],
+          isError: true,
+        };
+      }
+
+      if (slugRecord.isGroup) {
+        if (slugRecord.displayName && !slugRecord.displayName.startsWith('chat')) {
+          result = await sendToChat(slugRecord.displayName, message);
+        } else {
+          result = await sendToChatId(slugRecord.chatGuid, message);
+        }
+      } else {
+        result = await sendMessageAlt(slugRecord.chatIdentifier, message);
+      }
+      resolvedTarget = slugRecord.displayName || slugRecord.chatIdentifier;
+    } else {
+      result = await sendMessageAlt(recipient!, message);
+    }
 
     if (result.success) {
-      // Get the last message to return the ID for wait_for_reply
-      const chat = await this.db.findChatByHandle(recipient);
+      const chat = await this.db.findChatByHandle(threadSlug ? (this.db.getSlugRecord(threadSlug)?.chatIdentifier ?? '') : recipient!);
       let lastMessageId: number | undefined;
-      
+
       if (chat) {
         const lastMsg = await this.db.getLastMessage(chat.chatIdentifier);
         lastMessageId = lastMsg?.id;
       }
 
       return {
-        content: [
-          {
-            type: 'text',
-            text: `Message sent successfully to ${recipient} at ${result.timestamp?.toLocaleString()}${lastMessageId ? `\nLast message ID: ${lastMessageId} (use this with wait_for_reply)` : ''}`,
-          },
-        ],
+        content: [{
+          type: 'text',
+          text: `Message sent to ${resolvedTarget} at ${result.timestamp?.toLocaleString()}${chat ? `\nThread: ${chat.threadSlug}` : ''}${lastMessageId ? `\nLast message ID: ${lastMessageId} (use with wait_for_reply)` : ''}`,
+        }],
       };
     } else {
-      appendLog('error', 'send_message failed', { recipient, error: result.error });
+      appendLog('error', 'send_message failed', { recipient: resolvedTarget, error: result.error });
       return {
-        content: [
-          {
-            type: 'text',
-            text: `Failed to send message: ${result.error}. Use get_last_send_error to see osascript stderr/stdout.`,
-          },
-        ],
+        content: [{ type: 'text', text: `Failed to send message: ${result.error}. Use get_last_send_error for details.` }],
         isError: true,
       };
     }
   }
 
   private async handleWaitForReply(args: unknown): Promise<any> {
-    const { chatIdentifier, timeoutSeconds, pollIntervalSeconds, afterMessageId } = WaitForReplySchema.parse(args);
+    const { chatIdentifier, threadSlug, timeoutSeconds, pollIntervalSeconds, afterMessageId } = WaitForReplySchema.parse(args);
+
+    if (!chatIdentifier && !threadSlug) {
+      return {
+        content: [{ type: 'text', text: 'Either chatIdentifier or threadSlug is required.' }],
+        isError: true,
+      };
+    }
 
     const timeoutMs = timeoutSeconds * 1000;
     const pollIntervalMs = pollIntervalSeconds * 1000;
     const startTime = Date.now();
 
-    // Find the chat
-    const chat = await this.db.findChatByHandle(chatIdentifier);
+    let chat: Awaited<ReturnType<typeof this.db.findChatByHandle>>;
+    if (threadSlug) {
+      const slugRecord = this.db.getSlugRecord(threadSlug);
+      if (!slugRecord) {
+        return {
+          content: [{ type: 'text', text: `Unknown thread slug: ${threadSlug}` }],
+          isError: true,
+        };
+      }
+      chat = await this.db.findChatByHandle(slugRecord.chatIdentifier);
+    } else {
+      chat = await this.db.findChatByHandle(chatIdentifier!);
+    }
     if (!chat) {
       return {
-        content: [
-          {
-            type: 'text',
-            text: `Could not find conversation for: ${chatIdentifier}`,
-          },
-        ],
+        content: [{ type: 'text', text: `Could not find conversation for: ${threadSlug || chatIdentifier}` }],
         isError: true,
       };
     }
@@ -458,12 +540,15 @@ class IMessageMCPServer {
     }
 
     const formatted = limited.map(conv => {
+      const slug = conv.threadSlug ?? conv.chatIdentifier;
       const name = conv.displayName || conv.chatIdentifier;
-      const participants = conv.participants.length > 0 ? ` (${conv.participants.join(', ')})` : '';
-      const lastDate = conv.lastMessageDate ? ` - Last: ${conv.lastMessageDate.toLocaleString()}` : '';
+      const ident = conv.displayName && conv.displayName !== conv.rawIdentifier ? ` (${conv.rawIdentifier})` : '';
+      const svc = conv.serviceType === 'SMS' ? ' [SMS]' : '';
+      const group = conv.isGroupChat ? ' [Group]' : '';
+      const lastDate = conv.lastMessageDate ? ` - ${relativeDate(conv.lastMessageDate)}` : '';
       const snippet = conv.lastMessageSnippet ? ` - "${conv.lastMessageSnippet.length > 50 ? conv.lastMessageSnippet.slice(0, 47) + '...' : conv.lastMessageSnippet}"` : '';
       const unread = conv.unreadCount > 0 ? ` [${conv.unreadCount} unread]` : '';
-      return `• ${name}${participants}${lastDate}${snippet}${unread}`;
+      return `• [${slug}] ${name}${ident}${svc}${group}${lastDate}${snippet}${unread}`;
     }).join('\n');
 
     return {
