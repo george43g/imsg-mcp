@@ -80,14 +80,13 @@ const MAIN_DB_NAME = "AddressBook-v22.abcddb";
 /**
  * Discover all Address Book database paths: main DB plus each source (e.g. iCloud).
  */
-function discoverContactDbPaths(customMainPath?: string): string[] {
-  const paths: string[] = [];
-
-  if (customMainPath) {
-    if (existsSync(customMainPath)) paths.push(customMainPath);
-    return paths;
+function discoverContactDbPaths(customPaths?: string | string[]): string[] {
+  if (customPaths) {
+    const list = Array.isArray(customPaths) ? customPaths : [customPaths];
+    return list.filter((p) => existsSync(p));
   }
 
+  const paths: string[] = [];
   const mainDb = join(ADDRESS_BOOK_DIR, MAIN_DB_NAME);
   if (existsSync(mainDb)) paths.push(mainDb);
 
@@ -118,11 +117,8 @@ export class ContactsDB {
   /** Next id when loading from multiple DBs (avoids Z_PK collisions across sources). */
   private nextContactId = 1;
 
-  constructor(dbPath?: string) {
-    this.dbPaths = discoverContactDbPaths(dbPath);
-    if (this.dbPaths.length === 0 && dbPath) {
-      this.dbPaths = [dbPath];
-    }
+  constructor(dbPaths?: string | string[]) {
+    this.dbPaths = discoverContactDbPaths(dbPaths);
   }
 
   /**

@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * iMessage MCP Server
  * Enables AI agents to send and receive iMessages on macOS
@@ -11,6 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { checkMessagesAvailable, sendMessageAlt, sendToChat, sendToChatId } from "./applescript.js";
+import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { IMessageDB } from "./imessage-db.js";
 import { appendLog, getLastSendError, getLogs } from "./logger.js";
 import type { Message } from "./types.js";
@@ -292,7 +291,7 @@ class IMessageMCPServer {
       },
     );
 
-    this.db = new IMessageDB();
+    this.db = new IMessageDB(getImsgDbPath(), getContactsDbPaths(), getSlugsDbPath());
     this.setupHandlers();
   }
 

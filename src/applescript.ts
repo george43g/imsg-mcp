@@ -1,21 +1,40 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { getImsgDbPath, isLocalEnv } from "./config.js";
 import { setLastSendError } from "./logger.js";
+import { insertSentMessage } from "./mock-send-db.js";
 import type { SendMessageResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const MOCK = !isLocalEnv();
 
-/**
- * Execute AppleScript code via osascript.
- * On failure, captures stderr/stdout/code for get_last_send_error.
- */
+// ---------------------------------------------------------------------------
+// Mock helpers (non-local: return success + insert into chat.db)
+// ---------------------------------------------------------------------------
+
+function mockSend(
+  text: string,
+  target: { chatIdentifier?: string; chatGuid?: string },
+): SendMessageResult {
+  try {
+    insertSentMessage(getImsgDbPath(), target, text);
+  } catch (err) {
+    console.warn("[mock-send] DB insert failed (non-fatal):", err);
+  }
+  return { success: true, timestamp: new Date() };
+}
+
+// ---------------------------------------------------------------------------
+// Real AppleScript helpers
+// ---------------------------------------------------------------------------
+
 async function runAppleScript(
   script: string,
   captureErrorForSend: boolean = false,
 ): Promise<string> {
   try {
     const { stdout, stderr } = await execFileAsync("osascript", ["-e", script], {
-      timeout: 30000, // 30 second timeout
+      timeout: 30000,
     });
     if (stderr?.trim()) {
       console.error("[osascript] stderr:", stderr);
@@ -40,9 +59,6 @@ async function runAppleScript(
   }
 }
 
-/**
- * Escape a string for use in AppleScript
- */
 function appleScriptEscape(str: string): string {
   return str
     .replace(/\\/g, "\\\\")
@@ -52,17 +68,15 @@ function appleScriptEscape(str: string): string {
     .replace(/\t/g, "\\t");
 }
 
-/**
- * Send an iMessage to the specified recipient
- * @param recipient Phone number or email address
- * @param message Message text to send
- */
+// ---------------------------------------------------------------------------
+// Public API -- each function branches on MOCK
+// ---------------------------------------------------------------------------
+
 export async function sendMessage(recipient: string, message: string): Promise<SendMessageResult> {
+  if (MOCK) return mockSend(message, { chatIdentifier: recipient });
+
   const escapedRecipient = appleScriptEscape(recipient);
   const escapedMessage = appleScriptEscape(message);
-
-  // AppleScript to send iMessage
-  // This uses the Messages.app via AppleScript
   const script = `
     tell application "Messages"
       set targetService to 1st account whose service type = iMessage
@@ -74,30 +88,23 @@ export async function sendMessage(recipient: string, message: string): Promise<S
     await runAppleScript(script, true);
     return { success: true, timestamp: new Date() };
   } catch (error: any) {
-    return {
-      success: false,
-      error: error.message || String(error),
-    };
+    return { success: false, error: error.message || String(error) };
   }
 }
 
-/**
- * Send an iMessage using an alternative method that works better in some cases
- * This method sends to a buddy by their address directly
- */
 export async function sendMessageAlt(
   recipient: string,
   message: string,
 ): Promise<SendMessageResult> {
+  if (MOCK) return mockSend(message, { chatIdentifier: recipient });
+
   const escapedRecipient = appleScriptEscape(recipient);
   const escapedMessage = appleScriptEscape(message);
-
   const script = `
     tell application "Messages"
       send "${escapedMessage}" to buddy "${escapedRecipient}" of (service 1 whose service type is iMessage)
     end tell
   `;
-
   try {
     await runAppleScript(script, true);
     return { success: true, timestamp: new Date() };
@@ -106,46 +113,34 @@ export async function sendMessageAlt(
   }
 }
 
-/**
- * Send an SMS via SMS Relay (requires iPhone paired with Mac)
- * @param phoneNumber Phone number to send to
- * @param message Message text to send
- */
 export async function sendSMS(phoneNumber: string, message: string): Promise<SendMessageResult> {
+  if (MOCK) return mockSend(message, { chatIdentifier: phoneNumber });
+
   const escapedPhone = appleScriptEscape(phoneNumber);
   const escapedMessage = appleScriptEscape(message);
-
   const script = `
     tell application "Messages"
       send "${escapedMessage}" to buddy "${escapedPhone}" of (service 1 whose service type is SMS)
     end tell
   `;
-
   try {
     await runAppleScript(script, true);
     return { success: true, timestamp: new Date() };
   } catch (error: any) {
-    return {
-      success: false,
-      error: error.message || String(error),
-    };
+    return { success: false, error: error.message || String(error) };
   }
 }
 
-/**
- * Send a message to a named group chat.
- * The group must have a display name set in Messages.app.
- */
 export async function sendToChat(chatName: string, message: string): Promise<SendMessageResult> {
+  if (MOCK) return mockSend(message, { chatIdentifier: chatName });
+
   const escapedName = appleScriptEscape(chatName);
   const escapedMessage = appleScriptEscape(message);
-
   const script = `
     tell application "Messages"
       send "${escapedMessage}" to chat "${escapedName}"
     end tell
   `;
-
   try {
     await runAppleScript(script, true);
     return { success: true, timestamp: new Date() };
@@ -154,20 +149,16 @@ export async function sendToChat(chatName: string, message: string): Promise<Sen
   }
 }
 
-/**
- * Send a message to a chat by its internal text chat ID (guid from chat.db).
- * Fragile across macOS versions but works as a fallback for unnamed groups.
- */
 export async function sendToChatId(chatId: string, message: string): Promise<SendMessageResult> {
+  if (MOCK) return mockSend(message, { chatGuid: chatId });
+
   const escapedId = appleScriptEscape(chatId);
   const escapedMessage = appleScriptEscape(message);
-
   const script = `
     tell application "Messages"
       send "${escapedMessage}" to text chat id "${escapedId}"
     end tell
   `;
-
   try {
     await runAppleScript(script, true);
     return { success: true, timestamp: new Date() };
@@ -176,16 +167,14 @@ export async function sendToChatId(chatId: string, message: string): Promise<Sen
   }
 }
 
-/**
- * Check if Messages.app is available and accessible
- */
 export async function checkMessagesAvailable(): Promise<boolean> {
+  if (MOCK) return true;
+
   const script = `
     tell application "System Events"
       return exists application process "Messages"
     end tell
   `;
-
   try {
     const result = await runAppleScript(script);
     return result === "true";
@@ -194,10 +183,9 @@ export async function checkMessagesAvailable(): Promise<boolean> {
   }
 }
 
-/**
- * Get the list of available message services (iMessage, SMS, etc.)
- */
 export async function getAvailableServices(): Promise<string[]> {
+  if (MOCK) return ["iMessage", "SMS"];
+
   const script = `
     tell application "Messages"
       set serviceList to {}
@@ -207,10 +195,8 @@ export async function getAvailableServices(): Promise<string[]> {
       return serviceList
     end tell
   `;
-
   try {
     const result = await runAppleScript(script);
-    // Result comes back as "iMessage, SMS" style
     return result
       .split(", ")
       .map((s) => s.trim())
@@ -220,17 +206,14 @@ export async function getAvailableServices(): Promise<string[]> {
   }
 }
 
-/**
- * Activate (bring to front) the Messages app
- */
 export async function activateMessages(): Promise<void> {
+  if (MOCK) return;
   await runAppleScript('tell application "Messages" to activate');
 }
 
-/**
- * Check if a specific buddy/contact exists in Messages
- */
 export async function buddyExists(address: string): Promise<boolean> {
+  if (MOCK) return true;
+
   const escaped = appleScriptEscape(address);
   const script = `
     tell application "Messages"
@@ -242,7 +225,6 @@ export async function buddyExists(address: string): Promise<boolean> {
       end try
     end tell
   `;
-
   try {
     const result = await runAppleScript(script);
     return result === "true";
