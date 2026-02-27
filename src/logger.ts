@@ -9,7 +9,10 @@ const logLines: string[] = [];
 
 export function appendLog(level: string, message: string, data?: unknown): void {
   const ts = new Date().toISOString();
-  const line = data != null ? `${ts} [${level}] ${message} ${JSON.stringify(data)}` : `${ts} [${level}] ${message}`;
+  const line =
+    data != null
+      ? `${ts} [${level}] ${message} ${JSON.stringify(data)}`
+      : `${ts} [${level}] ${message}`;
   logLines.push(line);
   if (logLines.length > MAX_LOG_LINES) logLines.splice(0, logLines.length - MAX_LOG_LINES);
 }
@@ -33,7 +36,7 @@ export interface LastSendErrorDetails {
 
 let lastSendError: LastSendErrorDetails | null = null;
 
-export function setLastSendError(details: Omit<LastSendErrorDetails, 'timestamp'>): void {
+export function setLastSendError(details: Omit<LastSendErrorDetails, "timestamp">): void {
   lastSendError = { ...details, timestamp: new Date().toISOString() };
 }
 

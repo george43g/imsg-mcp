@@ -8,8 +8,8 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { createInterface } from "node:readline";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 
 const __dirname = dirname(process.argv[1] ?? ".");
 const root = join(__dirname, "..");
@@ -61,16 +61,19 @@ function log(msg: string, style: "dim" | "ok" | "warn" | "err" = "dim") {
 class DebugConsole {
   private proc: ReturnType<typeof spawn>;
   private requestId = 0;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private pending = new Map<
+    number,
+    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+  >();
   private outBuf = "";
 
   constructor() {
-const distIndex = join(root, "dist", "index.js");
-if (!existsSync(distIndex)) {
-  console.error("Run pnpm build first. dist/index.js not found.");
-  process.exit(1);
-}
-const cmd = ["node", distIndex];
+    const distIndex = join(root, "dist", "index.js");
+    if (!existsSync(distIndex)) {
+      console.error("Run pnpm build first. dist/index.js not found.");
+      process.exit(1);
+    }
+    const cmd = ["node", distIndex];
 
     this.proc = spawn(cmd[0], cmd.slice(1), { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
 
@@ -111,7 +114,7 @@ const cmd = ["node", distIndex];
       const id = ++this.requestId;
       this.pending.set(id, { resolve, reject });
       const req = JSON.stringify({ jsonrpc: "2.0", id, method, params });
-      this.proc.stdin.write(req + "\n");
+      this.proc.stdin.write(`${req}\n`);
       setTimeout(() => {
         if (this.pending.has(id)) {
           this.pending.delete(id);
@@ -123,18 +126,23 @@ const cmd = ["node", distIndex];
 
   /** Run the MCP handshake (initialize + notified). Call once before using tools. */
   async start(): Promise<void> {
-    const res = await this.call("initialize", {
+    const res = (await this.call("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
       clientInfo: { name: "debug-console", version: "1.0.0" },
-    }) as { result?: unknown };
+    })) as { result?: unknown };
     if (res.result) {
-      this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) + "\n");
+      this.proc.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`,
+      );
     }
   }
 
-  private async callTool(name: string, args: object): Promise<{ content?: { type: string; text?: string }[]; isError?: boolean }> {
-    const res = await this.call("tools/call", { name, arguments: args }) as {
+  private async callTool(
+    name: string,
+    args: object,
+  ): Promise<{ content?: { type: string; text?: string }[]; isError?: boolean }> {
+    const res = (await this.call("tools/call", { name, arguments: args })) as {
       result?: { content?: { type: string; text?: string }[]; isError?: boolean };
       error?: { message: string };
     };
@@ -161,8 +169,14 @@ const cmd = ["node", distIndex];
   }
 
   async getMessages(chatIdentifier?: string, limit = 20): Promise<void> {
-    log(chatIdentifier ? `Fetching messages for ${chatIdentifier}...` : "Fetching recent messages...", "dim");
-    const out = await this.callTool("get_messages", { limit, ...(chatIdentifier && { chatIdentifier }) });
+    log(
+      chatIdentifier ? `Fetching messages for ${chatIdentifier}...` : "Fetching recent messages...",
+      "dim",
+    );
+    const out = await this.callTool("get_messages", {
+      limit,
+      ...(chatIdentifier && { chatIdentifier }),
+    });
     const text = out.content?.[0]?.text ?? JSON.stringify(out);
     if (out.isError) {
       log(text, "err");
@@ -268,7 +282,10 @@ const cmd = ["node", distIndex];
 
   async listTools(): Promise<void> {
     log("Fetching tools...", "dim");
-    const res = await this.call("tools/list", {}) as { result?: { tools?: { name: string; description?: string }[] }; error?: { message: string } };
+    const res = (await this.call("tools/list", {})) as {
+      result?: { tools?: { name: string; description?: string }[] };
+      error?: { message: string };
+    };
     if (res.error) {
       log(res.error.message, "err");
       return;
@@ -308,7 +325,10 @@ function parseArgs(line: string): { cmd: string; args: string[] } {
     if (c === '"' || c === "'") {
       inQuote = !inQuote;
     } else if ((c === " " && !inQuote) || c === "\n") {
-      if (cur) parts.push(cur), (cur = "");
+      if (cur) {
+        parts.push(cur);
+        cur = "";
+      }
     } else {
       cur += c;
     }
@@ -331,92 +351,97 @@ async function main(): Promise<void> {
   console.log("");
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const prompt = () => rl.question(cyan("imsg-mcp> "), async (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      prompt();
-      return;
-    }
-
-    const { cmd, args } = parseArgs(trimmed);
-
-    try {
-      switch (cmd) {
-        case "send":
-          if (args.length >= 2) {
-            const msg = args.slice(1).join(" ").replace(/^["']|["']$/g, "");
-            await dc.sendMessage(args[0], msg);
-          } else {
-            log("Usage: send <recipient> <message>", "warn");
-          }
-          break;
-        case "messages":
-        case "msg":
-          await dc.getMessages(args[0], args[1] ? parseInt(args[1], 10) : 20);
-          break;
-        case "unread":
-          await dc.getUnread(args[0] ? parseInt(args[0], 10) : undefined);
-          break;
-        case "conversations":
-        case "convs":
-        case "list":
-          await dc.listConversations(args[0] ? parseInt(args[0], 10) : 20);
-          break;
-        case "slugs":
-          await dc.listSlugs(args[0] ? parseInt(args[0], 10) : 50);
-          break;
-        case "thread":
-          if (args[0]) await dc.showThread(args[0]);
-          else log("Usage: thread <slug>", "warn");
-          break;
-        case "contacts":
-          if (args[0]) await dc.searchContacts(args[0]);
-          else log("Usage: contacts <query>", "warn");
-          break;
-        case "search":
-          if (args[0]) await dc.searchMessages(args[0], args[1] ? parseInt(args[1], 10) : 20);
-          else log("Usage: search <query> [limit]", "warn");
-          break;
-        case "wait":
-          if (args[0]) await dc.waitForReply(args[0], args[1] ? parseInt(args[1], 10) : 60);
-          else log("Usage: wait <chatIdentifier> [timeoutSeconds]", "warn");
-          break;
-        case "logs":
-          await dc.getLogs(args[0] ? parseInt(args[0], 10) : undefined);
-          break;
-        case "last-error":
-        case "lasterror":
-          await dc.getLastSendError();
-          break;
-        case "tools":
-          await dc.listTools();
-          break;
-        case "raw": {
-          const rest = trimmed.slice(cmd.length).trim();
-          if (rest) await dc.sendRaw(rest);
-          else log("Usage: raw <json string>", "warn");
-          break;
-        }
-        case "help":
-        case "?":
-          console.log(HELP);
-          break;
-        case "quit":
-        case "exit":
-        case "q":
-          log("Bye.", "dim");
-          dc.close();
-          process.exit(0);
-        default:
-          log(`Unknown command: ${cmd}. Type 'help' for usage.`, "warn");
+  const prompt = () =>
+    rl.question(cyan("imsg-mcp> "), async (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        prompt();
+        return;
       }
-    } catch (e) {
-      log(String(e), "err");
-    }
 
-    console.log("");
-    prompt();
-  });
+      const { cmd, args } = parseArgs(trimmed);
+
+      try {
+        switch (cmd) {
+          case "send":
+            if (args.length >= 2) {
+              const msg = args
+                .slice(1)
+                .join(" ")
+                .replace(/^["']|["']$/g, "");
+              await dc.sendMessage(args[0], msg);
+            } else {
+              log("Usage: send <recipient> <message>", "warn");
+            }
+            break;
+          case "messages":
+          case "msg":
+            await dc.getMessages(args[0], args[1] ? parseInt(args[1], 10) : 20);
+            break;
+          case "unread":
+            await dc.getUnread(args[0] ? parseInt(args[0], 10) : undefined);
+            break;
+          case "conversations":
+          case "convs":
+          case "list":
+            await dc.listConversations(args[0] ? parseInt(args[0], 10) : 20);
+            break;
+          case "slugs":
+            await dc.listSlugs(args[0] ? parseInt(args[0], 10) : 50);
+            break;
+          case "thread":
+            if (args[0]) await dc.showThread(args[0]);
+            else log("Usage: thread <slug>", "warn");
+            break;
+          case "contacts":
+            if (args[0]) await dc.searchContacts(args[0]);
+            else log("Usage: contacts <query>", "warn");
+            break;
+          case "search":
+            if (args[0]) await dc.searchMessages(args[0], args[1] ? parseInt(args[1], 10) : 20);
+            else log("Usage: search <query> [limit]", "warn");
+            break;
+          case "wait":
+            if (args[0]) await dc.waitForReply(args[0], args[1] ? parseInt(args[1], 10) : 60);
+            else log("Usage: wait <chatIdentifier> [timeoutSeconds]", "warn");
+            break;
+          case "logs":
+            await dc.getLogs(args[0] ? parseInt(args[0], 10) : undefined);
+            break;
+          case "last-error":
+          case "lasterror":
+            await dc.getLastSendError();
+            break;
+          case "tools":
+            await dc.listTools();
+            break;
+          case "raw": {
+            const rest = trimmed.slice(cmd.length).trim();
+            if (rest) await dc.sendRaw(rest);
+            else log("Usage: raw <json string>", "warn");
+            break;
+          }
+          case "help":
+          case "?":
+            console.log(HELP);
+            break;
+          case "quit":
+          case "exit":
+          case "q":
+            log("Bye.", "dim");
+            dc.close();
+            process.exit(0);
+            break;
+          default:
+            log(`Unknown command: ${cmd}. Type 'help' for usage.`, "warn");
+        }
+      } catch (e) {
+        log(String(e), "err");
+      }
+
+      console.log("");
+      prompt();
+    });
 
   prompt();
 }

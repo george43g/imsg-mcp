@@ -8,10 +8,10 @@
  * Merges all into a single lookup so phone/email resolve to display names from any source.
  */
 
-import Database from 'better-sqlite3';
-import { existsSync, readdirSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 
 export interface Contact {
   id: number;
@@ -37,9 +37,9 @@ export interface ContactLookup {
  * - AU/international: keep full digits (e.g. 61... for Australia).
  */
 function normalizePhoneNumber(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
+  const digits = phone.replace(/\D/g, "");
   // US: 11 digits starting with 1 -> drop 1
-  if (digits.length === 11 && digits.startsWith('1')) {
+  if (digits.length === 11 && digits.startsWith("1")) {
     return digits.slice(1);
   }
   return digits;
@@ -54,15 +54,15 @@ function normalizedPhoneVariants(phone: string): string[] {
   const variants: string[] = [normalized];
   // US: also store with leading 1
   if (normalized.length === 10) {
-    variants.push('1' + normalized);
+    variants.push(`1${normalized}`);
   }
   // Australia: 61 + 9 digits (e.g. 61410871808) -> also store 9 digits (410871808) for 04... lookups
-  if (normalized.length === 11 && normalized.startsWith('61')) {
+  if (normalized.length === 11 && normalized.startsWith("61")) {
     variants.push(normalized.slice(2));
   }
   // Australia: 9 digits starting with 4 (mobile) -> also store with 61 prefix
-  if (normalized.length === 9 && normalized.startsWith('4')) {
-    variants.push('61' + normalized);
+  if (normalized.length === 9 && normalized.startsWith("4")) {
+    variants.push(`61${normalized}`);
   }
   return variants;
 }
@@ -74,8 +74,8 @@ function normalizeEmail(email: string): string {
   return email.toLowerCase().trim();
 }
 
-const ADDRESS_BOOK_DIR = join(homedir(), 'Library', 'Application Support', 'AddressBook');
-const MAIN_DB_NAME = 'AddressBook-v22.abcddb';
+const ADDRESS_BOOK_DIR = join(homedir(), "Library", "Application Support", "AddressBook");
+const MAIN_DB_NAME = "AddressBook-v22.abcddb";
 
 /**
  * Discover all Address Book database paths: main DB plus each source (e.g. iCloud).
@@ -91,7 +91,7 @@ function discoverContactDbPaths(customMainPath?: string): string[] {
   const mainDb = join(ADDRESS_BOOK_DIR, MAIN_DB_NAME);
   if (existsSync(mainDb)) paths.push(mainDb);
 
-  const sourcesDir = join(ADDRESS_BOOK_DIR, 'Sources');
+  const sourcesDir = join(ADDRESS_BOOK_DIR, "Sources");
   if (existsSync(sourcesDir)) {
     try {
       const subdirs = readdirSync(sourcesDir, { withFileTypes: true });
@@ -148,7 +148,8 @@ export class ContactsDB {
    * Load contacts from a single Address Book SQLite DB into the shared maps.
    */
   private loadContactsFromDb(db: Database.Database): void {
-    const contacts = db.prepare(`
+    const contacts = db
+      .prepare(`
       SELECT 
         Z_PK as localId,
         ZFIRSTNAME as firstName,
@@ -158,7 +159,8 @@ export class ContactsDB {
         ZORGANIZATION as organization
       FROM ZABCDRECORD
       WHERE ZFIRSTNAME IS NOT NULL OR ZLASTNAME IS NOT NULL OR ZORGANIZATION IS NOT NULL
-    `).all() as any[];
+    `)
+      .all() as any[];
 
     for (const row of contacts) {
       const globalId = this.nextContactId++;
@@ -176,11 +178,13 @@ export class ContactsDB {
 
       const localId = row.localId as number;
 
-      const phones = db.prepare(`
+      const phones = db
+        .prepare(`
         SELECT ZFULLNUMBER as number, ZLABEL as label
         FROM ZABCDPHONENUMBER
         WHERE ZOWNER = ? OR Z22_OWNER = ?
-      `).all(localId, localId) as any[];
+      `)
+        .all(localId, localId) as any[];
 
       for (const phone of phones) {
         if (phone.number) {
@@ -196,11 +200,13 @@ export class ContactsDB {
         }
       }
 
-      const emails = db.prepare(`
+      const emails = db
+        .prepare(`
         SELECT ZADDRESS as email, ZLABEL as label
         FROM ZABCDEMAILADDRESS
         WHERE ZOWNER = ? OR Z22_OWNER = ?
-      `).all(localId, localId) as any[];
+      `)
+        .all(localId, localId) as any[];
 
       for (const email of emails) {
         if (email.email) {
@@ -228,11 +234,11 @@ export class ContactsDB {
     }
 
     // Try phone number lookup (try normalized and, for AU 04..., the 61-prefix form)
-    if (/[\d\+\-\(\)\s]/.test(handle)) {
+    if (/[\d+\-()\s]/.test(handle)) {
       const normalized = normalizePhoneNumber(handle);
       let contact = this.phoneMap.get(normalized);
-      if (!contact && normalized.length === 9 && normalized.startsWith('4')) {
-        contact = this.phoneMap.get('61' + normalized);
+      if (!contact && normalized.length === 9 && normalized.startsWith("4")) {
+        contact = this.phoneMap.get(`61${normalized}`);
       }
       if (contact) {
         return contact.displayName;
@@ -240,7 +246,7 @@ export class ContactsDB {
     }
 
     // Try email lookup
-    if (handle.includes('@')) {
+    if (handle.includes("@")) {
       const normalized = normalizeEmail(handle);
       const contact = this.emailMap.get(normalized);
       if (contact) {
@@ -271,10 +277,11 @@ export class ContactsDB {
     }
 
     const lowerQuery = query.toLowerCase();
-    return Array.from(this.contactCache.values()).filter(c =>
-      c.displayName.toLowerCase().includes(lowerQuery) ||
-      c.phoneNumbers.some(p => p.includes(query)) ||
-      c.emails.some(e => e.toLowerCase().includes(lowerQuery))
+    return Array.from(this.contactCache.values()).filter(
+      (c) =>
+        c.displayName.toLowerCase().includes(lowerQuery) ||
+        c.phoneNumbers.some((p) => p.includes(query)) ||
+        c.emails.some((e) => e.toLowerCase().includes(lowerQuery)),
     );
   }
 
@@ -283,18 +290,18 @@ export class ContactsDB {
    */
   private buildDisplayName(row: any): string {
     const parts: string[] = [];
-    
+
     if (row.firstName) parts.push(row.firstName);
     if (row.lastName) parts.push(row.lastName);
-    
+
     if (parts.length > 0) {
-      return parts.join(' ');
+      return parts.join(" ");
     }
-    
+
     if (row.nickname) return row.nickname;
     if (row.organization) return row.organization;
-    
-    return 'Unknown Contact';
+
+    return "Unknown Contact";
   }
 
   /**

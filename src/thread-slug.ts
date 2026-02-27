@@ -3,40 +3,40 @@
  * No side effects; takes data in, returns slug string.
  */
 
-import { createHash } from 'crypto';
+import { createHash } from "node:crypto";
 
 /** Sanitize a name into a slug-safe part: lowercase, spaces to hyphens, strip non-alphanumeric. */
 export function sanitizeSlugPart(name: string): string {
   return name
     .toLowerCase()
-    .replace(/['']/g, '')
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9-]/g, '')
-    .replace(/-{2,}/g, '-')
-    .replace(/^-|-$/g, '');
+    .replace(/['']/g, "")
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 /** 4-char hex hash derived from a string (deterministic). */
 export function shortHash(input: string): string {
-  return createHash('md5').update(input).digest('hex').slice(0, 4);
+  return createHash("md5").update(input).digest("hex").slice(0, 4);
 }
 
 /** Abbreviate service name: "iMessage" -> "imsg", "SMS" -> "sms". */
 export function serviceAbbrev(service: string): string {
   const lower = service.toLowerCase();
-  if (lower === 'imessage') return 'imsg';
-  if (lower === 'sms') return 'sms';
-  return sanitizeSlugPart(lower) || 'msg';
+  if (lower === "imessage") return "imsg";
+  if (lower === "sms") return "sms";
+  return sanitizeSlugPart(lower) || "msg";
 }
 
 /** True if a chat_identifier looks like a group chat (starts with "chat"). */
 export function isGroupChatIdentifier(chatIdentifier: string): boolean {
-  return chatIdentifier.startsWith('chat');
+  return chatIdentifier.startsWith("chat");
 }
 
 /** True if a chat guid indicates a group chat (contains ";+;"). */
 export function isGroupGuid(guid: string): boolean {
-  return guid.includes(';+;');
+  return guid.includes(";+;");
 }
 
 export interface SlugInput {
@@ -60,16 +60,16 @@ export interface SlugInput {
  *   Unnamed group:       group~imsg~f6a7
  */
 export function generateThreadSlug(input: SlugInput): string {
-  const svc = serviceAbbrev(input.serviceName || 'iMessage');
+  const svc = serviceAbbrev(input.serviceName || "iMessage");
   const hash = shortHash(input.guid);
   const isGroup = isGroupGuid(input.guid) || isGroupChatIdentifier(input.chatIdentifier);
 
   let namePart: string;
   if (isGroup) {
-    if (input.displayName && !input.displayName.startsWith('chat')) {
+    if (input.displayName && !input.displayName.startsWith("chat")) {
       namePart = sanitizeSlugPart(input.displayName);
     } else {
-      namePart = 'group';
+      namePart = "group";
     }
   } else {
     if (input.resolvedContactName) {
@@ -77,11 +77,11 @@ export function generateThreadSlug(input: SlugInput): string {
     } else if (input.displayName && input.displayName !== input.chatIdentifier) {
       namePart = sanitizeSlugPart(input.displayName);
     } else {
-      namePart = sanitizeSlugPart(input.chatIdentifier.replace(/^\+/, ''));
+      namePart = sanitizeSlugPart(input.chatIdentifier.replace(/^\+/, ""));
     }
   }
 
-  if (!namePart) namePart = 'unknown';
+  if (!namePart) namePart = "unknown";
 
   return `${namePart}~${svc}~${hash}`;
 }
