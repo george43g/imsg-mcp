@@ -8,16 +8,18 @@
     "imsg-mcp": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "mcp": "node dist/index.js",
-    "start": "pnpm exec tsx scripts/cli-console.ts",
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "mcp": "node --env-file=.env --env-file-if-exists=.env.local dist/index.js",
+    "mcp:ai": "node --env-file=.env --env-file-if-exists=.env.ai dist/index.js",
+    "start": "tsx scripts/cli-console.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "prepare": "pnpm build",
-    "rebuild": "pnpm rebuild better-sqlite3"
+    "rebuild": "pnpm rebuild better-sqlite3",
+    "sync-env-data": "tsx scripts/sync-env-data.ts"
   },
   "keywords": [
     "mcp",
@@ -45,9 +47,11 @@
     "vitest": "^2.0.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24",
+    "npm": "not in use"
   },
   "volta": {
     "node": "24.13.0"
-  }
+  },
+  "packageManager": "pnpm@10.29.3"
 }
