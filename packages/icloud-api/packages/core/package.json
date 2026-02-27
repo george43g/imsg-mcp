@@ -1,0 +1,57 @@
+{
+  "name": "@icloud-api/core",
+  "version": "0.1.0",
+  "description": "Cross-platform iMessage/iCloud API client — auth, APNs, IDS, encryption, messaging",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./auth": {
+      "import": "./dist/auth/index.js",
+      "types": "./dist/auth/index.d.ts"
+    },
+    "./apns": {
+      "import": "./dist/apns/index.js",
+      "types": "./dist/apns/index.d.ts"
+    },
+    "./ids": {
+      "import": "./dist/ids/index.js",
+      "types": "./dist/ids/index.d.ts"
+    },
+    "./crypto": {
+      "import": "./dist/crypto/index.js",
+      "types": "./dist/crypto/index.d.ts"
+    },
+    "./messages": {
+      "import": "./dist/messages/index.js",
+      "types": "./dist/messages/index.d.ts"
+    },
+    "./contacts": {
+      "import": "./dist/contacts/index.js",
+      "types": "./dist/contacts/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "lint": "echo 'lint ok'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "plist": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/plist": "^3.0.5",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

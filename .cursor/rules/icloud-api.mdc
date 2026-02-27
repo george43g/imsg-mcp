@@ -1,0 +1,49 @@
+# icloud-api — Cross-Platform iMessage/iCloud Client
+
+Turborepo monorepo at `packages/icloud-api/`. Separate from the root imsg-mcp project.
+
+## Stack
+
+- **TypeScript core** (`packages/icloud-api/packages/core`): ESM, Node 20+, vitest.
+- **Go relay** (`packages/icloud-api/packages/relay`): Go 1.22+, macOS-only for NAC generation.
+- **Monorepo**: Turborepo + pnpm workspaces.
+
+## Architecture (4 phases)
+
+1. **Auth + APNs** (Phase 1, done): GSA/SRP-6a authentication, anisette, APNs TLV binary protocol.
+2. **IDS Registration** (Phase 2): Device registration with validation-data from Mac relay, key lookup.
+3. **Send/Receive** (Phase 3): pair-ec encryption, message formatting, APNs delivery.
+4. **Full features** (Phase 4): Contacts sync, SMS relay, attachments (MMCS), group chat.
+
+## Module layout
+
+- `src/auth/` — GrandSlam (SRP-6a), anisette providers, 2FA
+- `src/apns/` — APNs binary protocol (TLV encode/decode), connection, topic subscription
+- `src/ids/` — IDS authentication, registration, key lookup (Phase 2)
+- `src/crypto/` — pair-ec and legacy pair encryption (Phase 3)
+- `src/messages/` — iMessage wire format, types, serialization (Phase 3)
+- `src/contacts/` — iCloud Contacts via CardDAV/JSON (Phase 4)
+
+## Key research references
+
+Always consult these before implementing protocol details:
+
+- `docs/GRANDSLAM_GSA_RESEARCH.md` — GSA endpoint, SRP parameters, CPD fields, 2FA flow
+- `docs/RESEARCH_ALBERT_APNS_2026-02-27.md` — Albert activation, APNs commands, TLV format
+- `docs/IDS_IDENTITY_SERVICES_RESEARCH.md` — IDS auth, registration plist, pair-ec protobuf, key format
+- `docs/RESEARCH_IMESSAGE_PROTOCOL_AND_IMPLEMENTATIONS.md` — Message types, encryption, OSS survey
+- `docs/research/SYNTHESIS.md` — Tier 1/2/3 feasibility, implementation roadmap
+
+## Conventions
+
+- All exports via barrel `index.ts` files per module.
+- Types in dedicated `types.ts` files.
+- Tests in `src/__tests__/` using vitest.
+- Do NOT modify root imsg-mcp files — this is a separate project.
+
+## Commands
+
+Run from `packages/icloud-api/`:
+- `pnpm build` — Build all packages via turbo
+- `pnpm test` — Run all tests via turbo
+- `pnpm typecheck` — Type check all TS packages

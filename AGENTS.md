@@ -65,6 +65,34 @@ Run the server: `node dist/index.js` (stdio MCP).
 - Do **not** interpret bare digits (e.g. `1`) as another MCP’s onboarding options unless the user was just shown that menu and is clearly answering it. Prefer the current conversation (e.g. “1” = step 1 in an imsg-mcp list).
 - Full incident trace and rationale: **docs/INCIDENT_TRACE_2026-02-15_SINGLE_DIGIT_INTERPRETATION.md**.
 
+## icloud-api (Turborepo monorepo)
+
+A separate cross-platform iMessage/iCloud client lives in `packages/icloud-api/`. It is a Turborepo monorepo with its own workspace and dependencies — **do not mix with the root imsg-mcp project**.
+
+| Package | Language | Description |
+|---------|----------|-------------|
+| `@icloud-api/core` | TypeScript | Auth (GSA/SRP), APNs, IDS, encryption, messaging |
+| `@icloud-api/relay` | Go | macOS relay for IDS validation-data |
+
+**Commands** (run from `packages/icloud-api/`):
+
+| Command | Purpose |
+|---------|---------|
+| `pnpm install` | Install deps |
+| `pnpm build` | Build all packages (turbo) |
+| `pnpm test` | Run all tests (turbo) |
+| `pnpm typecheck` | Type check (turbo) |
+
+**Research docs** for protocol details:
+
+- `docs/GRANDSLAM_GSA_RESEARCH.md` — GSA/SRP authentication
+- `docs/RESEARCH_ALBERT_APNS_2026-02-27.md` — Albert activation + APNs protocol
+- `docs/IDS_IDENTITY_SERVICES_RESEARCH.md` — IDS registration + pair-ec
+- `docs/RESEARCH_IMESSAGE_PROTOCOL_AND_IMPLEMENTATIONS.md` — Wire format + OSS survey
+- `docs/research/SYNTHESIS.md` — Master feasibility analysis + implementation roadmap
+
+**Phase status**: Phase 1 complete (auth + APNs). Phase 2 (IDS registration) pending.
+
 ## Troubleshooting (Quick)
 
 - "Operation not permitted" → Full Disk Access.
