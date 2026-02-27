@@ -1,33 +1,46 @@
 /**
  * iMessage Database Reader
  * Uses imessage-parser for robust attributedBody parsing
- * 
+ *
  * See docs/IMESSAGE_DB_SCHEMA.md for database structure reference.
  * Schema constants and epoch/timestamp helpers live in db-schema.ts.
  */
 
-import { IMessageDatabase, type ChatRow, type MessageRow } from 'imessage-parser';
-import Database from 'better-sqlite3';
-import { homedir } from 'os';
-import { join } from 'path';
+import { homedir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { type ChatRow, IMessageDatabase, type MessageRow } from "imessage-parser";
+import { ContactsDB } from "./contacts-db.js";
 import {
-  macTimestampToDate as schemaMacTimestampToDate,
-  parseAssociatedMessageGuid as schemaParseAssociatedMessageGuid,
+  AssociatedMessageType,
   isReactionType,
   OBJECT_REPLACEMENT_CHAR,
-  AssociatedMessageType,
+  macTimestampToDate as schemaMacTimestampToDate,
+  parseAssociatedMessageGuid as schemaParseAssociatedMessageGuid,
   Tables,
-} from './db-schema.js';
-import type { Message, Conversation, TapbackType, Reaction, ReplyContext, RichContentType, Attachment } from './types.js';
-import { ContactsDB } from './contacts-db.js';
-import { SlugStore, type SlugRecord } from './slug-store.js';
-import { generateThreadSlug, isGroupGuid, isGroupChatIdentifier } from './thread-slug.js';
+} from "./db-schema.js";
+import { type SlugRecord, SlugStore } from "./slug-store.js";
+import { generateThreadSlug, isGroupChatIdentifier, isGroupGuid } from "./thread-slug.js";
+import type {
+  Attachment,
+  Conversation,
+  Message,
+  Reaction,
+  ReplyContext,
+  RichContentType,
+  TapbackType,
+} from "./types.js";
 
 /** Chat row with last message date and service from join (for sorting by activity). */
 type ChatWithLastDate = ChatRow & { last_date: number | null; service_name?: string | null };
 
 function toChatRow(c: ChatWithLastDate): ChatRow {
-  return { ROWID: c.ROWID, guid: c.guid, chat_identifier: c.chat_identifier, display_name: c.display_name };
+  return {
+    ROWID: c.ROWID,
+    guid: c.guid,
+    chat_identifier: c.chat_identifier,
+    display_name: c.display_name,
+  };
 }
 
 /**
@@ -35,21 +48,21 @@ function toChatRow(c: ChatWithLastDate): ChatRow {
  * 2000-2005: Add reaction, 3000-3005: Remove reaction
  */
 const TAPBACK_TYPE_MAP: Record<number, { type: TapbackType; isRemoval: boolean }> = {
-  2000: { type: 'love', isRemoval: false },
-  2001: { type: 'like', isRemoval: false },
-  2002: { type: 'dislike', isRemoval: false },
-  2003: { type: 'laugh', isRemoval: false },
-  2004: { type: 'emphasize', isRemoval: false },
-  2005: { type: 'question', isRemoval: false },
-  2006: { type: 'emoji', isRemoval: false },  // iOS 18+ custom emoji
-  3000: { type: 'love', isRemoval: true },
-  3001: { type: 'like', isRemoval: true },
-  3002: { type: 'dislike', isRemoval: true },
-  3003: { type: 'laugh', isRemoval: true },
-  3004: { type: 'emphasize', isRemoval: true },
-  3005: { type: 'question', isRemoval: true },
-  3006: { type: 'emoji', isRemoval: true },
-  1000: { type: 'sticker', isRemoval: false },
+  2000: { type: "love", isRemoval: false },
+  2001: { type: "like", isRemoval: false },
+  2002: { type: "dislike", isRemoval: false },
+  2003: { type: "laugh", isRemoval: false },
+  2004: { type: "emphasize", isRemoval: false },
+  2005: { type: "question", isRemoval: false },
+  2006: { type: "emoji", isRemoval: false }, // iOS 18+ custom emoji
+  3000: { type: "love", isRemoval: true },
+  3001: { type: "like", isRemoval: true },
+  3002: { type: "dislike", isRemoval: true },
+  3003: { type: "laugh", isRemoval: true },
+  3004: { type: "emphasize", isRemoval: true },
+  3005: { type: "question", isRemoval: true },
+  3006: { type: "emoji", isRemoval: true },
+  1000: { type: "sticker", isRemoval: false },
 };
 
 /** Use schema helper for parsing associated_message_guid. */
@@ -60,23 +73,23 @@ const parseAssociatedMessageGuid = schemaParseAssociatedMessageGuid;
  */
 function getRichContentType(balloonBundleId: string | null): RichContentType | undefined {
   if (!balloonBundleId) return undefined;
-  
-  if (balloonBundleId === 'com.apple.messages.URLBalloonProvider') {
-    return 'link_preview';
+
+  if (balloonBundleId === "com.apple.messages.URLBalloonProvider") {
+    return "link_preview";
   }
-  if (balloonBundleId === 'com.apple.DigitalTouchBalloonProvider') {
-    return 'digital_touch';
+  if (balloonBundleId === "com.apple.DigitalTouchBalloonProvider") {
+    return "digital_touch";
   }
-  if (balloonBundleId === 'com.apple.Handwriting.HandwritingProvider') {
-    return 'handwriting';
+  if (balloonBundleId === "com.apple.Handwriting.HandwritingProvider") {
+    return "handwriting";
   }
-  if (balloonBundleId.includes('findmy') || balloonBundleId.includes('Maps')) {
-    return 'location';
+  if (balloonBundleId.includes("findmy") || balloonBundleId.includes("Maps")) {
+    return "location";
   }
-  if (balloonBundleId.includes('MSMessageExtensionBalloonPlugin')) {
-    return 'app_message';
+  if (balloonBundleId.includes("MSMessageExtensionBalloonPlugin")) {
+    return "app_message";
   }
-  return 'unknown';
+  return "unknown";
 }
 
 /** Use schema helper for Mac epoch timestamps. */
@@ -96,7 +109,7 @@ export class IMessageDB {
   private slugMap = new Map<string, ChatWithLastDate>();
 
   constructor(dbPath?: string, contactsDbPath?: string) {
-    this.dbPath = dbPath || join(homedir(), 'Library', 'Messages', 'chat.db');
+    this.dbPath = dbPath || join(homedir(), "Library", "Messages", "chat.db");
     this.db = new IMessageDatabase(this.dbPath);
     this.raw = new Database(this.dbPath, { readonly: true });
     this.contacts = new ContactsDB(contactsDbPath);
@@ -105,7 +118,7 @@ export class IMessageDB {
     try {
       this.contacts.initialize();
     } catch (err) {
-      console.warn('Failed to initialize contacts database:', err);
+      console.warn("Failed to initialize contacts database:", err);
     }
 
     this.syncSlugs();
@@ -122,9 +135,8 @@ export class IMessageDB {
     for (const chat of chats) {
       validGuids.add(chat.guid);
       const isGroup = isGroupGuid(chat.guid) || isGroupChatIdentifier(chat.chat_identifier);
-      const resolvedName = (!isGroup && chat.chat_identifier)
-        ? this.contacts.lookupHandle(chat.chat_identifier)
-        : null;
+      const resolvedName =
+        !isGroup && chat.chat_identifier ? this.contacts.lookupHandle(chat.chat_identifier) : null;
 
       const slug = generateThreadSlug({
         chatIdentifier: chat.chat_identifier,
@@ -142,10 +154,11 @@ export class IMessageDB {
         slug,
         chatGuid: chat.guid,
         chatIdentifier: chat.chat_identifier,
-        displayName: resolvedName !== chat.chat_identifier ? resolvedName : (chat.display_name || null),
+        displayName:
+          resolvedName !== chat.chat_identifier ? resolvedName : chat.display_name || null,
         service: this.detectServiceForChat(chat),
         isGroup,
-        participants: participants.join(','),
+        participants: participants.join(","),
         updatedAt: Date.now(),
       });
 
@@ -193,25 +206,28 @@ export class IMessageDB {
       WHERE chj.chat_id = ?
     `);
     const rows = stmt.all(chatRowId) as { id: string }[];
-    return rows.map(r => r.id);
+    return rows.map((r) => r.id);
   }
 
   /** Detect service type from chat data. */
-  private detectServiceForChat(chat: ChatWithLastDate): 'iMessage' | 'SMS' {
+  private detectServiceForChat(chat: ChatWithLastDate): "iMessage" | "SMS" {
     if (chat.service_name) {
-      return chat.service_name.toLowerCase().includes('sms') ? 'SMS' : 'iMessage';
+      return chat.service_name.toLowerCase().includes("sms") ? "SMS" : "iMessage";
     }
     if (chat.guid) {
-      return chat.guid.toLowerCase().startsWith('sms') ? 'SMS' : 'iMessage';
+      return chat.guid.toLowerCase().startsWith("sms") ? "SMS" : "iMessage";
     }
-    return 'iMessage';
+    return "iMessage";
   }
 
   /**
    * Get the N most recent messages across all conversations
    * By default excludes reactions (tapbacks) for cleaner output
    */
-  async getRecentMessages(limit: number = 20, includeReactions: boolean = false): Promise<Message[]> {
+  async getRecentMessages(
+    limit: number = 20,
+    includeReactions: boolean = false,
+  ): Promise<Message[]> {
     const chats = await this.db.getChats();
     const allMessages: Message[] = [];
 
@@ -220,16 +236,16 @@ export class IMessageDB {
       try {
         const messages = await this.db.getMessagesFromChat(
           chat.ROWID,
-          Math.min(limit * 2, 40)  // Fetch more to account for filtered reactions
+          Math.min(limit * 2, 40), // Fetch more to account for filtered reactions
         );
-        
+
         for (const msg of messages) {
           const parsed = this.db.parseMessage(msg);
           const converted = this.convertMessage(msg, parsed.text, chat.chat_identifier);
-          
+
           // Skip reaction messages unless explicitly requested
           if (!includeReactions && converted.isReaction) continue;
-          
+
           allMessages.push(converted);
         }
       } catch {
@@ -238,9 +254,7 @@ export class IMessageDB {
     }
 
     // Sort by date descending and limit
-    return allMessages
-      .sort((a, b) => b.date.getTime() - a.date.getTime())
-      .slice(0, limit);
+    return allMessages.sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, limit);
   }
 
   /**
@@ -250,7 +264,7 @@ export class IMessageDB {
   async getMessagesForChat(
     chatIdentifier: string,
     limit: number = 50,
-    options: { includeReactions?: boolean; includeReactionDetails?: boolean } = {}
+    options: { includeReactions?: boolean; includeReactionDetails?: boolean } = {},
   ): Promise<Message[]> {
     const { includeReactions = false, includeReactionDetails = false } = options;
     const chat = await this.findChatByIdentifier(chatIdentifier);
@@ -261,7 +275,13 @@ export class IMessageDB {
     const result: Message[] = [];
     for (const msg of messages) {
       const parsed = this.db.parseMessage(msg);
-      const converted = this.convertMessage(msg, parsed.text, chatIdentifier, undefined, includeReactionDetails);
+      const converted = this.convertMessage(
+        msg,
+        parsed.text,
+        chatIdentifier,
+        undefined,
+        includeReactionDetails,
+      );
 
       // Skip reaction messages unless explicitly requested
       if (!includeReactions && converted.isReaction) continue;
@@ -310,7 +330,7 @@ export class IMessageDB {
       const chat = this.findChatByIdentifier(f.chat_identifier);
       if (!chat) continue;
       const msgs = await this.db.getMessagesFromChat(chat.ROWID, 50);
-      const match = msgs.find(m => m.ROWID === f.rowid);
+      const match = msgs.find((m) => m.ROWID === f.rowid);
       if (!match) continue;
       const parsed = this.db.parseMessage(match);
       result.push(this.convertMessage(match, parsed.text, chat.chat_identifier));
@@ -335,7 +355,7 @@ export class IMessageDB {
    */
   async getMessagesAfter(chatIdentifier: string, afterMessageId: number): Promise<Message[]> {
     const messages = await this.getMessagesForChat(chatIdentifier, 100);
-    const filtered = messages.filter(m => m.id > afterMessageId && !m.isFromMe);
+    const filtered = messages.filter((m) => m.id > afterMessageId && !m.isFromMe);
     filtered.sort((a, b) => a.date.getTime() - b.date.getTime());
     return filtered;
   }
@@ -358,14 +378,23 @@ export class IMessageDB {
         WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
       ) WHERE rn = 1
     `);
-    const lastByChat = (lastMsgStmt.all() as { chat_id: number; last_date: number; last_message_id: number; snippet: string }[])
-      .reduce((acc, row) => {
+    const lastByChat = (
+      lastMsgStmt.all() as {
+        chat_id: number;
+        last_date: number;
+        last_message_id: number;
+        snippet: string;
+      }[]
+    ).reduce(
+      (acc, row) => {
         acc[row.chat_id] = {
           lastDate: row.last_date,
           snippet: row.snippet || null,
         };
         return acc;
-      }, {} as Record<number, { lastDate: number; snippet: string | null }>);
+      },
+      {} as Record<number, { lastDate: number; snippet: string | null }>,
+    );
 
     // Unread count per chat (incoming, not read, normal messages only)
     const unreadStmt = this.raw.prepare(`
@@ -376,10 +405,15 @@ export class IMessageDB {
         AND m.is_from_me = 0 AND m.is_read = 0
       GROUP BY cmj.chat_id
     `);
-    const unreadByChat = (unreadStmt.all() as { chat_id: number; unread: number }[])
-      .reduce((acc, row) => { acc[row.chat_id] = row.unread; return acc; }, {} as Record<number, number>);
+    const unreadByChat = (unreadStmt.all() as { chat_id: number; unread: number }[]).reduce(
+      (acc, row) => {
+        acc[row.chat_id] = row.unread;
+        return acc;
+      },
+      {} as Record<number, number>,
+    );
 
-    const result: Conversation[] = chats.map(chat => {
+    const result: Conversation[] = chats.map((chat) => {
       const last = lastByChat[chat.ROWID];
       const lastDate = last ? macTimestampToDate(last.lastDate) : null;
       const snippet = last?.snippet ?? null;
@@ -392,14 +426,12 @@ export class IMessageDB {
         displayName = resolved !== rawIdentifier ? resolved : null;
       }
 
-      const participants = isGroup
-        ? this.fetchChatParticipants(chat.ROWID)
-        : [rawIdentifier];
+      const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [rawIdentifier];
 
       const slug = this.getSlugForChatIdentifier(rawIdentifier) ?? rawIdentifier;
 
       const chatData = this.slugMap.get(slug);
-      const serviceType = chatData ? this.detectServiceForChat(chatData) : 'iMessage';
+      const serviceType = chatData ? this.detectServiceForChat(chatData) : "iMessage";
 
       return {
         chatId: chat.guid,
@@ -434,10 +466,10 @@ export class IMessageDB {
     const chats = this.getAllChatsWithLastDate();
 
     // Normalize the search handle
-    const normalized = handle.replace(/[\s\-\(\)]/g, '').toLowerCase();
+    const normalized = handle.replace(/[\s\-()]/g, "").toLowerCase();
 
-    const matches = chats.filter(chat => {
-      const chatNorm = chat.chat_identifier?.replace(/[\s\-\(\)]/g, '').toLowerCase() || '';
+    const matches = chats.filter((chat) => {
+      const chatNorm = chat.chat_identifier?.replace(/[\s\-()]/g, "").toLowerCase() || "";
       return chatNorm.includes(normalized) || normalized.includes(chatNorm);
     });
 
@@ -454,7 +486,7 @@ export class IMessageDB {
 
     const slug = this.getSlugForChatIdentifier(rawIdentifier) ?? rawIdentifier;
     const chatData = this.slugMap.get(slug);
-    const serviceType = chatData ? this.detectServiceForChat(chatData) : 'iMessage';
+    const serviceType = chatData ? this.detectServiceForChat(chatData) : "iMessage";
 
     return {
       chatId: found.guid,
@@ -475,24 +507,24 @@ export class IMessageDB {
    * Search messages across all conversations
    */
   async searchMessages(query: string, limit: number = 20): Promise<Message[]> {
-    const results = await this.db.searchMessages(query, limit * 2);  // Fetch extra to filter reactions
-    
+    const results = await this.db.searchMessages(query, limit * 2); // Fetch extra to filter reactions
+
     const messages: Message[] = [];
     for (const result of results) {
       const parsed = this.db.parseMessage(result);
       const converted = this.convertMessage(
         result,
         parsed.text,
-        (result as any).chat_identifier || 'unknown'
+        (result as any).chat_identifier || "unknown",
       );
-      
+
       // Skip reactions in search results
       if (converted.isReaction) continue;
-      
+
       messages.push(converted);
       if (messages.length >= limit) break;
     }
-    
+
     return messages;
   }
 
@@ -523,8 +555,15 @@ export class IMessageDB {
            AND m.associated_message_type = ${AssociatedMessageType.NORMAL}) as last_date
       FROM ${Tables.CHAT} c
     `);
-    const rows = stmt.all() as { rowid: number; guid: string; chat_identifier: string; display_name: string | null; service_name: string | null; last_date: number | null }[];
-    return rows.map(r => ({
+    const rows = stmt.all() as {
+      rowid: number;
+      guid: string;
+      chat_identifier: string;
+      display_name: string | null;
+      service_name: string | null;
+      last_date: number | null;
+    }[];
+    return rows.map((r) => ({
       ROWID: r.rowid,
       guid: r.guid,
       chat_identifier: r.chat_identifier,
@@ -538,7 +577,7 @@ export class IMessageDB {
    * From a list of chats with last_date, return the one with the most recent message (sort by last_date desc).
    */
   private pickMostRecentChat(chats: ChatWithLastDate[]): ChatRow {
-    if (chats.length === 0) throw new Error('pickMostRecentChat requires at least one chat');
+    if (chats.length === 0) throw new Error("pickMostRecentChat requires at least one chat");
     if (chats.length === 1) return toChatRow(chats[0]);
     const sorted = chats.slice().sort((a, b) => {
       const aDate = a.last_date ?? 0;
@@ -554,10 +593,12 @@ export class IMessageDB {
    */
   private findChatByIdentifier(identifier: string): ChatRow | null {
     const chats = this.getAllChatsWithLastDate();
-    const matches = chats.filter(c =>
-      c.chat_identifier === identifier ||
-      c.guid === identifier ||
-      (c.chat_identifier != null && (c.chat_identifier.includes(identifier) || identifier.includes(c.chat_identifier)))
+    const matches = chats.filter(
+      (c) =>
+        c.chat_identifier === identifier ||
+        c.guid === identifier ||
+        (c.chat_identifier != null &&
+          (c.chat_identifier.includes(identifier) || identifier.includes(c.chat_identifier))),
     );
     if (matches.length === 0) return null;
     return this.pickMostRecentChat(matches);
@@ -571,48 +612,54 @@ export class IMessageDB {
     text: string | null,
     chatId: string,
     extended?: ExtendedMessageData,
-    includeReactions: boolean = false
+    includeReactions: boolean = false,
   ): Message {
     // If no extended data provided, fetch it
     const ext = extended || this.fetchExtendedMessageData(raw.ROWID);
-    
+
     // Clean up text - handle object replacement characters and other special chars
     let cleanText = text || raw.text || null;
     if (cleanText) {
       // U+FFFC is Object Replacement Character (inline attachment placeholder); see db-schema
       // U+FFFD is Replacement Character (invalid UTF-8)
-      const re = new RegExp(OBJECT_REPLACEMENT_CHAR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '+', 'g');
+      const re = new RegExp(
+        `${OBJECT_REPLACEMENT_CHAR.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}+`,
+        "g",
+      );
       cleanText = cleanText
-        .replace(re, '📎 ')  // Use paperclip emoji for inline attachments
-        .replace(/\uFFFD/g, '')
+        .replace(re, "📎 ") // Use paperclip emoji for inline attachments
+        .replace(/\uFFFD/g, "")
         .trim();
-      
+
       // If only attachment markers remain, indicate it's an attachment-only message
-      if (!cleanText || cleanText === '📎' || /^(📎\s*)+$/.test(cleanText)) {
-        cleanText = '(image/attachment)';
+      if (!cleanText || cleanText === "📎" || /^(📎\s*)+$/.test(cleanText)) {
+        cleanText = "(image/attachment)";
       }
     }
-    
+
     // Determine if this is a reaction (see db-schema.ts and docs)
     const associatedType = ext.associated_message_type ?? AssociatedMessageType.NORMAL;
     const isReaction = isReactionType(associatedType);
-    
+
     // Parse reaction info
     let reaction: Reaction | undefined;
     if (isReaction && ext.associated_message_guid) {
-      const typeInfo = TAPBACK_TYPE_MAP[associatedType] || { type: 'unknown' as TapbackType, isRemoval: false };
+      const typeInfo = TAPBACK_TYPE_MAP[associatedType] || {
+        type: "unknown" as TapbackType,
+        isRemoval: false,
+      };
       const parsed = parseAssociatedMessageGuid(ext.associated_message_guid);
-      
+
       reaction = {
         type: typeInfo.type,
         emoji: ext.associated_message_emoji || undefined,
-        fromHandle: raw.is_from_me ? 'me' : (ext.handle_id || 'unknown'),
+        fromHandle: raw.is_from_me ? "me" : ext.handle_id || "unknown",
         isRemoval: typeInfo.isRemoval,
-        targetMessageGuid: parsed?.targetGuid || '',
+        targetMessageGuid: parsed?.targetGuid || "",
         targetMessagePart: parsed?.partIndex || 0,
       };
     }
-    
+
     // Determine if this is a reply
     const isReply = Boolean(ext.thread_originator_guid);
     let replyTo: ReplyContext | undefined;
@@ -623,17 +670,17 @@ export class IMessageDB {
         replyToText: originalText,
       };
     }
-    
+
     // Get rich content type
     const richContentType = getRichContentType(ext.balloon_bundle_id || null);
-    
+
     // Get attachments if needed
     const hasAttachments = Boolean(ext.cache_has_attachments);
     let attachments: Attachment[] | undefined;
     if (hasAttachments) {
       attachments = this.fetchAttachments(raw.ROWID);
     }
-    
+
     // Get reactions for this message if requested
     let reactions: Reaction[] | undefined;
     if (includeReactions && !isReaction) {
@@ -644,17 +691,17 @@ export class IMessageDB {
       }
       if (reactions.length === 0) reactions = undefined;
     }
-    
+
     // Resolve display name from contacts
-    const rawHandle = raw.is_from_me ? 'me' : (ext.handle_id || 'unknown');
-    const displayName = rawHandle === 'me' ? undefined : this.contacts.lookupHandle(rawHandle);
-    
+    const rawHandle = raw.is_from_me ? "me" : ext.handle_id || "unknown";
+    const displayName = rawHandle === "me" ? undefined : this.contacts.lookupHandle(rawHandle);
+
     // Parse rich content summary if available
     let richContentSummary: string | undefined;
     if (ext.message_summary_info) {
       richContentSummary = this.parseRichContentSummary(ext.message_summary_info);
     }
-    
+
     return {
       id: raw.ROWID,
       guid: raw.guid,
@@ -668,7 +715,7 @@ export class IMessageDB {
       isRead: ext.is_read != null ? Boolean(ext.is_read) : true,
       isDelivered: ext.is_delivered != null ? Boolean(ext.is_delivered) : true,
       chatId: chatId,
-      service: this.detectServiceForMessage(ext) as 'iMessage' | 'SMS',
+      service: this.detectServiceForMessage(ext) as "iMessage" | "SMS",
       isReaction,
       reaction,
       isReply,
@@ -688,7 +735,7 @@ export class IMessageDB {
    */
   private consolidateReactions(reactions: Reaction[]): Reaction[] {
     const reactionMap = new Map<string, Reaction>();
-    
+
     for (const r of reactions) {
       const key = `${r.fromHandle}-${r.type}-${r.targetMessagePart}`;
       if (r.isRemoval) {
@@ -697,18 +744,18 @@ export class IMessageDB {
         reactionMap.set(key, r);
       }
     }
-    
+
     return Array.from(reactionMap.values());
   }
 
   /**
    * Detect service from extended message data (handle.service column).
    */
-  private detectServiceForMessage(ext: ExtendedMessageData): 'iMessage' | 'SMS' {
+  private detectServiceForMessage(ext: ExtendedMessageData): "iMessage" | "SMS" {
     if (ext.handle_service) {
-      return ext.handle_service.toLowerCase().includes('sms') ? 'SMS' : 'iMessage';
+      return ext.handle_service.toLowerCase().includes("sms") ? "SMS" : "iMessage";
     }
-    return 'iMessage';
+    return "iMessage";
   }
 
   /**
@@ -767,8 +814,8 @@ export class IMessageDB {
       WHERE maj.message_id = ?
     `);
     const rows = stmt.all(messageRowId) as any[];
-    return rows.map(r => ({
-      filename: r.filename || '',
+    return rows.map((r) => ({
+      filename: r.filename || "",
       mimeType: r.mime_type,
       transferName: r.transfer_name,
       totalBytes: r.total_bytes || 0,
@@ -791,17 +838,20 @@ export class IMessageDB {
       WHERE m.associated_message_guid LIKE ?
         AND m.associated_message_type >= 2000
     `);
-    
+
     const rows = stmt.all(`%/${messageGuid}`) as any[];
-    
-    return rows.map(r => {
-      const typeInfo = TAPBACK_TYPE_MAP[r.associated_message_type] || { type: 'unknown' as TapbackType, isRemoval: false };
+
+    return rows.map((r) => {
+      const typeInfo = TAPBACK_TYPE_MAP[r.associated_message_type] || {
+        type: "unknown" as TapbackType,
+        isRemoval: false,
+      };
       const parsed = parseAssociatedMessageGuid(r.associated_message_guid);
-      
+
       return {
         type: typeInfo.type,
         emoji: r.associated_message_emoji || undefined,
-        fromHandle: r.is_from_me ? 'me' : (r.handle_id || 'unknown'),
+        fromHandle: r.is_from_me ? "me" : r.handle_id || "unknown",
         isRemoval: typeInfo.isRemoval,
         targetMessageGuid: parsed?.targetGuid || messageGuid,
         targetMessagePart: parsed?.partIndex || 0,
@@ -815,26 +865,26 @@ export class IMessageDB {
    */
   private parseRichContentSummary(blob: Buffer | null): string | undefined {
     if (!blob) return undefined;
-    
+
     try {
       // message_summary_info is a binary plist - try to extract text
-      const str = blob.toString('utf8');
-      
+      const str = blob.toString("utf8");
+
       // Look for common patterns in the summary
       // Link URLs
-      const urlMatch = str.match(/https?:\/\/[^\s\x00]+/);
+      const urlMatch = str.match(/https?:\/\/\S+/);
       if (urlMatch) {
         return `Link: ${urlMatch[0]}`;
       }
-      
+
       // Title text (often in plists as <string>Title</string>)
       const titleMatch = str.match(/<string>([^<]+)<\/string>/);
       if (titleMatch) {
         return titleMatch[1];
       }
-      
+
       // For now, just indicate rich content exists
-      return '[Rich Content]';
+      return "[Rich Content]";
     } catch {
       return undefined;
     }
@@ -845,19 +895,25 @@ export class IMessageDB {
    * Falls back to parsing attributedBody if text is null
    */
   private getMessageTextByGuid(guid: string): string | null {
-    const stmt = this.raw.prepare(`SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE guid = ? LIMIT 1`);
-    const row = stmt.get(guid) as { ROWID: number; text: string | null; attributedBody: Buffer | null } | undefined;
+    const stmt = this.raw.prepare(
+      `SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE guid = ? LIMIT 1`,
+    );
+    const row = stmt.get(guid) as
+      | { ROWID: number; text: string | null; attributedBody: Buffer | null }
+      | undefined;
     if (!row) return null;
-    
+
     // Try text field first
     if (row.text) return row.text;
-    
+
     // Fall back to parsing attributedBody if available
     if (row.attributedBody) {
       try {
         // Use imessage-parser to parse the attributedBody
         // We need to fetch the full message row for the parser
-        const fullRow = this.raw.prepare(`SELECT * FROM ${Tables.MESSAGE} WHERE ROWID = ?`).get(row.ROWID);
+        const fullRow = this.raw
+          .prepare(`SELECT * FROM ${Tables.MESSAGE} WHERE ROWID = ?`)
+          .get(row.ROWID);
         if (fullRow) {
           const parsed = this.db.parseMessage(fullRow as any);
           return parsed.text || null;
@@ -866,7 +922,7 @@ export class IMessageDB {
         // Ignore parsing errors
       }
     }
-    
+
     return null;
   }
 }

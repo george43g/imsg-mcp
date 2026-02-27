@@ -11,14 +11,14 @@ export const MAC_EPOCH_OFFSET = 978307200;
 export const NANOS_PER_SECOND = 1_000_000_000;
 
 export const Tables = {
-  MESSAGE: 'message',
-  HANDLE: 'handle',
-  CHAT: 'chat',
-  CHAT_MESSAGE_JOIN: 'chat_message_join',
-  CHAT_HANDLE_JOIN: 'chat_handle_join',
-  ATTACHMENT: 'attachment',
-  MESSAGE_ATTACHMENT_JOIN: 'message_attachment_join',
-  RECOVERABLE_MESSAGE_PART: 'recoverable_message_part',
+  MESSAGE: "message",
+  HANDLE: "handle",
+  CHAT: "chat",
+  CHAT_MESSAGE_JOIN: "chat_message_join",
+  CHAT_HANDLE_JOIN: "chat_handle_join",
+  ATTACHMENT: "attachment",
+  MESSAGE_ATTACHMENT_JOIN: "message_attachment_join",
+  RECOVERABLE_MESSAGE_PART: "recoverable_message_part",
 } as const;
 
 /** associated_message_type: 0 = normal message; 2,3 = business; 1000 = sticker; 2000–3006 = tapbacks. */
@@ -51,7 +51,7 @@ export const TAPBACK_QUERY_MIN = 2000;
 export const ASSOCIATED_MESSAGE_GUID_REGEX = /^p:(\d+)\/(.+)$/;
 
 /** Object replacement character used as placeholder for inline attachments / rich content. */
-export const OBJECT_REPLACEMENT_CHAR = '\uFFFC';
+export const OBJECT_REPLACEMENT_CHAR = "\uFFFC";
 
 /**
  * Convert macOS timestamp (nanoseconds since 2001-01-01) to JS Date.
@@ -67,7 +67,7 @@ export function macTimestampToDate(timestamp: number | null): Date | null {
  * Format: "p:PART_INDEX/MESSAGE_GUID"
  */
 export function parseAssociatedMessageGuid(
-  guid: string | null
+  guid: string | null,
 ): { targetGuid: string; partIndex: number } | null {
   if (!guid) return null;
   const match = guid.match(ASSOCIATED_MESSAGE_GUID_REGEX);

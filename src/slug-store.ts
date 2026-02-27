@@ -4,10 +4,10 @@
  * MCP server restarts and can be referenced by agents/scripts.
  */
 
-import Database from 'better-sqlite3';
-import { existsSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
-import { join, dirname } from 'path';
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 
 export interface SlugRecord {
   slug: string;
@@ -20,8 +20,8 @@ export interface SlugRecord {
   updatedAt: number;
 }
 
-const DEFAULT_DIR = join(homedir(), '.imsg-mcp');
-const DEFAULT_DB = join(DEFAULT_DIR, 'slugs.db');
+const DEFAULT_DIR = join(homedir(), ".imsg-mcp");
+const DEFAULT_DB = join(DEFAULT_DIR, "slugs.db");
 
 export class SlugStore {
   private db: Database.Database;
@@ -33,7 +33,7 @@ export class SlugStore {
       mkdirSync(dir, { recursive: true });
     }
     this.db = new Database(path);
-    this.db.pragma('journal_mode = WAL');
+    this.db.pragma("journal_mode = WAL");
     this.migrate();
   }
 
@@ -85,35 +85,44 @@ export class SlugStore {
   }
 
   lookupBySlug(slug: string): SlugRecord | null {
-    const row = this.db.prepare('SELECT * FROM thread_slugs WHERE slug = ?').get(slug) as any;
+    const row = this.db.prepare("SELECT * FROM thread_slugs WHERE slug = ?").get(slug) as any;
     return row ? this.rowToRecord(row) : null;
   }
 
   lookupByGuid(chatGuid: string): SlugRecord | null {
-    const row = this.db.prepare('SELECT * FROM thread_slugs WHERE chat_guid = ?').get(chatGuid) as any;
+    const row = this.db
+      .prepare("SELECT * FROM thread_slugs WHERE chat_guid = ?")
+      .get(chatGuid) as any;
     return row ? this.rowToRecord(row) : null;
   }
 
   lookupByChatIdentifier(chatIdentifier: string): SlugRecord | null {
-    const row = this.db.prepare('SELECT * FROM thread_slugs WHERE chat_identifier = ?').get(chatIdentifier) as any;
+    const row = this.db
+      .prepare("SELECT * FROM thread_slugs WHERE chat_identifier = ?")
+      .get(chatIdentifier) as any;
     return row ? this.rowToRecord(row) : null;
   }
 
   all(): SlugRecord[] {
-    const rows = this.db.prepare('SELECT * FROM thread_slugs ORDER BY updated_at DESC').all() as any[];
-    return rows.map(r => this.rowToRecord(r));
+    const rows = this.db
+      .prepare("SELECT * FROM thread_slugs ORDER BY updated_at DESC")
+      .all() as any[];
+    return rows.map((r) => this.rowToRecord(r));
   }
 
   /** Remove slugs whose chat_guid is not in the given set of valid guids. */
   prune(validGuids: Set<string>): number {
-    const all = this.db.prepare('SELECT slug, chat_guid FROM thread_slugs').all() as { slug: string; chat_guid: string }[];
-    const toDelete = all.filter(r => !validGuids.has(r.chat_guid));
+    const all = this.db.prepare("SELECT slug, chat_guid FROM thread_slugs").all() as {
+      slug: string;
+      chat_guid: string;
+    }[];
+    const toDelete = all.filter((r) => !validGuids.has(r.chat_guid));
     if (toDelete.length === 0) return 0;
-    const del = this.db.prepare('DELETE FROM thread_slugs WHERE slug = ?');
+    const del = this.db.prepare("DELETE FROM thread_slugs WHERE slug = ?");
     const tx = this.db.transaction((slugs: string[]) => {
       for (const s of slugs) del.run(s);
     });
-    tx(toDelete.map(r => r.slug));
+    tx(toDelete.map((r) => r.slug));
     return toDelete.length;
   }
 
