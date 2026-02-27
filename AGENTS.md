@@ -9,6 +9,10 @@ MCP server for iMessage on macOS. Lets AI agents send and receive iMessages (and
 - **Reading**: SQLite at `~/Library/Messages/chat.db` (macOS only; needs Full Disk Access).
 - **Contacts**: Reads `~/Library/Application Support/AddressBook/AddressBook-v22.abcddb` to resolve phone numbers/emails to contact names.
 
+## Remote / cloud agents (Git LFS)
+
+Large DB files (`*.db`, `*.abcddb`) are tracked with Git LFS. In cloud or fresh clones they may be pointer files only. **Before doing any work**, restore LFS content: `git lfs install` (once), then `git lfs pull`. See **skills.md** for full steps.
+
 ## Commands
 
 | Command        | Purpose                    |
