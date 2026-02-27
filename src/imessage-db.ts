@@ -108,12 +108,12 @@ export class IMessageDB {
   /** In-memory slug -> ChatWithLastDate for fast lookups during a session. */
   private slugMap = new Map<string, ChatWithLastDate>();
 
-  constructor(dbPath?: string, contactsDbPath?: string) {
+  constructor(dbPath?: string, contactsDbPaths?: string | string[], slugStorePath?: string) {
     this.dbPath = dbPath || join(homedir(), "Library", "Messages", "chat.db");
     this.db = new IMessageDatabase(this.dbPath);
     this.raw = new Database(this.dbPath, { readonly: true });
-    this.contacts = new ContactsDB(contactsDbPath);
-    this.slugStore = new SlugStore();
+    this.contacts = new ContactsDB(contactsDbPaths);
+    this.slugStore = new SlugStore(slugStorePath);
 
     try {
       this.contacts.initialize();

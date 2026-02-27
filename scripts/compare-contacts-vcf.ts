@@ -13,7 +13,7 @@ import { ContactsDB } from "../src/contacts-db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
-const defaultVcf = join(root, "env-data","contacts.vcf");
+const defaultVcf = join(root, "env-data", "contacts.vcf");
 
 interface VCardEntry {
   fn: string;
