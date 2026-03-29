@@ -1,15 +1,16 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getImsgDbPath, isLocalEnv } from "./config.js";
+import { getImsgDbPath, isAiEnv } from "./config.js";
 import { setLastSendError } from "./logger.js";
 import { insertSentMessage } from "./mock-send-db.js";
 import type { SendMessageResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
-const MOCK = !isLocalEnv();
+/** `VITE_ENV=ai`, or any test run (never hit Messages.app / osascript under Vitest). */
+const MOCK = isAiEnv() || process.env.VITEST === "true";
 
 // ---------------------------------------------------------------------------
-// Mock helpers (non-local: return success + insert into chat.db)
+// Mock helpers (MOCK: return success + optional insert into chat.db)
 // ---------------------------------------------------------------------------
 
 function mockSend(
