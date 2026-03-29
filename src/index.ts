@@ -623,8 +623,7 @@ class IMessageMCPServer {
   private async handleListConversations(args: unknown) {
     const { limit } = ListConversationsSchema.parse(args);
 
-    const conversations = await this.db.listConversations();
-    const limited = conversations.slice(0, limit);
+    const limited = await this.db.listConversations(limit);
 
     if (limited.length === 0) {
       return {

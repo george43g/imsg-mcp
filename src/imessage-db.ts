@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { type ChatRow, IMessageDatabase, type MessageRow } from "imessage-parser";
+import { extractAttributedBodyText } from "./attributed-body-text.js";
 import { ContactsDB } from "./contacts-db.js";
 import {
   AssociatedMessageType,
@@ -19,6 +20,12 @@ import {
   parseAssociatedMessageGuid as schemaParseAssociatedMessageGuid,
   Tables,
 } from "./db-schema.js";
+import {
+  isMetadataOnlySnippet,
+  normalizeRichMetadataText,
+  pickConversationSnippet,
+} from "./conversation-snippet.js";
+import { extractChatSummaryText } from "./plist-text.js";
 import { type SlugRecord, SlugStore } from "./slug-store.js";
 import { generateThreadSlug, isGroupChatIdentifier, isGroupGuid } from "./thread-slug.js";
 import type {
@@ -33,6 +40,21 @@ import type {
 
 /** Chat row with last message date and service from join (for sorting by activity). */
 type ChatWithLastDate = ChatRow & { last_date: number | null; service_name?: string | null };
+type LastConversationRow = {
+  chatId: number;
+  lastDate: number;
+  lastMessageId: number;
+  lastService: string | null;
+  lastIsFromMe: boolean;
+  balloonBundleId: string | null;
+  snippet: string | null;
+  chatProperties: Buffer | null;
+};
+type PreparedConversationEntry = {
+  last?: LastConversationRow;
+  mergeKey: string;
+  conversation: Conversation;
+};
 
 function toChatRow(c: ChatWithLastDate): ChatRow {
   return {
@@ -67,6 +89,15 @@ const TAPBACK_TYPE_MAP: Record<number, { type: TapbackType; isRemoval: boolean }
 
 /** Use schema helper for parsing associated_message_guid. */
 const parseAssociatedMessageGuid = schemaParseAssociatedMessageGuid;
+
+function isPlaceholderText(text: string | null | undefined): boolean {
+  if (!text) return true;
+  return /^[\uFFFC\uFFFD\s]+$/u.test(text);
+}
+
+function isHiddenSystemItem(itemType: number | null | undefined): boolean {
+  return (itemType ?? 0) !== 0;
+}
 
 /**
  * Determine rich content type from balloon_bundle_id
@@ -107,6 +138,8 @@ export class IMessageDB {
   private slugStore: SlugStore;
   /** In-memory slug -> ChatWithLastDate for fast lookups during a session. */
   private slugMap = new Map<string, ChatWithLastDate>();
+  /** In-memory chat guid -> slug for stable per-chat slug lookups. */
+  private guidToSlug = new Map<string, string>();
 
   constructor(dbPath?: string, contactsDbPaths?: string | string[], slugStorePath?: string) {
     this.dbPath = dbPath || join(homedir(), "Library", "Messages", "chat.db");
@@ -131,6 +164,9 @@ export class IMessageDB {
     const chats = this.getAllChatsWithLastDate();
     const validGuids = new Set<string>();
     const records: SlugRecord[] = [];
+
+    this.slugMap.clear();
+    this.guidToSlug.clear();
 
     for (const chat of chats) {
       validGuids.add(chat.guid);
@@ -163,6 +199,7 @@ export class IMessageDB {
       });
 
       this.slugMap.set(slug, chat);
+      this.guidToSlug.set(chat.guid, slug);
     }
 
     this.slugStore.upsertMany(records);
@@ -178,11 +215,19 @@ export class IMessageDB {
     return this.findChatByIdentifier(record.chatIdentifier);
   }
 
+  /** Get the slug for a specific chat GUID. */
+  getSlugForChatGuid(chatGuid: string): string | null {
+    const cached = this.guidToSlug.get(chatGuid);
+    if (cached) return cached;
+    const record = this.slugStore.lookupByGuid(chatGuid);
+    return record?.slug ?? null;
+  }
+
   /** Get the slug record for a chat_identifier (for attaching to output). */
   getSlugForChatIdentifier(chatIdentifier: string): string | null {
-    for (const [slug, chat] of this.slugMap) {
-      if (chat.chat_identifier === chatIdentifier) return slug;
-    }
+    const matches = [...this.slugMap.entries()].filter(([, chat]) => chat.chat_identifier === chatIdentifier);
+    if (matches.length === 1) return matches[0][0];
+    if (matches.length > 1) return null;
     const record = this.slugStore.lookupByChatIdentifier(chatIdentifier);
     return record?.slug ?? null;
   }
@@ -241,7 +286,9 @@ export class IMessageDB {
 
         for (const msg of messages) {
           const parsed = this.db.parseMessage(msg);
-          const converted = this.convertMessage(msg, parsed.text, chat.chat_identifier);
+          const ext = this.fetchExtendedMessageData(msg.ROWID);
+          if (isHiddenSystemItem(ext.item_type)) continue;
+          const converted = this.convertMessage(msg, parsed.text, chat.chat_identifier, ext);
 
           // Skip reaction messages unless explicitly requested
           if (!includeReactions && converted.isReaction) continue;
@@ -267,31 +314,36 @@ export class IMessageDB {
     options: { includeReactions?: boolean; includeReactionDetails?: boolean } = {},
   ): Promise<Message[]> {
     const { includeReactions = false, includeReactionDetails = false } = options;
-    const chat = await this.findChatByIdentifier(chatIdentifier);
-    if (!chat) return [];
+    const chats = this.resolveChatsForConversation(chatIdentifier);
+    if (chats.length === 0) return [];
 
-    const messages = await this.db.getMessagesFromChat(chat.ROWID, limit * 2);
+    const perChatLimit = Math.max(limit * 2, 50);
+    const result = new Map<number, Message>();
+    for (const chat of chats) {
+      const messages = await this.db.getMessagesFromChat(chat.ROWID, perChatLimit);
 
-    const result: Message[] = [];
-    for (const msg of messages) {
-      const parsed = this.db.parseMessage(msg);
-      const converted = this.convertMessage(
-        msg,
-        parsed.text,
-        chatIdentifier,
-        undefined,
-        includeReactionDetails,
-      );
+      for (const msg of messages) {
+        const parsed = this.db.parseMessage(msg);
+        const ext = this.fetchExtendedMessageData(msg.ROWID);
+        if (isHiddenSystemItem(ext.item_type)) continue;
+        const converted = this.convertMessage(
+          msg,
+          parsed.text,
+          chat.chat_identifier,
+          ext,
+          includeReactionDetails,
+        );
 
-      // Skip reaction messages unless explicitly requested
-      if (!includeReactions && converted.isReaction) continue;
+        if (!includeReactions && converted.isReaction) continue;
 
-      result.push(converted);
+        result.set(converted.id, converted);
+      }
     }
 
     // Sort by timestamp ascending (chronological conversation order)
-    result.sort((a, b) => a.date.getTime() - b.date.getTime());
-    return result.slice(-limit);
+    return [...result.values()]
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .slice(-limit);
   }
 
   /**
@@ -317,6 +369,7 @@ export class IMessageDB {
       WHERE m.is_from_me = 0 
         AND m.is_read = 0
         AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
       ORDER BY m.date DESC
       LIMIT ?
     `);
@@ -364,18 +417,24 @@ export class IMessageDB {
    * List all conversations with metadata, sorted by last message date (newest first).
    * Populates lastMessageDate, lastMessageSnippet, and unreadCount to match Messages.app left pane.
    */
-  async listConversations(): Promise<Conversation[]> {
+  async listConversations(limit?: number): Promise<Conversation[]> {
     const chats = await this.db.getChats();
 
     // Last message per chat (date, snippet from text column; attributedBody-only messages may have empty snippet)
     const lastMsgStmt = this.raw.prepare(`
-      SELECT chat_id, last_date, last_message_id, snippet FROM (
+      SELECT chat_id, last_date, last_message_id, last_service, last_is_from_me, balloon_bundle_id, snippet, chat_properties FROM (
         SELECT cmj.chat_id, m.date as last_date, m.ROWID as last_message_id,
+          m.service as last_service,
+          m.is_from_me as last_is_from_me,
+          m.balloon_bundle_id as balloon_bundle_id,
           COALESCE(TRIM(SUBSTR(m.text, 1, 200)), '') as snippet,
+          c.properties as chat_properties,
           ROW_NUMBER() OVER (PARTITION BY cmj.chat_id ORDER BY m.date DESC) as rn
         FROM ${Tables.MESSAGE} m
         JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+        JOIN ${Tables.CHAT} c ON c.ROWID = cmj.chat_id
         WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
+          AND COALESCE(m.item_type, 0) = 0
       ) WHERE rn = 1
     `);
     const lastByChat = (
@@ -383,17 +442,27 @@ export class IMessageDB {
         chat_id: number;
         last_date: number;
         last_message_id: number;
+        last_service: string | null;
+        last_is_from_me: number;
+        balloon_bundle_id: string | null;
         snippet: string;
+        chat_properties: Buffer | null;
       }[]
     ).reduce(
       (acc, row) => {
         acc[row.chat_id] = {
+          chatId: row.chat_id,
           lastDate: row.last_date,
+          lastMessageId: row.last_message_id,
+          lastService: row.last_service,
+          lastIsFromMe: Boolean(row.last_is_from_me),
+          balloonBundleId: row.balloon_bundle_id,
           snippet: row.snippet || null,
+          chatProperties: row.chat_properties,
         };
         return acc;
       },
-      {} as Record<number, { lastDate: number; snippet: string | null }>,
+      {} as Record<number, LastConversationRow>,
     );
 
     // Unread count per chat (incoming, not read, normal messages only)
@@ -402,6 +471,7 @@ export class IMessageDB {
       FROM ${Tables.MESSAGE} m
       JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
       WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
         AND m.is_from_me = 0 AND m.is_read = 0
       GROUP BY cmj.chat_id
     `);
@@ -413,10 +483,9 @@ export class IMessageDB {
       {} as Record<number, number>,
     );
 
-    const result: Conversation[] = chats.map((chat) => {
+    const prepared = chats.map((chat) => {
       const last = lastByChat[chat.ROWID];
       const lastDate = last ? macTimestampToDate(last.lastDate) : null;
-      const snippet = last?.snippet ?? null;
 
       const rawIdentifier = chat.chat_identifier;
       const isGroup = isGroupGuid(chat.guid) || isGroupChatIdentifier(rawIdentifier);
@@ -427,34 +496,46 @@ export class IMessageDB {
       }
 
       const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [rawIdentifier];
+      const mergeKey = this.getConversationMergeKey(rawIdentifier, chat.guid, isGroup);
 
-      const slug = this.getSlugForChatIdentifier(rawIdentifier) ?? rawIdentifier;
+      const slug = this.getSlugForChatGuid(chat.guid) ?? rawIdentifier;
 
       const chatData = this.slugMap.get(slug);
       const serviceType = chatData ? this.detectServiceForChat(chatData) : "iMessage";
 
       return {
-        chatId: chat.guid,
-        chatIdentifier: rawIdentifier,
-        displayName: displayName || null,
-        rawIdentifier,
-        participants,
-        lastMessageDate: lastDate,
-        lastMessageSnippet: snippet && snippet.length > 0 ? snippet : null,
-        unreadCount: unreadByChat[chat.ROWID] ?? 0,
-        threadSlug: slug,
-        isGroupChat: isGroup,
-        serviceType,
+        last,
+        mergeKey,
+        conversation: {
+          chatId: chat.guid,
+          chatIdentifier: rawIdentifier,
+          displayName: displayName || null,
+          rawIdentifier,
+          participants,
+          lastMessageDate: lastDate,
+          lastMessageSnippet: null,
+          unreadCount: unreadByChat[chat.ROWID] ?? 0,
+          threadSlug: slug,
+          isGroupChat: isGroup,
+          serviceType,
+        } satisfies Conversation,
       };
     });
 
-    // Sort by last message date descending (newest first), then by chat
-    result.sort((a, b) => {
-      const aTime = a.lastMessageDate?.getTime() ?? 0;
-      const bTime = b.lastMessageDate?.getTime() ?? 0;
+    // Sort by last message date descending (newest first), then merge duplicate rows
+    prepared.sort((a, b) => {
+      const aTime = a.conversation.lastMessageDate?.getTime() ?? 0;
+      const bTime = b.conversation.lastMessageDate?.getTime() ?? 0;
       return bTime - aTime;
     });
-    return result;
+
+    const deduped = this.mergeDuplicateConversations(prepared);
+    const selected = typeof limit === "number" ? deduped.slice(0, limit) : deduped;
+
+    return selected.map(({ conversation, last }) => ({
+      ...conversation,
+      lastMessageSnippet: this.resolveConversationSnippet(last),
+    }));
   }
 
   /**
@@ -484,7 +565,7 @@ export class IMessageDB {
       displayName = resolved !== rawIdentifier ? resolved : null;
     }
 
-    const slug = this.getSlugForChatIdentifier(rawIdentifier) ?? rawIdentifier;
+    const slug = this.getSlugForChatGuid(found.guid) ?? rawIdentifier;
     const chatData = this.slugMap.get(slug);
     const serviceType = chatData ? this.detectServiceForChat(chatData) : "iMessage";
 
@@ -512,10 +593,13 @@ export class IMessageDB {
     const messages: Message[] = [];
     for (const result of results) {
       const parsed = this.db.parseMessage(result);
+      const ext = this.fetchExtendedMessageData(result.ROWID);
+      if (isHiddenSystemItem(ext.item_type)) continue;
       const converted = this.convertMessage(
         result,
         parsed.text,
         (result as any).chat_identifier || "unknown",
+        ext,
       );
 
       // Skip reactions in search results
@@ -535,6 +619,189 @@ export class IMessageDB {
     return `imessage://${encodeURIComponent(chatIdentifier)}`;
   }
 
+  private resolveConversationSnippet(last?: LastConversationRow): string | null {
+    if (!last) return null;
+
+    const directSnippet = pickConversationSnippet({ rawText: last.snippet });
+    if (directSnippet && !this.shouldFallbackToPreviousSnippet(directSnippet, last)) {
+      return directSnippet;
+    }
+
+    const parsedSnippet = pickConversationSnippet({
+      parsedText: this.getMessageTextByRowId(last.lastMessageId),
+    });
+    if (parsedSnippet && !this.shouldFallbackToPreviousSnippet(parsedSnippet, last)) {
+      return parsedSnippet;
+    }
+
+    const previousSnippet = this.getPreviousConversationSnippet(last);
+    if (previousSnippet) return previousSnippet;
+
+    return pickConversationSnippet({
+      summaryText: extractChatSummaryText(last.chatProperties) ?? null,
+    });
+  }
+
+  private shouldFallbackToPreviousSnippet(snippet: string, last: LastConversationRow): boolean {
+    return Boolean(
+      last.balloonBundleId?.includes("URLBalloonProvider") && isMetadataOnlySnippet(snippet),
+    );
+  }
+
+  private getPreviousConversationSnippet(last: LastConversationRow): string | null {
+    const rows = this.raw.prepare(`
+      SELECT m.ROWID, m.text, m.attributedBody, m.date, m.is_from_me
+      FROM ${Tables.MESSAGE} m
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON cmj.message_id = m.ROWID
+      WHERE cmj.chat_id = ?
+        AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
+        AND (m.date < ? OR (m.date = ? AND m.ROWID < ?))
+      ORDER BY m.date DESC, m.ROWID DESC
+      LIMIT 5
+    `).all(last.chatId, last.lastDate, last.lastDate, last.lastMessageId) as Array<{
+      ROWID: number;
+      text: string | null;
+      attributedBody: Buffer | null;
+      date: number;
+      is_from_me: number;
+    }>;
+
+    for (const row of rows) {
+      if (Boolean(row.is_from_me) !== last.lastIsFromMe) break;
+      if (Math.abs(last.lastDate - row.date) > 60_000_000_000) break;
+
+      const snippet = pickConversationSnippet({
+        rawText: row.text,
+        parsedText: this.extractMessageText(row),
+      });
+
+      if (snippet && !isMetadataOnlySnippet(snippet)) {
+        return snippet;
+      }
+    }
+
+    return null;
+  }
+
+  private mergeDuplicateConversations(prepared: PreparedConversationEntry[]) {
+    const merged: typeof prepared = [];
+    const indexByKey = new Map<string, number>();
+
+    for (const entry of prepared) {
+      const existingIndex = indexByKey.get(entry.mergeKey);
+      if (existingIndex === undefined) {
+        indexByKey.set(entry.mergeKey, merged.length);
+        merged.push(entry);
+        continue;
+      }
+
+      merged[existingIndex] = this.mergeConversationEntries(merged[existingIndex], entry);
+    }
+
+    return merged;
+  }
+
+  private mergeConversationEntries(left: PreparedConversationEntry, right: PreparedConversationEntry) {
+    const preferred = this.pickPreferredConversationEntry(left, right);
+    const other = preferred === left ? right : left;
+    const sameIdentifier = preferred.conversation.chatIdentifier === other.conversation.chatIdentifier;
+
+    return {
+      mergeKey: preferred.mergeKey,
+      last: preferred.last ?? other.last,
+      conversation: {
+        ...preferred.conversation,
+        displayName: preferred.conversation.displayName ?? other.conversation.displayName,
+        participants: [...new Set([...preferred.conversation.participants, ...other.conversation.participants])],
+        unreadCount: sameIdentifier
+          ? Math.max(preferred.conversation.unreadCount, other.conversation.unreadCount)
+          : preferred.conversation.unreadCount + other.conversation.unreadCount,
+      },
+    };
+  }
+
+  private pickPreferredConversationEntry(
+    left: PreparedConversationEntry,
+    right: PreparedConversationEntry,
+  ): PreparedConversationEntry {
+    const leftTime = left.conversation.lastMessageDate?.getTime() ?? 0;
+    const rightTime = right.conversation.lastMessageDate?.getTime() ?? 0;
+    if (leftTime !== rightTime) {
+      return leftTime > rightTime ? left : right;
+    }
+
+    const preferredService = left.last?.lastService ?? right.last?.lastService ?? null;
+    if (preferredService) {
+      const preferredType = preferredService.toLowerCase().includes("sms") ? "SMS" : "iMessage";
+      if (left.conversation.serviceType === preferredType && right.conversation.serviceType !== preferredType) {
+        return left;
+      }
+      if (right.conversation.serviceType === preferredType && left.conversation.serviceType !== preferredType) {
+        return right;
+      }
+    }
+
+    if (left.conversation.displayName && !right.conversation.displayName) return left;
+    if (right.conversation.displayName && !left.conversation.displayName) return right;
+
+    if (left.conversation.serviceType === "iMessage" && right.conversation.serviceType === "SMS") {
+      return left;
+    }
+    if (right.conversation.serviceType === "iMessage" && left.conversation.serviceType === "SMS") {
+      return right;
+    }
+
+    return left;
+  }
+
+  private getConversationMergeKey(chatIdentifier: string, chatGuid: string, isGroup: boolean): string {
+    if (isGroup) {
+      return `group:${chatGuid}`;
+    }
+
+    const contact = this.contacts.lookupContact(chatIdentifier);
+    if (contact) {
+      return `contact:${contact.contactId}`;
+    }
+
+    return `identifier:${chatIdentifier.replace(/[\s\-()]/g, "").toLowerCase()}`;
+  }
+
+  private resolveChatsForConversation(identifier: string): ChatRow[] {
+    const chats = this.getAllChatsWithLastDate();
+    const normalized = identifier.replace(/[\s\-()]/g, "").toLowerCase();
+
+    const directMatches = chats.filter(
+      (chat) =>
+        chat.chat_identifier === identifier ||
+        chat.guid === identifier ||
+        (chat.chat_identifier != null &&
+          (chat.chat_identifier.replace(/[\s\-()]/g, "").toLowerCase().includes(normalized) ||
+            normalized.includes(chat.chat_identifier.replace(/[\s\-()]/g, "").toLowerCase()))),
+    );
+
+    if (directMatches.length === 0) return [];
+
+    const representative = this.pickMostRecentChat(directMatches);
+    const isGroup = isGroupGuid(representative.guid) || isGroupChatIdentifier(representative.chat_identifier);
+    if (isGroup) return [representative];
+
+    const mergeKey = this.getConversationMergeKey(
+      representative.chat_identifier,
+      representative.guid,
+      false,
+    );
+
+    return chats
+      .filter(
+        (chat) =>
+          !(isGroupGuid(chat.guid) || isGroupChatIdentifier(chat.chat_identifier)) &&
+          this.getConversationMergeKey(chat.chat_identifier, chat.guid, false) === mergeKey,
+      )
+      .map((chat) => toChatRow(chat));
+  }
+
   /**
    * Get all chats with their last message date in one join query.
    * Used to resolve the correct chat for a contact when multiple chats exist (e.g. same number).
@@ -552,9 +819,10 @@ export class IMessageDB {
          FROM ${Tables.CHAT_MESSAGE_JOIN} cmj
          JOIN ${Tables.MESSAGE} m ON cmj.message_id = m.ROWID
          WHERE cmj.chat_id = c.ROWID
-           AND m.associated_message_type = ${AssociatedMessageType.NORMAL}) as last_date
-      FROM ${Tables.CHAT} c
-    `);
+           AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
+           AND COALESCE(m.item_type, 0) = 0) as last_date
+       FROM ${Tables.CHAT} c
+     `);
     const rows = stmt.all() as {
       rowid: number;
       guid: string;
@@ -619,6 +887,12 @@ export class IMessageDB {
 
     // Clean up text - handle object replacement characters and other special chars
     let cleanText = text || raw.text || null;
+    if (isPlaceholderText(cleanText)) {
+      const attributedText = extractAttributedBodyText(raw.attributedBody ?? null) || null;
+      if (attributedText) {
+        cleanText = attributedText;
+      }
+    }
     if (cleanText) {
       // U+FFFC is Object Replacement Character (inline attachment placeholder); see db-schema
       // U+FFFD is Replacement Character (invalid UTF-8)
@@ -634,6 +908,10 @@ export class IMessageDB {
       // If only attachment markers remain, indicate it's an attachment-only message
       if (!cleanText || cleanText === "📎" || /^(📎\s*)+$/.test(cleanText)) {
         cleanText = "(image/attachment)";
+      }
+
+      if (ext.balloon_bundle_id?.includes("URLBalloonProvider")) {
+        cleanText = normalizeRichMetadataText(cleanText) ?? cleanText;
       }
     }
 
@@ -786,6 +1064,7 @@ export class IMessageDB {
         m.thread_originator_guid,
         m.thread_originator_part,
         m.balloon_bundle_id,
+        m.item_type,
         m.date_edited,
         m.date_retracted,
         m.cache_has_attachments,
@@ -894,13 +1173,25 @@ export class IMessageDB {
    * Look up the text of a message by GUID (for reply context)
    * Falls back to parsing attributedBody if text is null
    */
-  private getMessageTextByGuid(guid: string): string | null {
-    const stmt = this.raw.prepare(
-      `SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE guid = ? LIMIT 1`,
-    );
-    const row = stmt.get(guid) as
+  private getMessageTextByRowId(rowId: number): string | null {
+    const row = this.raw.prepare(`SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE ROWID = ? LIMIT 1`).get(rowId) as
       | { ROWID: number; text: string | null; attributedBody: Buffer | null }
       | undefined;
+    return this.extractMessageText(row);
+  }
+
+  private getMessageTextByGuid(guid: string): string | null {
+    const row = this.raw
+      .prepare(`SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE guid = ? LIMIT 1`)
+      .get(guid) as
+      | { ROWID: number; text: string | null; attributedBody: Buffer | null }
+      | undefined;
+    return this.extractMessageText(row);
+  }
+
+  private extractMessageText(
+    row: { ROWID: number; text: string | null; attributedBody: Buffer | null } | undefined,
+  ): string | null {
     if (!row) return null;
 
     // Try text field first
@@ -916,14 +1207,17 @@ export class IMessageDB {
           .get(row.ROWID);
         if (fullRow) {
           const parsed = this.db.parseMessage(fullRow as any);
-          return parsed.text || null;
+          if (!isPlaceholderText(parsed.text)) {
+            return parsed.text || null;
+          }
+          return extractAttributedBodyText(row.attributedBody) || null;
         }
       } catch {
         // Ignore parsing errors
       }
     }
 
-    return null;
+    return extractAttributedBodyText(row.attributedBody) || null;
   }
 }
 
@@ -943,6 +1237,7 @@ interface ExtendedMessageData {
   thread_originator_guid?: string | null;
   thread_originator_part?: string | null;
   balloon_bundle_id?: string | null;
+  item_type?: number;
   date_edited?: number;
   date_retracted?: number;
   cache_has_attachments?: number;
