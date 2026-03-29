@@ -1,5 +1,5 @@
 import { builtinModules } from "node:module";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 const nodeExternals = [
   ...builtinModules,
@@ -36,6 +36,12 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
+    // Split by mode: mock path tests need `VITE_ENV=ai` (default `pnpm test` + `.env.ai`); execFile
+    // stubs need `VITE_ENV=local` (`pnpm test:local` + `.env` / `.env.local`).
+    exclude: [
+      ...(process.env.VITE_ENV === "local" ? ["**/tests/applescript-mock.test.ts"] : []),
+      ...(process.env.VITE_ENV !== "local" ? ["**/tests/applescript-local.test.ts"] : []),
+    ],
     coverage: {
       reporter: ["text", "json", "html"],
     },
