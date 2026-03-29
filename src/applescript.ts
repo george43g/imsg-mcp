@@ -17,10 +17,13 @@ function mockSend(
   text: string,
   target: { chatIdentifier?: string; chatGuid?: string },
 ): SendMessageResult {
-  try {
-    insertSentMessage(getImsgDbPath(), target, text);
-  } catch (err) {
-    console.warn("[mock-send] DB insert failed (non-fatal):", err);
+  // Under Vitest, return success only — no SQLite (avoids LFS/pointer noise; tests cover API shape).
+  if (process.env.VITEST !== "true") {
+    try {
+      insertSentMessage(getImsgDbPath(), target, text);
+    } catch (err) {
+      console.warn("[mock-send] DB insert failed (non-fatal):", err);
+    }
   }
   return { success: true, timestamp: new Date() };
 }
@@ -60,7 +63,7 @@ async function runAppleScript(
   }
 }
 
-function appleScriptEscape(str: string): string {
+export function appleScriptEscape(str: string): string {
   return str
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
