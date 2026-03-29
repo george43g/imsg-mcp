@@ -13,13 +13,14 @@ MCP (Model Context Protocol) server for iMessage on macOS. Enables AI agents to 
 - **Contact Integration** - Automatically resolves phone numbers/emails to contact display names
 - **Rich Content Detection** - Identifies and parses link previews, location shares, and other rich message content
 - **Delivery & Read Receipts** - Shows message delivery and read status with timestamps
+- **Thread slugs** - Stable, human-readable IDs per conversation (from `list_conversations`) so agents can target **group chats** and avoid opaque `chat` identifiers; used by `send_message` and `wait_for_reply`
 
 ## Requirements
 
-- **macOS** (tested on Ventura and later)
-- **Node.js 18+**
-- **Messages.app** must be signed in and configured
-- **Full Disk Access** permission for your terminal/IDE (to read the iMessage database)
+- **macOS** (tested on Ventura and later) for production use with your real `chat.db` and Messages.app
+- **Node.js 24+** (see `package.json` / Volta)
+- **Messages.app** must be signed in and configured when sending or using live data
+- **Full Disk Access** permission for your terminal/IDE (to read the iMessage database and Address Book)
 
 ## Installation
 
@@ -88,6 +89,22 @@ node /path/to/imsg-mcp/dist/index.js
 
 The server communicates over stdio using the MCP protocol.
 
+## Environment files (quick reference)
+
+Vite-style layering applies when using Vitest and some scripts: **`.env`** → **`.env.local`** → **`.env.[mode]`**. For day-to-day development, **`AGENTS.md`** and **`skills.md`** describe:
+
+- **`.env.test`** — used by **`pnpm test`** (`VITE_ENV=ai`, `env-data/` fixture DBs)
+- **`.env.local`** — machine paths (often committed as a template in this repo)
+- **`.env.ai`** — optional MCP run against bundled `env-data/` (e.g. Linux / cloud agents)
+
+Large **`*.db` / `*.abcddb`** files under `env-data/` are **Git LFS**. After clone, run **`git lfs pull`** or tests and the server will see “not a database” errors.
+
+## Thread slugs
+
+Each conversation gets a slug such as `alice~imsg~a3f2` (see **`src/thread-slug.ts`**). **`list_conversations`** returns a **`threadSlug`** column. Use **`threadSlug`** with **`send_message`** and **`wait_for_reply`** so the model does not need raw group GUIDs. Mappings persist in **`~/.imsg-mcp/slugs.db`** (`VITE_SLUGS_DB_PATH`). Full rationale: **`AGENTS.md`** (Thread slugs).
+
+**Note:** **`get_messages`** filters by **`chatIdentifier`** (phone, email, or raw id), not by slug.
+
 ## Available Tools
 
 ### get_messages
@@ -111,7 +128,7 @@ Get all unread messages across all conversations.
 
 ### send_message
 
-Send an iMessage or SMS to a recipient.
+Send an iMessage or SMS. Use **`recipient`** (phone or email) or **`threadSlug`** (from `list_conversations`—works for **group chats**). One of them is required along with **`message`**.
 
 ```json
 {
@@ -120,16 +137,23 @@ Send an iMessage or SMS to a recipient.
 }
 ```
 
+```json
+{
+  "threadSlug": "weekend-crew~imsg~d4e5",
+  "message": "Running late!"
+}
+```
+
 ### wait_for_reply
 
-Wait for a reply in a specific conversation. Useful for AI agents that need human input.
+Wait for a reply. Use **`chatIdentifier`** or **`threadSlug`** (same idea as `send_message`).
 
 ```json
 {
   "chatIdentifier": "+1234567890",
   "timeoutSeconds": 300,
   "pollIntervalSeconds": 10,
-  "afterMessageId": 12345  // optional
+  "afterMessageId": 12345
 }
 ```
 
@@ -227,19 +251,26 @@ There can be a slight delay (1-2 seconds) between sending/receiving a message an
 
 ## Development
 
+Agent-oriented details (env modes, LFS, scripts, CI): **`AGENTS.md`** and **`skills.md`**.
+
 ```bash
 # Run in development mode (with auto-rebuild)
 pnpm dev
 
-# Run tests
+# Tests (loads .env.test → env-data fixtures; AppleScript mocked)
 pnpm test
 
-# Type check
-pnpm typecheck
+# Tests against paths in .env + .env.local (still mocked under Vitest)
+pnpm test:native
 
-# Lint
+# Type check / lint
+pnpm typecheck
 pnpm lint
 ```
+
+**Fixture maintenance (macOS only, destructive to `env-data/`):** `pnpm sync-env-data` copies your live `chat.db`, Address Book DBs, and `slugs.db` into `env-data/`. Only run when you intend to refresh bundled data and understand Git LFS implications. See **`AGENTS.md`** → Scripts and fixtures.
+
+**Contact sanity check:** `pnpm exec tsx scripts/compare-contacts-vcf.ts` compares `env-data/contacts.vcf` to the Address Book reader; **`pnpm test`** includes a Vitest check that match rate stays **≥ 80%** on that fixture.
 
 ### Debug console (interactive)
 

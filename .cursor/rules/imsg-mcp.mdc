@@ -9,8 +9,9 @@ MCP server for iMessage on macOS (TypeScript ESM, Node 18+). AI agents can send/
 
 ## Where to look
 
-- **AGENTS.md** – Agent-oriented overview: commands, MCP tools summary, conventions, troubleshooting.
-- **skills.md** – Agent skills: Git LFS restore before work in cloud/remote environments.
+- **AGENTS.md** – Agent-oriented overview: commands, env, thread slugs, MCP tools, scripts, troubleshooting.
+- **skills.md** – Handoff doc: LFS, env, slugs, `sync-env-data` cautions, code map.
+- **`.agents/skills/imsg-mcp-dev/SKILL.md`** – Cursor skill: LFS + pointers to AGENTS/skills.md.
 - **README.md** – User-facing install, permissions, configuration, tool examples.
 - **docs/IMESSAGE_DB_SCHEMA.md** – iMessage DB reference: tables, Mac epoch timestamps, message types (including reactions 2000–3006), attachments, example SQL.
 
