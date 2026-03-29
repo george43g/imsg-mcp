@@ -1,8 +1,5 @@
 {
   "mcpServers": {
-    "imessage": {
-      "command": "imsg-mcp"
-    },
     "imessage-mcp-dev": {
       "command": "/Users/george/repos/imsg-mcp/node_modules/.bin/tsx",
       "args": ["/Users/george/repos/imsg-mcp/scripts/mcp-dev-proxy.ts"],

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "imessage-mcp-dev": {
+      "type": "local",
+      "command": [
+        "/Users/george/repos/imsg-mcp/node_modules/.bin/tsx",
+        "/Users/george/repos/imsg-mcp/scripts/mcp-dev-proxy.ts"
+      ],
+      "enabled": true,
+      "environment": {
+        "MCP_DEV_CMD": "/Users/george/repos/imsg-mcp/node_modules/.bin/nodemon --ext ts --exec '/Users/george/repos/imsg-mcp/node_modules/.bin/tsx /Users/george/repos/imsg-mcp/src/index.ts'"
+      }
+    }
+  }
+}
