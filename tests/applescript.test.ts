@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-/**
- * Exercises `applescript.ts` when `VITE_ENV=ai` (MOCK=true): no osascript, optional
- * writes to env-data DB paths from `.env.ai`. Default `pnpm test` loads `.env.ai`.
- */
-describe("AppleScript mock path (VITE_ENV=ai)", () => {
+/** Sending is mocked whenever `VITEST` is set (all Vitest modes). */
+describe("AppleScript (mocked under Vitest)", () => {
   it("sendMessage returns success", async () => {
     const { sendMessage } = await import("../src/applescript.js");
     const result = await sendMessage("+1234567890", "Hello World");
@@ -12,12 +9,12 @@ describe("AppleScript mock path (VITE_ENV=ai)", () => {
     expect(result.timestamp).toBeInstanceOf(Date);
   });
 
-  it("checkMessagesAvailable is true in mock mode", async () => {
+  it("checkMessagesAvailable is true when mocked", async () => {
     const { checkMessagesAvailable } = await import("../src/applescript.js");
     await expect(checkMessagesAvailable()).resolves.toBe(true);
   });
 
-  it("getAvailableServices returns mock services", async () => {
+  it("getAvailableServices returns mock service list", async () => {
     const { getAvailableServices } = await import("../src/applescript.js");
     await expect(getAvailableServices()).resolves.toEqual(["iMessage", "SMS"]);
   });

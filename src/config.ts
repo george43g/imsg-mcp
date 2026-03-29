@@ -10,11 +10,17 @@ function resolveEnvPath(value: string | undefined, fallback: string): string {
 }
 
 export function getEnv(): string {
-  return process.env.VITE_ENV ?? "local";
+  return process.env.VITE_ENV ?? "development";
 }
 
+/** Bundled DB / mock-sending mode (cloud, CI tests via `.env.test`). */
+export function isAiEnv(): boolean {
+  return getEnv() === "ai";
+}
+
+/** Any non-`ai` mode (e.g. `development` on your Mac). */
 export function isLocalEnv(): boolean {
-  return getEnv() === "local";
+  return !isAiEnv();
 }
 
 export function getImsgDbPath(): string {

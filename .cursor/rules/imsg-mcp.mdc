@@ -44,4 +44,4 @@ Large files (`*.db`, `*.abcddb`) are in Git LFS. **Before any other work** in a 
 
 ## Commands
 
-`pnpm build` | `pnpm dev` | `pnpm test` (`vitest --mode ai`) | `pnpm test:local` (`--mode native`) | `pnpm typecheck` | `pnpm lint`. Run server: `node dist/index.js`.
+`pnpm build` | `pnpm dev` | `pnpm test` (Vitest mode `test` + `.env.test`) | `pnpm test:native` (`--mode development`) | `pnpm typecheck` | `pnpm lint`. Run server: `node dist/index.js`.

@@ -20,16 +20,28 @@ Large DB files (`*.db`, `*.abcddb`) are tracked with Git LFS. In cloud or fresh 
 | `pnpm install` | Install deps               |
 | `pnpm build`   | Compile to `dist/`         |
 | `pnpm dev`     | Watch build                |
-| `pnpm test`    | Run tests (`vitest run --mode ai` → Vite loads `.env.ai`; CI / Linux default) |
-| `pnpm test:local` | Run tests (`vitest --mode native`; includes AppleScript `execFile` stub tests — Vite forbids `--mode local`) |
+| `pnpm test`    | `vitest run` — Vitest’s default Vite mode is **`test`** (loads **`.env.test`**, not `development`) |
+| `pnpm test:native` | `vitest run --mode development` — skips `.env.test`; uses **`.env`** + **`.env.local`** + optional `.env.development*` for Mac-backed paths |
+| `pnpm test:watch` | `vitest` (same default **`test`** mode as `pnpm test`) |
 | `pnpm typecheck` | Type check               |
 | `pnpm lint`    | Lint                       |
 
 Run the server: `node dist/index.js` (stdio MCP).
 
+## Env layout (Vite precedence)
+
+For any `--mode`, Vite loads (each step overrides the previous): **`.env`** → **`.env.local`** → **`.env.[mode]`** → **`.env.[mode].local`**.
+
+- **`.env`** (usually gitignored): baseline `VITE_ENV=development`; no machine paths here.
+- **`.env.local`** (tracked): your Mac paths (`VITE_IMSG_DB_PATH`, …); do **not** set `VITE_ENV` here so `development` stays from `.env`.
+- **`.env.test`**: `VITE_ENV=ai` and `env-data/` paths — used when **`pnpm test`** runs (mode **`test`**).
+- **`pnpm test:native`**: **`--mode development`** — there is no `.env.test` in that chain, so **`VITE_ENV`** stays **`development`** from `.env` and paths come from **`.env.local`**.
+
+**Sending in tests**: Under Vitest, `applescript.ts` always mocks (`VITEST=true`), so tests never call `osascript`. Real Messages.app is used when you run the MCP outside Vitest with `VITE_ENV=development` (e.g. `pnpm mcp`).
+
 ## Docs
 
-- **README.md** – User-facing: install, permissions, config, tools, troubleshooting.
+- **README.md** – User-facing: install, permissions, configuration, tool examples.
 - **docs/IMESSAGE_DB_SCHEMA.md** – iMessage DB reference: tables, timestamps (Mac epoch), message types, reactions, attachments, example SQL.
 
 ## MCP Tools (Summary)
@@ -46,7 +58,7 @@ Run the server: `node dist/index.js` (stdio MCP).
 ## Conventions for Development
 
 - **Types**: Shared types in `src/types.ts` (Message, Reaction, ReplyContext, etc.); align with DB schema in `docs/IMESSAGE_DB_SCHEMA.md`.
-- **DB layer**: `src/imessage-db.ts` – all SQLite and parsing; use Mac epoch for dates (see docs).
+- **DB layer**: `src/imessage-db.ts` – all SQLite access and message parsing; use Mac epoch for dates (see docs).
 - **Sending**: `src/applescript.ts` – AppleScript interface to Messages.app.
 - **Tools**: Tool schemas and handlers in `src/index.ts`; validate inputs with Zod, keep tool list and schemas in sync.
 - **Tests**: Vitest; keep coverage for DB and tool behavior where it matters.
@@ -76,9 +88,9 @@ Run the server: `node dist/index.js` (stdio MCP).
 ## Cursor Cloud specific instructions
 
 - **Node version**: Requires Node >=24. The update script handles `nvm install 24` and corepack/pnpm activation.
-- **Environment mode**: On Linux/cloud, use `.env.ai` (`VITE_ENV=ai`) which mocks AppleScript sending and reads from bundled `env-data/` SQLite databases. No macOS-specific services are needed.
-- **Running tests**: Vitest accepts Vite’s `--mode` (same env loading as Vite: `.env`, `.env.local`, then `.env.[mode]` / `.env.[mode].local`). **`pnpm test`** uses `--mode ai` (`.env.ai`). **`pnpm test:local`** uses **`--mode native`** (plus committed `.env.native`) because **Vite rejects `--mode local`** — it conflicts with the `.local` postfix used by `.env.local`. `tests/applescript-local.test.ts` stubs `node:child_process.execFile` for the AppleScript branch.
-- **Running the MCP server** (stdio): `node --env-file=.env --env-file-if-exists=.env.ai dist/index.js` (or `--env-file=.env.ai` alone in cloud). Send JSON-RPC messages on stdin. The server reads `env-data/chat.db` when using `.env.ai`.
+- **Environment mode**: On Linux/cloud, `VITE_ENV=ai` (e.g. `.env.ai` for `pnpm mcp:ai`) uses mock sending and bundled `env-data/` SQLite. **`pnpm test`** uses committed **`.env.test`** (same idea) via Vitest’s default **`test`** mode.
+- **Running tests**: **`pnpm test`** = `vitest run` (mode **`test`**, `.env.test` wins over `.env` / `.env.local` for `VITE_*`). **`pnpm test:native`** = `--mode development` so **`.env.test` is not loaded** and Mac paths from **`.env.local`** apply. **Vitest always mocks `AppleScript` sends** (`VITEST=true`).
+- **Running the MCP server** (stdio): `node --env-file=.env --env-file-if-exists=.env.local dist/index.js` (or `.env.ai` in cloud). See **README.md**.
 - **Build**: `pnpm build` (Vite library mode → `dist/index.js`). The `prepare` script auto-builds on `pnpm install`.
 - **Lint**: `pnpm lint` (Biome). **Typecheck**: `pnpm typecheck` (tsc --noEmit).
 - **Git LFS**: The update script runs `git lfs pull`. If LFS files are still pointer stubs, tests and the server will fail with SQLite errors.
