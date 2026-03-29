@@ -40,10 +40,5 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      # VITE_ENV=local so sendMessage/checkMessagesAvailable use the AppleScript path; tests mock
-      # child_process.execFile. VITE_ENV=ai sets MOCK in applescript.ts and never calls execFile, so
-      # those unit tests would fail. Runtime "ai" mocking (env-data DBs) is for the MCP server, not this suite.
       - name: Test
-        env:
-          VITE_ENV: local
         run: pnpm test
