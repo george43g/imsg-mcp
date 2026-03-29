@@ -37,6 +37,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^12.6.2",
+    "bplist-parser": "^0.3.2",
     "imessage-parser": "^0.1.0",
     "zod": "^3.23.0"
   },

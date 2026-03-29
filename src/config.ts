@@ -1,5 +1,6 @@
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 function resolveEnvPath(value: string | undefined, fallback: string): string {
   if (!value) return fallback;
@@ -34,17 +35,39 @@ export function getContactsDbPaths(): string[] | undefined {
   const main = process.env.VITE_CONTACTS_DB_PATH;
   if (!main) return undefined;
 
-  const paths = [resolveEnvPath(main, "")];
+  const mainResolved = resolveEnvPath(main, "");
+  const paths = new Set<string>([mainResolved]);
+
+  const sourcesSegment = `${sep}Sources${sep}`;
+  const sourcesIndex = mainResolved.indexOf(sourcesSegment);
+  const addressBookDir =
+    sourcesIndex >= 0 ? mainResolved.slice(0, sourcesIndex) : dirname(mainResolved);
+
+  const addSourceDb = (path: string) => {
+    if (existsSync(path)) {
+      paths.add(path);
+    }
+  };
 
   const uuid = process.env.VITE_ADDRESS_BOOK_UUID;
   if (uuid) {
-    const mainResolved = paths[0];
-    const baseDir = resolve(mainResolved, "..");
-    const sourceDb = join(baseDir, "Sources", uuid, "AddressBook-v22.abcddb");
-    paths.push(sourceDb);
+    addSourceDb(join(addressBookDir, "Sources", uuid, "AddressBook-v22.abcddb"));
   }
 
-  return paths;
+  const sourcesDir = join(addressBookDir, "Sources");
+  if (existsSync(sourcesDir)) {
+    try {
+      const entries = readdirSync(sourcesDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        addSourceDb(join(sourcesDir, entry.name, "AddressBook-v22.abcddb"));
+      }
+    } catch {
+      // Ignore unreadable Address Book source directories.
+    }
+  }
+
+  return [...paths];
 }
 
 export function getSlugsDbPath(): string {

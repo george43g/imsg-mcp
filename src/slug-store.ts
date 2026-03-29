@@ -53,7 +53,34 @@ export class SlugStore {
   }
 
   upsert(record: SlugRecord): void {
-    const stmt = this.db.prepare(`
+    const params = {
+      slug: record.slug,
+      chatGuid: record.chatGuid,
+      chatIdentifier: record.chatIdentifier,
+      displayName: record.displayName,
+      service: record.service,
+      isGroup: record.isGroup ? 1 : 0,
+      participants: record.participants,
+      updatedAt: record.updatedAt,
+    };
+
+    const updateByGuid = this.db.prepare(`
+      UPDATE thread_slugs
+      SET
+        slug = @slug,
+        chat_identifier = @chatIdentifier,
+        display_name = @displayName,
+        service = @service,
+        is_group = @isGroup,
+        participants = @participants,
+        updated_at = @updatedAt
+      WHERE chat_guid = @chatGuid
+    `);
+
+    const updateResult = updateByGuid.run(params);
+    if (updateResult.changes > 0) return;
+
+    const insertOrUpdateBySlug = this.db.prepare(`
       INSERT INTO thread_slugs (slug, chat_guid, chat_identifier, display_name, service, is_group, participants, updated_at)
       VALUES (@slug, @chatGuid, @chatIdentifier, @displayName, @service, @isGroup, @participants, @updatedAt)
       ON CONFLICT(slug) DO UPDATE SET
@@ -65,16 +92,8 @@ export class SlugStore {
         participants = excluded.participants,
         updated_at = excluded.updated_at
     `);
-    stmt.run({
-      slug: record.slug,
-      chatGuid: record.chatGuid,
-      chatIdentifier: record.chatIdentifier,
-      displayName: record.displayName,
-      service: record.service,
-      isGroup: record.isGroup ? 1 : 0,
-      participants: record.participants,
-      updatedAt: record.updatedAt,
-    });
+
+    insertOrUpdateBySlug.run(params);
   }
 
   upsertMany(records: SlugRecord[]): void {

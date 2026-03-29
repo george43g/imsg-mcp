@@ -51,20 +51,35 @@ function normalizePhoneNumber(phone: string): string {
  */
 function normalizedPhoneVariants(phone: string): string[] {
   const normalized = normalizePhoneNumber(phone);
-  const variants: string[] = [normalized];
+  const variants = new Set<string>([normalized]);
+
+  // Australia: 61 + 9 digits -> also store bare mobile digits and local 04... format
+  if (normalized.length === 11 && normalized.startsWith("61")) {
+    const localMobile = normalized.slice(2);
+    variants.add(localMobile);
+    if (localMobile.length === 9 && localMobile.startsWith("4")) {
+      variants.add(`0${localMobile}`);
+    }
+  }
+
+  // Australia: local 04... mobile -> also store bare mobile digits and 61-prefixed format
+  if (normalized.length === 10 && normalized.startsWith("04")) {
+    const mobileDigits = normalized.slice(1);
+    variants.add(mobileDigits);
+    variants.add(`61${mobileDigits}`);
+  }
+
   // US: also store with leading 1
   if (normalized.length === 10) {
-    variants.push(`1${normalized}`);
-  }
-  // Australia: 61 + 9 digits (e.g. 61410871808) -> also store 9 digits (410871808) for 04... lookups
-  if (normalized.length === 11 && normalized.startsWith("61")) {
-    variants.push(normalized.slice(2));
+    variants.add(`1${normalized}`);
   }
   // Australia: 9 digits starting with 4 (mobile) -> also store with 61 prefix
   if (normalized.length === 9 && normalized.startsWith("4")) {
-    variants.push(`61${normalized}`);
+    variants.add(`61${normalized}`);
+    variants.add(`0${normalized}`);
   }
-  return variants;
+
+  return [...variants];
 }
 
 /**
@@ -221,37 +236,39 @@ export class ContactsDB {
   }
 
   /**
-   * Look up a contact by phone number or email
-   * Returns display name if found, or the original handle if not
+   * Look up a contact by phone number or email.
    */
-  lookupHandle(handle: string): string {
+  lookupContact(handle: string): ContactLookup | null {
     if (!this.initialized) {
       this.initialize();
     }
 
-    // Try phone number lookup (try normalized and, for AU 04..., the 61-prefix form)
     if (/[\d+\-()\s]/.test(handle)) {
-      const normalized = normalizePhoneNumber(handle);
-      let contact = this.phoneMap.get(normalized);
-      if (!contact && normalized.length === 9 && normalized.startsWith("4")) {
-        contact = this.phoneMap.get(`61${normalized}`);
-      }
-      if (contact) {
-        return contact.displayName;
+      for (const variant of normalizedPhoneVariants(handle)) {
+        const contact = this.phoneMap.get(variant);
+        if (contact) {
+          return contact;
+        }
       }
     }
 
-    // Try email lookup
     if (handle.includes("@")) {
       const normalized = normalizeEmail(handle);
       const contact = this.emailMap.get(normalized);
       if (contact) {
-        return contact.displayName;
+        return contact;
       }
     }
 
-    // Not found - return original handle
-    return handle;
+    return null;
+  }
+
+  /**
+   * Look up a contact by phone number or email
+   * Returns display name if found, or the original handle if not
+   */
+  lookupHandle(handle: string): string {
+    return this.lookupContact(handle)?.displayName ?? handle;
   }
 
   /**
@@ -285,6 +302,8 @@ export class ContactsDB {
    * Build display name from contact fields
    */
   private buildDisplayName(row: any): string {
+    if (row.nickname) return row.nickname;
+
     const parts: string[] = [];
 
     if (row.firstName) parts.push(row.firstName);
@@ -294,7 +313,6 @@ export class ContactsDB {
       return parts.join(" ");
     }
 
-    if (row.nickname) return row.nickname;
     if (row.organization) return row.organization;
 
     return "Unknown Contact";
