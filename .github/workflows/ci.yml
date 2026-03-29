@@ -12,6 +12,8 @@ concurrency:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout (with Git LFS)
         uses: actions/checkout@v4
@@ -38,6 +40,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # VITE_ENV=local so sendMessage/checkMessagesAvailable use the AppleScript path; tests mock
+      # child_process.execFile. VITE_ENV=ai sets MOCK in applescript.ts and never calls execFile, so
+      # those unit tests would fail. Runtime "ai" mocking (env-data DBs) is for the MCP server, not this suite.
       - name: Test
         env:
           VITE_ENV: local
