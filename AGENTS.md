@@ -20,8 +20,8 @@ Large DB files (`*.db`, `*.abcddb`) are tracked with Git LFS. In cloud or fresh 
 | `pnpm install` | Install deps               |
 | `pnpm build`   | Compile to `dist/`         |
 | `pnpm dev`     | Watch build                |
-| `pnpm test`    | Run tests (loads `.env.ai`; CI / Linux default) |
-| `pnpm test:local` | Run tests on macOS with `.env` + `.env.local` (includes AppleScript `execFile` stub tests) |
+| `pnpm test`    | Run tests (`vitest run --mode ai` → Vite loads `.env.ai`; CI / Linux default) |
+| `pnpm test:local` | Run tests (`vitest --mode native`; includes AppleScript `execFile` stub tests — Vite forbids `--mode local`) |
 | `pnpm typecheck` | Type check               |
 | `pnpm lint`    | Lint                       |
 
@@ -77,7 +77,7 @@ Run the server: `node dist/index.js` (stdio MCP).
 
 - **Node version**: Requires Node >=24. The update script handles `nvm install 24` and corepack/pnpm activation.
 - **Environment mode**: On Linux/cloud, use `.env.ai` (`VITE_ENV=ai`) which mocks AppleScript sending and reads from bundled `env-data/` SQLite databases. No macOS-specific services are needed.
-- **Running tests**: `pnpm test` wraps Vitest with `node --env-file=.env.ai`, so `VITE_ENV` and DB paths match cloud agents (mock AppleScript path, `env-data` fixtures). **`pnpm test:local`** uses `.env` + `.env.local` and also runs `tests/applescript-local.test.ts`, which stubs `node:child_process.execFile` to exercise the real AppleScript branch—same idea as before, but only in local mode. Default `pnpm test` does not load `.env.local`, so your machine-specific paths stay out of CI.
+- **Running tests**: Vitest accepts Vite’s `--mode` (same env loading as Vite: `.env`, `.env.local`, then `.env.[mode]` / `.env.[mode].local`). **`pnpm test`** uses `--mode ai` (`.env.ai`). **`pnpm test:local`** uses **`--mode native`** (plus committed `.env.native`) because **Vite rejects `--mode local`** — it conflicts with the `.local` postfix used by `.env.local`. `tests/applescript-local.test.ts` stubs `node:child_process.execFile` for the AppleScript branch.
 - **Running the MCP server** (stdio): `node --env-file=.env --env-file-if-exists=.env.ai dist/index.js` (or `--env-file=.env.ai` alone in cloud). Send JSON-RPC messages on stdin. The server reads `env-data/chat.db` when using `.env.ai`.
 - **Build**: `pnpm build` (Vite library mode → `dist/index.js`). The `prepare` script auto-builds on `pnpm install`.
 - **Lint**: `pnpm lint` (Biome). **Typecheck**: `pnpm typecheck` (tsc --noEmit).

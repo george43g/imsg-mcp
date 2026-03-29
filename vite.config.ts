@@ -13,7 +13,7 @@ const nodeExternals = [
   "zod",
 ];
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   build: {
     target: "node22",
     lib: {
@@ -36,14 +36,13 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
-    // Split by mode: mock path tests need `VITE_ENV=ai` (default `pnpm test` + `.env.ai`); execFile
-    // stubs need `VITE_ENV=local` (`pnpm test:local` + `.env` / `.env.local`).
+    // `vitest run --mode ai` vs `--mode native` (`local` is forbidden as a Vite mode name).
     exclude: [
-      ...(process.env.VITE_ENV === "local" ? ["**/tests/applescript-mock.test.ts"] : []),
-      ...(process.env.VITE_ENV !== "local" ? ["**/tests/applescript-local.test.ts"] : []),
+      ...(mode === "native" ? ["**/tests/applescript-mock.test.ts"] : []),
+      ...(mode !== "native" ? ["**/tests/applescript-local.test.ts"] : []),
     ],
     coverage: {
       reporter: ["text", "json", "html"],
     },
   },
-});
+}));
