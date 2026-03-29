@@ -50,8 +50,8 @@ function buildTasks(): CopyTask[] {
           });
         }
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.warn(`  WARN  could not read AddressBook Sources (${sourcesDir}):`, err);
     }
   }
 

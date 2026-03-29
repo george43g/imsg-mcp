@@ -4,14 +4,14 @@ MCP server for iMessage on macOS. Lets AI agents send and receive iMessages (and
 
 ## What This Repo Is
 
-- **Stack**: TypeScript (ESM), Node 18+, MCP SDK, `better-sqlite3`, `imessage-parser`, Zod.
+- **Stack**: TypeScript (ESM), Node **24+**, MCP SDK, `better-sqlite3`, `imessage-parser`, Zod.
 - **Sending**: AppleScript via `osascript` to Messages.app.
 - **Reading**: SQLite at `~/Library/Messages/chat.db` (macOS only; needs Full Disk Access).
 - **Contacts**: Reads `~/Library/Application Support/AddressBook/AddressBook-v22.abcddb` to resolve phone numbers/emails to contact names.
 
 ## Remote / cloud agents (Git LFS)
 
-Large DB files (`*.db`, `*.abcddb`) are tracked with Git LFS. In cloud or fresh clones they may be pointer files only. **Before doing any work**, restore LFS content: `git lfs install` (once), then `git lfs pull`. See **skills.md** for full steps.
+Large DB files (`*.db`, `*.abcddb`) are tracked with Git LFS. In cloud or fresh clones they may be pointer files only. **Before doing any work**, restore LFS content: `git lfs install` (once), then `git lfs pull`. See **`skills.md`** (repo root) and **`.agents/skills/imsg-mcp-dev/SKILL.md`** for full steps.
 
 ## Commands
 
@@ -39,20 +39,40 @@ For any `--mode`, Vite loads (each step overrides the previous): **`.env`** → 
 
 **Sending in tests**: Under Vitest, `applescript.ts` always mocks (`VITEST=true`), so tests never call `osascript`. Real Messages.app is used when you run the MCP outside Vitest with `VITE_ENV=development` (e.g. `pnpm mcp`).
 
+## Thread slugs
+
+**Why:** Agents need a **stable, readable** handle per conversation—especially **group chats**, where `chat_identifier` / GUIDs are opaque. Phone/email variants are also awkward for tool arguments.
+
+**What:** Each chat gets a slug like `alice~imsg~a3f2` or `weekend-crew~imsg~d4e5` (see `src/thread-slug.ts`: sanitized name + service abbrev + short hash of GUID). `list_conversations` includes **`threadSlug`** for each row.
+
+**Persistence:** `src/slug-store.ts` keeps mappings in **`~/.imsg-mcp/slugs.db`** (or `VITE_SLUGS_DB_PATH`). `IMessageDB` syncs from the current `chat.db`, upserts, and prunes removed GUIDs.
+
+**Tools:** `send_message` accepts **`threadSlug`** *or* **`recipient`**. `wait_for_reply` accepts **`threadSlug`** *or* **`chatIdentifier`**. **`get_messages`** still takes **`chatIdentifier`** only (phone, email, or raw id)—not slug—so use the identifier from list output or the underlying handle when filtering messages.
+
+## Scripts and fixtures
+
+| Command | Notes |
+|---------|--------|
+| `pnpm sync-env-data` | Copies `~/Library/Messages/chat.db`, Address Book (`AddressBook-v22.abcddb` + `Sources/*/…`), and `~/.imsg-mcp/slugs.db` into **`env-data/`**. **Overwrites** targets without backup. **Do not run** unless you mean to refresh bundled fixtures (and understand Git LFS / commit size). If `Sources` cannot be read, a **warning** is printed (permissions). |
+| `pnpm exec tsx scripts/compare-contacts-vcf.ts` | Human-readable report: `env-data/contacts.vcf` vs `ContactsDB`. Shared logic: `src/vcf-contact-compare.ts`; **Vitest** asserts **≥ 80%** handle match rate on that fixture. |
+
+**Removed:** `scripts/test-contacts.ts` — superseded by **`tests/contacts-imessage-smoke.test.ts`** (skips if DBs missing or still Git LFS pointers).
+
 ## Docs
 
 - **README.md** – User-facing: install, permissions, configuration, tool examples.
+- **skills.md** – Agent handoff: LFS, env summary, thread slugs, scripts, code map.
 - **docs/IMESSAGE_DB_SCHEMA.md** – iMessage DB reference: tables, timestamps (Mac epoch), message types, reactions, attachments, example SQL.
 
 ## MCP Tools (Summary)
 
 | Tool                   | Purpose |
 |------------------------|--------|
-| `get_messages`         | Recent messages; optional `chatIdentifier`, `limit` (1–100). |
+| `get_messages`         | Recent messages; optional `chatIdentifier` (phone/email/raw id), `limit` (1–100). |
 | `get_unread_messages`  | All unread messages. |
-| `send_message`         | Send to `recipient` (phone/email); needs Messages.app + Automation permission. |
-| `wait_for_reply`       | Poll a conversation for new messages; `chatIdentifier`, `timeoutSeconds`, `pollIntervalSeconds`, optional `afterMessageId`. |
-| `list_conversations`   | List chats; `limit` (1–50). |
+| `send_message`         | `recipient` and/or **`threadSlug`** (from `list_conversations`); **`message`** required. Messages.app + Automation when not mocked. |
+| `wait_for_reply`       | **`chatIdentifier`** or **`threadSlug`**; `timeoutSeconds`, `pollIntervalSeconds`, optional `afterMessageId`. |
+| `list_conversations`   | List chats with **`threadSlug`**, snippets, unread; `limit` (1–50). |
 | `search_messages`      | Search text; `query`, `limit` (1–50). |
 
 ## Conventions for Development
