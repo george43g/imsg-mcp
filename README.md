@@ -1,309 +1,286 @@
 # imsg-mcp
 
-MCP (Model Context Protocol) server for iMessage on macOS. Enables AI agents to send and receive iMessages, perfect for building AI assistants that can communicate with you via text when they need input.
+MCP server, CLI, and terminal UI for iMessage on macOS.
+
+`imsg-mcp` lets AI agents and local tools read your iMessage/SMS database, resolve contact names from Address Book, inspect unread messages, search history, and optionally send messages through Messages.app.
+
+## What ships in this package
+
+- `imsg-mcp` - MCP stdio server for Claude Desktop, Cursor, Warp, and other MCP clients
+- `imsg-cli` - interactive debug console plus one-off CLI commands
+- `imsg` - read-only terminal UI for browsing conversations and messages
+- `imsg-cli doctor` / `imsg-mcp --doctor` - local permission and setup checks for new machines
 
 ## Features
 
-- **Send iMessages/SMS** - Send messages to any phone number or email address
-- **Read Messages** - Get recent messages from all conversations or specific chats
-- **Unread Messages** - Retrieve all unread messages across conversations
-- **Wait for Reply** - Poll for new messages with configurable timeout (ideal for AI agents waiting for human responses)
-- **List Conversations** - View all your conversations with metadata
-- **Search Messages** - Search through your message history
-- **Contact Integration** - Automatically resolves phone numbers/emails to contact display names
-- **Rich Content Detection** - Identifies and parses link previews, location shares, and other rich message content
-- **Delivery & Read Receipts** - Shows message delivery and read status with timestamps
-- **Thread slugs** - Stable, human-readable IDs per conversation (from `list_conversations`) so agents can target **group chats** and avoid opaque `chat` identifiers; used by `send_message` and `wait_for_reply`
+- Read recent messages, unread messages, and search results
+- List conversations with stable `threadSlug` identifiers
+- Resolve phone numbers and emails to contact names from Address Book, including iCloud sources
+- Merge duplicated chat rows and multi-handle contact threads more like Messages.app
+- Parse rich content and `attributedBody` text better than raw SQLite reads
+- Send messages through Messages.app when explicitly requested
+- Browse conversations in a TUI without opening Messages.app
 
 ## Requirements
 
-- **macOS** (tested on Ventura and later) for production use with your real `chat.db` and Messages.app
-- **Node.js 24+** (see `package.json` / Volta)
-- **Messages.app** must be signed in and configured when sending or using live data
-- **Full Disk Access** permission for your terminal/IDE (to read the iMessage database and Address Book)
+- macOS for live iMessage access
+- Node.js 24+
+- Full Disk Access for the app running the command
+- Messages.app signed in if you want to send messages
 
 ## Installation
 
+### Global install
+
 ```bash
-# Clone the repository
+npm install -g imsg-mcp
+```
+
+That gives you:
+
+- `imsg-mcp`
+- `imsg-cli`
+- `imsg`
+
+### From source
+
+```bash
 git clone https://github.com/yourusername/imsg-mcp.git
 cd imsg-mcp
-
-# Install dependencies
 pnpm install
-
-# Build
 pnpm build
 ```
 
-## Permissions Setup
+## First run on a new machine
 
-### 1. Full Disk Access (Required for reading messages)
+Run the doctor command before troubleshooting anything else:
 
-The iMessage database is stored at `~/Library/Messages/chat.db` and the Contacts database at `~/Library/Application Support/AddressBook/AddressBook-v22.abcddb`. Full Disk Access is required to read both:
+```bash
+imsg-cli doctor
+```
 
-1. Open **System Preferences** > **Security & Privacy** > **Privacy** > **Full Disk Access**
-2. Click the lock icon to make changes
-3. Click **+** and add your terminal app (Terminal, iTerm2, Warp, etc.)
-4. Also add any IDEs that will run this server (VS Code, Cursor, etc.)
-5. **Restart the application** after granting access
+or:
 
-**Note**: The server will work without Contacts access but will show raw phone numbers/emails instead of contact names.
+```bash
+imsg-mcp --doctor
+```
 
-### 2. Automation Permission (Required for sending messages)
+It checks:
 
-When you first send a message, macOS will prompt you to allow automation control of Messages.app. Click **Allow**.
+- macOS vs unsupported platforms
+- whether `~/Library/Messages/chat.db` is readable
+- whether Address Book databases are readable
+- whether Messages.app is running
 
-You can also pre-configure this:
-1. Open **System Preferences** > **Security & Privacy** > **Privacy** > **Automation**
-2. Find your terminal app and ensure **Messages** is checked
+If Full Disk Access is missing, it prints a user-friendly explanation and tells you where to enable it:
 
-## Configuration
+- `System Settings -> Privacy & Security -> Full Disk Access`
+- add the app actually running the command, such as Terminal, iTerm2, Warp, VS Code, or Cursor
+- fully restart that app afterward
 
-### For Claude Desktop
+## Permissions
 
-Add to your `~/Library/Application Support/Claude/claude_desktop_config.json`:
+### Full Disk Access
+
+Required for reading:
+
+- `~/Library/Messages/chat.db`
+- `~/Library/Application Support/AddressBook/AddressBook-v22.abcddb`
+- iCloud Address Book source databases under `~/Library/Application Support/AddressBook/Sources/...`
+
+Without it, the server cannot read your live messages or contacts.
+
+### Automation
+
+Required only for sending messages.
+
+On the first send, macOS will usually prompt you to allow the terminal or IDE to control Messages.app. Accept that prompt to enable sending.
+
+## CLI usage
+
+### Interactive console
+
+```bash
+imsg-cli
+```
+
+This starts the debug console and talks to the local MCP server under the hood.
+
+### One-off commands
+
+```bash
+imsg-cli doctor
+imsg-cli conversations 20
+imsg-cli messages "+15555550103" 20
+imsg-cli unread 100
+imsg-cli search "meeting" 20
+imsg-cli wait "+15555550103" 120
+imsg-cli send "+15555550103" "Hello"
+imsg-cli tools
+```
+
+## Terminal UI
+
+Launch the read-only TUI with either command:
+
+```bash
+imsg
+```
+
+or:
+
+```bash
+imsg-cli --tui
+```
+
+Key bindings:
+
+- `Tab` - switch between sidebar and thread panes
+- `Up` / `Down` or `j` / `k` - move selection or scroll the thread
+- `PageUp` / `PageDown` - scroll the thread faster
+- `r` - refresh conversations and messages
+- `q` - quit
+
+## MCP server usage
+
+Run the stdio server directly:
+
+```bash
+imsg-mcp
+```
+
+### Claude Desktop example
+
+Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "imessage": {
-      "command": "node",
-      "args": ["/path/to/imsg-mcp/dist/index.js"]
+      "command": "imsg-mcp"
     }
   }
 }
 ```
 
-### For Warp Terminal
-
-Add to your MCP configuration in Warp settings.
-
-### For Other MCP Clients
-
-Run the server directly:
+### Manual stdio run
 
 ```bash
-node /path/to/imsg-mcp/dist/index.js
+imsg-mcp
 ```
 
-The server communicates over stdio using the MCP protocol.
+The server logs to stderr and speaks MCP over stdio on stdout.
 
-## Environment files (quick reference)
+## MCP tools
 
-Vite-style layering applies when using Vitest and some scripts: **`.env`** → **`.env.local`** → **`.env.[mode]`**. For day-to-day development, **`AGENTS.md`** and **`skills.md`** describe:
+- `get_messages`
+- `get_unread_messages`
+- `send_message`
+- `wait_for_reply`
+- `list_conversations`
+- `search_messages`
+- `get_logs`
+- `get_last_send_error`
 
-- **`.env.test`** — used by **`pnpm test`** (`VITE_ENV=ai`, `env-data/` fixture DBs)
-- **`.env.local`** — machine paths (often committed as a template in this repo)
-- **`.env.ai`** — optional MCP run against bundled `env-data/` (e.g. Linux / cloud agents)
+### Thread slugs
 
-Large **`*.db` / `*.abcddb`** files under `env-data/` are **Git LFS**. After clone, run **`git lfs pull`** or tests and the server will see “not a database” errors.
+`list_conversations` returns a stable `threadSlug` for each visible conversation. Use that slug with:
 
-## Thread slugs
+- `send_message`
+- `wait_for_reply`
 
-Each conversation gets a slug such as `alice~imsg~a3f2` (see **`src/thread-slug.ts`**). **`list_conversations`** returns a **`threadSlug`** column. Use **`threadSlug`** with **`send_message`** and **`wait_for_reply`** so the model does not need raw group GUIDs. Mappings persist in **`~/.imsg-mcp/slugs.db`** (`VITE_SLUGS_DB_PATH`). Full rationale: **`AGENTS.md`** (Thread slugs).
+`get_messages` accepts either `chatIdentifier` or `threadSlug`.
 
-**Note:** **`get_messages`** filters by **`chatIdentifier`** (phone, email, or raw id), not by slug.
+## Example MCP workflow
 
-## Available Tools
+1. `list_conversations`
+2. pick the right `threadSlug`
+3. `send_message`
+4. `wait_for_reply`
 
-### get_messages
+## Optional companion skill
 
-Get recent messages, optionally filtered by conversation.
+The MCP server is the important part. A skill is optional, but useful if your agent platform supports installable skills and you want to teach agents how to use this server safely.
 
-```json
-{
-  "limit": 20,
-  "chatIdentifier": "+1234567890"  // optional
-}
-```
+This repo includes an optional companion skill at `skills/imsg-mcp/SKILL.md`.
 
-### get_unread_messages
+## Environment and defaults
 
-Get all unread messages across all conversations.
+Live defaults:
 
-```json
-{}
-```
+- Messages DB: `~/Library/Messages/chat.db`
+- Contacts DB: `~/Library/Application Support/AddressBook/AddressBook-v22.abcddb`
+- Slug DB: `~/.imsg-mcp/slugs.db`
 
-### send_message
+Optional overrides:
 
-Send an iMessage or SMS. Use **`recipient`** (phone or email) or **`threadSlug`** (from `list_conversations`—works for **group chats**). One of them is required along with **`message`**.
-
-```json
-{
-  "recipient": "+1234567890",
-  "message": "Hello from AI!"
-}
-```
-
-```json
-{
-  "threadSlug": "weekend-crew~imsg~d4e5",
-  "message": "Running late!"
-}
-```
-
-### wait_for_reply
-
-Wait for a reply. Use **`chatIdentifier`** or **`threadSlug`** (same idea as `send_message`).
-
-```json
-{
-  "chatIdentifier": "+1234567890",
-  "timeoutSeconds": 300,
-  "pollIntervalSeconds": 10,
-  "afterMessageId": 12345
-}
-```
-
-### list_conversations
-
-List recent conversations with metadata.
-
-```json
-{
-  "limit": 20
-}
-```
-
-### search_messages
-
-Search for messages containing specific text.
-
-```json
-{
-  "query": "meeting tomorrow",
-  "limit": 20
-}
-```
-
-## Use Case: AI Agent Question Escalation
-
-The primary use case for this MCP server is enabling AI coding agents to reach you when they have questions, rather than blocking on user input:
-
-```
-AI Agent: "I need to make a decision about the database schema. Let me ask the user via iMessage."
-
-[Uses send_message to text you]
-[Uses wait_for_reply with 5 minute timeout]
-
-You (via iMessage): "Use PostgreSQL with the normalized schema"
-
-AI Agent: "Got it! Proceeding with PostgreSQL..."
-```
-
-## Troubleshooting
-
-### "better_sqlite3.node was compiled against a different Node.js version" (ERR_DLOPEN_FAILED)
-
-The native module `better-sqlite3` was built for a different Node version than the one running the server. Fix it by rebuilding with the **same** Node you use to run the app:
-
-```bash
-# Use the same Node that will run the server (e.g. switch with nvm if needed)
-node -p "process.versions.modules"   # note the MODULE_VERSION
-pnpm rebuild better-sqlite3
-```
-
-If you use multiple Node versions (e.g. nvm, fnm), run `pnpm rebuild` with that Node active. Then run `pnpm debug` or `pnpm start` from the same environment so the same `node` is used.
-
-If your repo uses `pnpm-workspace.yaml`, ensure sqlite native builds are allowed:
-
-```yaml
-ignoredBuiltDependencies:
-  - esbuild
-onlyBuiltDependencies:
-  - better-sqlite3
-  - sqlite3
-```
-
-Then reinstall/rebuild:
-
-```bash
-pnpm install
-pnpm rebuild sqlite3
-```
-
-### "Operation not permitted" error
-
-This means Full Disk Access hasn't been granted. See the Permissions Setup section above.
-
-### "Messages got an error: Can't get buddy"
-
-The recipient address may not be registered with iMessage. Try:
-- Using the full phone number with country code (e.g., `+1234567890`)
-- Using an email address instead
-- The recipient needs to have iMessage enabled
-
-### "Messages is not running"
-
-Ensure Messages.app is open. The server uses AppleScript to control Messages, which requires the app to be running.
-
-### Messages not appearing in database
-
-There can be a slight delay (1-2 seconds) between sending/receiving a message and it appearing in the database. The `wait_for_reply` tool accounts for this with its polling mechanism.
-
-## Technical Details
-
-- **Sending**: Uses AppleScript via `osascript` to control Messages.app
-- **Reading**: Queries the SQLite database at `~/Library/Messages/chat.db`
-- **Parsing**: Uses the `imessage-parser` library to handle the complex `attributedBody` binary format used in recent macOS versions
+- `VITE_IMSG_DB_PATH`
+- `VITE_CONTACTS_DB_PATH`
+- `VITE_ADDRESS_BOOK_UUID`
+- `VITE_SLUGS_DB_PATH`
 
 ## Development
 
-Agent-oriented details (env modes, LFS, scripts, CI): **`AGENTS.md`** and **`skills.md`**.
-
 ```bash
-# Run in development mode (with auto-rebuild)
+pnpm build
 pnpm dev
-
-# Tests (loads .env.test → env-data fixtures; AppleScript mocked)
+pnpm mcp
+pnpm cli
+pnpm tui
+pnpm doctor
 pnpm test
-
-# Tests against paths in .env + .env.local (still mocked under Vitest)
-pnpm test:native
-
-# Type check / lint
 pnpm typecheck
 pnpm lint
 ```
 
-**Fixture maintenance (macOS only, destructive to `env-data/`):** `pnpm sync-env-data` copies your live `chat.db`, Address Book DBs, and `slugs.db` into `env-data/`. Only run when you intend to refresh bundled data and understand Git LFS implications. See **`AGENTS.md`** → Scripts and fixtures.
+### Fixture data
 
-**Contact sanity check:** `pnpm exec tsx scripts/compare-contacts-vcf.ts` compares `env-data/contacts.vcf` to the Address Book reader; **`pnpm test`** includes a Vitest check that match rate stays **≥ 80%** on that fixture.
+Bundled fixture databases under `env-data/` are stored with Git LFS.
 
-### Debug console (interactive)
-
-Run a **user-friendly REPL** to send messages, fetch messages, list conversations, and call any MCP tool with clear prompts and readable output:
+After cloning, run:
 
 ```bash
-pnpm build   # build first (server runs from dist/index.js)
-pnpm debug   # starts REPL + MCP server
+git lfs pull
 ```
 
-On start you’ll see a short **help** with all commands. Example commands:
+If fixture DBs are still LFS pointer files, tests and local AI mode will fail with SQLite errors.
 
-- `send +15555550100 "Hello"` — send an iMessage/SMS
-- `messages` or `messages +15555550100 10` — get recent messages
-- `unread` — get all unread messages
-- `conversations 20` — list chats with last message snippet
-- `search "meeting"` — search message text
-- `wait +15555550100 120` — wait for a reply (120s)
-- `tools` — list available MCP tools
-- `help` — show usage again
-- `quit` — exit
+## Troubleshooting
 
-Server stderr (e.g. from the MCP server process) is shown with a `[server]` prefix.
+### `Operation not permitted`
+
+Run:
+
+```bash
+imsg-cli doctor
+```
+
+Then grant Full Disk Access and restart the app running the command.
+
+### `Messages.app is not running or accessible`
+
+Open Messages.app. Reading still works without it, but sending does not.
+
+### Contact names are missing
+
+Grant Full Disk Access to the running app. `imsg-mcp` auto-discovers iCloud Address Book source databases when it can read the Address Book root.
+
+### Native module mismatch
+
+If `better-sqlite3` was built for the wrong Node version:
+
+```bash
+pnpm rebuild better-sqlite3
+```
+
+## Publishing notes
+
+This package is ready to publish as a multi-bin package. Global installs expose:
+
+- `imsg-mcp`
+- `imsg-cli`
+- `imsg`
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Please open an issue or PR.
-
-## Credits
-
-- Uses [imessage-parser](https://www.npmjs.com/package/imessage-parser) for robust message parsing
-- Built with the [Model Context Protocol SDK](https://github.com/anthropics/mcp)

@@ -1,4 +1,4 @@
-import { TypedStreamParser } from "imessage-parser";
+import { TypedStreamParser } from "./parsers/typedstream-parser.js";
 
 const METADATA_PATTERNS = [
   /^streamtyped$/i,

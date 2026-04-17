@@ -8,16 +8,19 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { checkMessagesAvailable, sendMessageAlt, sendToChat, sendToChatId } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { IMessageDB } from "./imessage-db.js";
 import { appendLog, getLastSendError, getLogs } from "./logger.js";
+import { APP_NAME, APP_VERSION } from "./meta.js";
 import type { Message } from "./types.js";
 
 // Tool input schemas
 const GetMessagesSchema = z.object({
   limit: z.number().min(1).max(100).default(20).describe("Number of messages to retrieve"),
   chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID to filter by"),
+  threadSlug: z.string().optional().describe("Thread slug from list_conversations"),
 });
 
 const GetUnreadMessagesSchema = z.object({
@@ -88,6 +91,10 @@ const TOOLS = [
         chatIdentifier: {
           type: "string",
           description: "Phone number, email, or chat ID to filter by",
+        },
+        threadSlug: {
+          type: "string",
+          description: "Thread slug from list_conversations",
         },
       },
     },
@@ -281,8 +288,8 @@ class IMessageMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: "imsg-mcp",
-        version: "1.0.0",
+        name: APP_NAME,
+        version: APP_VERSION,
       },
       {
         capabilities: {
@@ -406,13 +413,25 @@ class IMessageMCPServer {
   }
 
   private async handleGetMessages(args: unknown) {
-    const { limit, chatIdentifier } = GetMessagesSchema.parse(args);
+    const { limit, chatIdentifier, threadSlug } = GetMessagesSchema.parse(args);
 
     let messages: Message[];
     let threadHeader = "";
-    if (chatIdentifier) {
-      messages = await this.db.getMessagesForChat(chatIdentifier, limit);
-      const conv = await this.db.findChatByHandle(chatIdentifier);
+    if (chatIdentifier || threadSlug) {
+      let targetIdentifier = chatIdentifier;
+      if (threadSlug) {
+        const slugRecord = this.db.getSlugRecord(threadSlug);
+        if (!slugRecord) {
+          return {
+            content: [{ type: "text", text: `Unknown thread slug: ${threadSlug}` }],
+            isError: true,
+          };
+        }
+        targetIdentifier = slugRecord.chatIdentifier;
+      }
+
+      messages = await this.db.getMessagesForChat(targetIdentifier!, limit);
+      const conv = await this.db.findChatByHandle(targetIdentifier!);
       if (conv) {
         const name = conv.displayName || conv.rawIdentifier;
         const ident = conv.displayName ? ` (${conv.rawIdentifier})` : "";
@@ -690,6 +709,45 @@ class IMessageMCPServer {
   }
 }
 
-// Run the server
-const server = new IMessageMCPServer();
-server.run().catch(console.error);
+function printServerHelp(): void {
+  console.error(`${APP_NAME} ${APP_VERSION}`);
+  console.error("");
+  console.error("Usage:");
+  console.error(`  ${APP_NAME}           Run the MCP stdio server`);
+  console.error(`  ${APP_NAME} --doctor  Check local permissions and database access`);
+  console.error(`  ${APP_NAME} --help    Show this help`);
+  console.error(`  ${APP_NAME} --version Show the version`);
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) {
+    printServerHelp();
+    return;
+  }
+  if (args.includes("--version") || args.includes("-v")) {
+    console.log(APP_VERSION);
+    return;
+  }
+  if (args.includes("--doctor")) {
+    const report = await checkLocalAccess();
+    console.log(formatAccessReport(report));
+    process.exit(report.ok ? 0 : 1);
+  }
+
+  try {
+    const server = new IMessageMCPServer();
+    await server.run();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    const report = await checkLocalAccess();
+    console.error("");
+    console.error(formatAccessReport(report));
+    process.exit(1);
+  }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

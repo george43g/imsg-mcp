@@ -5,8 +5,15 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "imsg-mcp": "./dist/index.js"
+    "imsg-mcp": "./dist/index.js",
+    "imsg-cli": "./dist/cli.js",
+    "imsg": "./dist/tui.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "skills"
+  ],
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
@@ -14,7 +21,11 @@
     "mcp:ai": "node --env-file=.env --env-file-if-exists=.env.ai dist/index.js",
     "dev:mcp": "tsx src/index.ts",
     "dev:mcp:watch": "nodemon --ext ts --exec 'tsx src/index.ts'",
-    "start": "tsx scripts/cli-console.ts",
+    "start": "node --env-file=.env --env-file-if-exists=.env.local dist/cli.js",
+    "debug": "node --env-file=.env --env-file-if-exists=.env.local dist/cli.js",
+    "cli": "node --env-file=.env --env-file-if-exists=.env.local dist/cli.js",
+    "tui": "node --env-file=.env --env-file-if-exists=.env.local dist/tui.js",
+    "doctor": "node --env-file=.env --env-file-if-exists=.env.local dist/cli.js doctor",
     "test": "vitest run",
     "test:native": "vitest run --mode development",
     "test:watch": "vitest",
@@ -32,13 +43,20 @@
     "ai-agent",
     "applescript"
   ],
-  "author": "",
+  "author": "George G",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/george43g/imsg-mcp.git"
+  },
+  "homepage": "https://github.com/george43g/imsg-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/george43g/imsg-mcp/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^12.6.2",
     "bplist-parser": "^0.3.2",
-    "imessage-parser": "^0.1.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

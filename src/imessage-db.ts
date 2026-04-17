@@ -1,6 +1,8 @@
 /**
  * iMessage Database Reader
- * Uses imessage-parser for robust attributedBody parsing
+ *
+ * All database access goes through a single better-sqlite3 connection.
+ * attributedBody parsing uses our local TypedStreamParser fork.
  *
  * See docs/IMESSAGE_DB_SCHEMA.md for database structure reference.
  * Schema constants and epoch/timestamp helpers live in db-schema.ts.
@@ -9,7 +11,26 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { type ChatRow, IMessageDatabase, type MessageRow } from "imessage-parser";
+
+/** Minimal chat row from the chat table. */
+export interface ChatRow {
+  ROWID: number;
+  guid: string;
+  chat_identifier: string;
+  display_name: string | null;
+}
+
+/** Raw message row from the message table (columns used throughout this module). */
+export interface MessageRow {
+  ROWID: number;
+  guid: string;
+  text: string | null;
+  attributedBody: Buffer | null;
+  date: number;
+  is_from_me: number;
+  handle_id: string | null;
+  cache_has_attachments: number;
+}
 import { extractAttributedBodyText } from "./attributed-body-text.js";
 import { ContactsDB } from "./contacts-db.js";
 import {
@@ -126,12 +147,7 @@ function getRichContentType(balloonBundleId: string | null): RichContentType | u
 /** Use schema helper for Mac epoch timestamps. */
 const macTimestampToDate = schemaMacTimestampToDate;
 
-/**
- * Wrapper around imessage-parser that provides a cleaner interface
- * for MCP server operations
- */
 export class IMessageDB {
-  private db: IMessageDatabase;
   private raw: Database.Database;
   private dbPath: string;
   private contacts: ContactsDB;
@@ -143,7 +159,6 @@ export class IMessageDB {
 
   constructor(dbPath?: string, contactsDbPaths?: string | string[], slugStorePath?: string) {
     this.dbPath = dbPath || join(homedir(), "Library", "Messages", "chat.db");
-    this.db = new IMessageDatabase(this.dbPath);
     this.raw = new Database(this.dbPath, { readonly: true });
     this.contacts = new ContactsDB(contactsDbPaths);
     this.slugStore = new SlugStore(slugStorePath);
@@ -273,24 +288,22 @@ export class IMessageDB {
     limit: number = 20,
     includeReactions: boolean = false,
   ): Promise<Message[]> {
-    const chats = await this.db.getChats();
+    const chats = this.getAllChatsWithLastDate()
+      .sort((a, b) => (b.last_date ?? 0) - (a.last_date ?? 0))
+      .slice(0, 10);
+
     const allMessages: Message[] = [];
 
-    // Get messages from the first few chats
-    for (const chat of chats.slice(0, 10)) {
+    for (const chat of chats) {
       try {
-        const messages = await this.db.getMessagesFromChat(
-          chat.ROWID,
-          Math.min(limit * 2, 40), // Fetch more to account for filtered reactions
-        );
+        const rows = this.fetchMessagesForChatRowId(chat.ROWID, Math.min(limit * 2, 40));
 
-        for (const msg of messages) {
-          const parsed = this.db.parseMessage(msg);
+        for (const msg of rows) {
+          const text = this.parseMessageText(msg);
           const ext = this.fetchExtendedMessageData(msg.ROWID);
           if (isHiddenSystemItem(ext.item_type)) continue;
-          const converted = this.convertMessage(msg, parsed.text, chat.chat_identifier, ext);
+          const converted = this.convertMessage(msg, text, chat.chat_identifier, ext);
 
-          // Skip reaction messages unless explicitly requested
           if (!includeReactions && converted.isReaction) continue;
 
           allMessages.push(converted);
@@ -300,7 +313,6 @@ export class IMessageDB {
       }
     }
 
-    // Sort by date descending and limit
     return allMessages.sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, limit);
   }
 
@@ -320,15 +332,15 @@ export class IMessageDB {
     const perChatLimit = Math.max(limit * 2, 50);
     const result = new Map<number, Message>();
     for (const chat of chats) {
-      const messages = await this.db.getMessagesFromChat(chat.ROWID, perChatLimit);
+      const rows = this.fetchMessagesForChatRowId(chat.ROWID, perChatLimit);
 
-      for (const msg of messages) {
-        const parsed = this.db.parseMessage(msg);
+      for (const msg of rows) {
+        const text = this.parseMessageText(msg);
         const ext = this.fetchExtendedMessageData(msg.ROWID);
         if (isHiddenSystemItem(ext.item_type)) continue;
         const converted = this.convertMessage(
           msg,
-          parsed.text,
+          text,
           chat.chat_identifier,
           ext,
           includeReactionDetails,
@@ -352,21 +364,22 @@ export class IMessageDB {
    * @param limit Max number of messages to return (default 100).
    */
   async getUnreadMessages(limit: number = 100): Promise<Message[]> {
-    // Query unread incoming directly via raw DB for accuracy
-    // Exclude reactions (associated_message_type = 0 means normal message; see db-schema)
     const stmt = this.raw.prepare(`
-      SELECT 
-        m.ROWID as rowid,
+      SELECT
+        m.ROWID,
+        m.guid,
+        m.text,
+        m.attributedBody,
+        m.date,
         m.is_from_me,
-        m.is_read,
-        m.date_read,
         h.id as handle_id,
+        m.cache_has_attachments,
         c.chat_identifier
       FROM ${Tables.MESSAGE} m
       LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
       LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
       LEFT JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
-      WHERE m.is_from_me = 0 
+      WHERE m.is_from_me = 0
         AND m.is_read = 0
         AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
         AND COALESCE(m.item_type, 0) = 0
@@ -374,22 +387,16 @@ export class IMessageDB {
       LIMIT ?
     `);
 
-    const flags = stmt.all(limit) as any[];
+    const rows = stmt.all(limit) as (MessageRow & { chat_identifier: string | null })[];
 
-    // Fetch messages with parser and merge
     const result: Message[] = [];
-    for (const f of flags) {
-      if (!f.chat_identifier) continue;
-      const chat = this.findChatByIdentifier(f.chat_identifier);
-      if (!chat) continue;
-      const msgs = await this.db.getMessagesFromChat(chat.ROWID, 50);
-      const match = msgs.find((m) => m.ROWID === f.rowid);
-      if (!match) continue;
-      const parsed = this.db.parseMessage(match);
-      result.push(this.convertMessage(match, parsed.text, chat.chat_identifier));
+    for (const row of rows) {
+      if (!row.chat_identifier) continue;
+      const text = this.parseMessageText(row);
+      const ext = this.fetchExtendedMessageData(row.ROWID);
+      result.push(this.convertMessage(row, text, row.chat_identifier, ext));
     }
 
-    // Ensure sorted by timestamp descending (newest first)
     result.sort((a, b) => b.date.getTime() - a.date.getTime());
     return result.slice(0, limit);
   }
@@ -417,8 +424,8 @@ export class IMessageDB {
    * List all conversations with metadata, sorted by last message date (newest first).
    * Populates lastMessageDate, lastMessageSnippet, and unreadCount to match Messages.app left pane.
    */
-  async listConversations(limit?: number): Promise<Conversation[]> {
-    const chats = await this.db.getChats();
+  async listConversations(limit: number = 200): Promise<Conversation[]> {
+    const chats = this.getAllChats();
 
     // Last message per chat (date, snippet from text column; attributedBody-only messages may have empty snippet)
     const lastMsgStmt = this.raw.prepare(`
@@ -530,7 +537,7 @@ export class IMessageDB {
     });
 
     const deduped = this.mergeDuplicateConversations(prepared);
-    const selected = typeof limit === "number" ? deduped.slice(0, limit) : deduped;
+    const selected = deduped.slice(0, limit);
 
     return selected.map(({ conversation, last }) => ({
       ...conversation,
@@ -585,26 +592,79 @@ export class IMessageDB {
   }
 
   /**
-   * Search messages across all conversations
+   * Search messages across all conversations.
+   *
+   * Strategy: search the `text` column via LIKE first (covers most messages).
+   * For messages where text is NULL but attributedBody exists, we fetch a larger
+   * window and post-filter after parsing the blob.  The upstream imessage-parser
+   * had a bug here: its SQL `WHERE text LIKE ? OR attributedBody IS NOT NULL`
+   * with a LIMIT meant the LIMIT was consumed by non-matching attributedBody rows,
+   * hiding older text matches entirely.
    */
   async searchMessages(query: string, limit: number = 20): Promise<Message[]> {
-    const results = await this.db.searchMessages(query, limit * 2); // Fetch extra to filter reactions
+    // Phase 1: direct text match -- fast and reliable
+    const textStmt = this.raw.prepare(`
+      SELECT
+        m.ROWID, m.guid, m.text, m.attributedBody, m.date,
+        m.is_from_me, h.id as handle_id, m.cache_has_attachments,
+        c.chat_identifier
+      FROM ${Tables.MESSAGE} m
+      LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+      LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      LEFT JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
+      WHERE m.text LIKE ?
+        AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
+      ORDER BY m.date DESC
+      LIMIT ?
+    `);
 
+    const textRows = textStmt.all(`%${query}%`, limit * 2) as (MessageRow & { chat_identifier: string | null })[];
+    const seenIds = new Set<number>();
     const messages: Message[] = [];
-    for (const result of results) {
-      const parsed = this.db.parseMessage(result);
-      const ext = this.fetchExtendedMessageData(result.ROWID);
+
+    for (const row of textRows) {
+      if (!row.chat_identifier) continue;
+      seenIds.add(row.ROWID);
+      const text = this.parseMessageText(row);
+      const ext = this.fetchExtendedMessageData(row.ROWID);
       if (isHiddenSystemItem(ext.item_type)) continue;
-      const converted = this.convertMessage(
-        result,
-        parsed.text,
-        (result as any).chat_identifier || "unknown",
-        ext,
-      );
-
-      // Skip reactions in search results
+      const converted = this.convertMessage(row, text, row.chat_identifier, ext);
       if (converted.isReaction) continue;
+      messages.push(converted);
+      if (messages.length >= limit) return messages;
+    }
 
+    // Phase 2: scan attributedBody-only messages (text IS NULL) for matches
+    // Use a generous window so we don't miss older messages
+    const blobStmt = this.raw.prepare(`
+      SELECT
+        m.ROWID, m.guid, m.text, m.attributedBody, m.date,
+        m.is_from_me, h.id as handle_id, m.cache_has_attachments,
+        c.chat_identifier
+      FROM ${Tables.MESSAGE} m
+      LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+      LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      LEFT JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
+      WHERE m.text IS NULL
+        AND m.attributedBody IS NOT NULL
+        AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
+      ORDER BY m.date DESC
+      LIMIT ?
+    `);
+
+    const blobRows = blobStmt.all(limit * 20) as (MessageRow & { chat_identifier: string | null })[];
+    const queryLower = query.toLowerCase();
+
+    for (const row of blobRows) {
+      if (!row.chat_identifier || seenIds.has(row.ROWID)) continue;
+      const text = this.parseMessageText(row);
+      if (!text || !text.toLowerCase().includes(queryLower)) continue;
+      const ext = this.fetchExtendedMessageData(row.ROWID);
+      if (isHiddenSystemItem(ext.item_type)) continue;
+      const converted = this.convertMessage(row, text, row.chat_identifier, ext);
+      if (converted.isReaction) continue;
       messages.push(converted);
       if (messages.length >= limit) break;
     }
@@ -841,6 +901,45 @@ export class IMessageDB {
     }));
   }
 
+  /** Get all chats (without last_date subquery -- lighter for listing). */
+  private getAllChats(): ChatRow[] {
+    const rows = this.raw
+      .prepare(
+        `SELECT ROWID, guid, chat_identifier, display_name FROM ${Tables.CHAT} ORDER BY ROWID DESC`,
+      )
+      .all() as ChatRow[];
+    return rows;
+  }
+
+  /**
+   * Fetch message rows for a chat ROWID, ordered by date DESC.
+   * Replaces the upstream IMessageDatabase.getMessagesFromChat().
+   */
+  private fetchMessagesForChatRowId(chatRowId: number, limit: number): MessageRow[] {
+    const stmt = this.raw.prepare(`
+      SELECT
+        m.ROWID, m.guid, m.text, m.attributedBody, m.date,
+        m.is_from_me, h.id as handle_id, m.cache_has_attachments
+      FROM ${Tables.MESSAGE} m
+      LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+      LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      WHERE cmj.chat_id = ?
+      ORDER BY m.date DESC
+      LIMIT ?
+    `);
+    return stmt.all(chatRowId, limit) as MessageRow[];
+  }
+
+  /**
+   * Extract readable text from a message row.
+   * Prefers the plain text column; falls back to parsing the attributedBody blob.
+   * Replaces the upstream IMessageDatabase.parseMessage().
+   */
+  private parseMessageText(row: MessageRow): string | null {
+    if (row.text && !isPlaceholderText(row.text)) return row.text;
+    return extractAttributedBodyText(row.attributedBody) || null;
+  }
+
   /**
    * From a list of chats with last_date, return the one with the most recent message (sort by last_date desc).
    */
@@ -873,7 +972,7 @@ export class IMessageDB {
   }
 
   /**
-   * Convert imessage-parser message to our Message type with full extended data
+   * Convert a raw message row to our Message type with full extended data
    */
   private convertMessage(
     raw: MessageRow,
@@ -1040,7 +1139,6 @@ export class IMessageDB {
    * Close database connections
    */
   async close(): Promise<void> {
-    await this.db.close();
     this.raw.close();
     this.slugStore.close();
   }
@@ -1193,30 +1291,7 @@ export class IMessageDB {
     row: { ROWID: number; text: string | null; attributedBody: Buffer | null } | undefined,
   ): string | null {
     if (!row) return null;
-
-    // Try text field first
-    if (row.text) return row.text;
-
-    // Fall back to parsing attributedBody if available
-    if (row.attributedBody) {
-      try {
-        // Use imessage-parser to parse the attributedBody
-        // We need to fetch the full message row for the parser
-        const fullRow = this.raw
-          .prepare(`SELECT * FROM ${Tables.MESSAGE} WHERE ROWID = ?`)
-          .get(row.ROWID);
-        if (fullRow) {
-          const parsed = this.db.parseMessage(fullRow as any);
-          if (!isPlaceholderText(parsed.text)) {
-            return parsed.text || null;
-          }
-          return extractAttributedBodyText(row.attributedBody) || null;
-        }
-      } catch {
-        // Ignore parsing errors
-      }
-    }
-
+    if (row.text && !isPlaceholderText(row.text)) return row.text;
     return extractAttributedBodyText(row.attributedBody) || null;
   }
 }
