@@ -1,17 +1,11 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../src/config.js";
+import { getContactsDbPaths, getImsgDbPath } from "../src/config.js";
 import { ContactsDB } from "../src/contacts-db.js";
 import { IMessageDB } from "../src/imessage-db.js";
-
-function isGitLfsPointer(path: string): boolean {
-  try {
-    const head = readFileSync(path).subarray(0, 80).toString("utf-8");
-    return head.startsWith("version https://git-lfs.github.com/spec/v1");
-  } catch {
-    return true;
-  }
-}
+import { isGitLfsPointer } from "./helpers.js";
 
 describe("Contacts + iMessage integration (smoke)", () => {
   it("loads contacts stats when Address Book DB is present and not an LFS pointer", () => {
@@ -40,9 +34,11 @@ describe("Contacts + iMessage integration (smoke)", () => {
     }
 
     const paths = getContactsDbPaths();
-    const imsg = new IMessageDB(chatPath, paths ?? undefined, getSlugsDbPath());
+    const tempDir = mkdtempSync(join(tmpdir(), "imsg-smoke-"));
+    const slugsPath = join(tempDir, "slugs.db");
+    const imsg = new IMessageDB(chatPath, paths ?? undefined, slugsPath);
     try {
-      const convs = await imsg.listConversations();
+      const convs = await imsg.listConversations(50);
       expect(Array.isArray(convs)).toBe(true);
       if (convs.length > 0) {
         const c = convs[0];
