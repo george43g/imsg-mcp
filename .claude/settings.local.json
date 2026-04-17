@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(wc:*)",
-      "Bash(pnpm typecheck:*)"
+      "Bash(pnpm typecheck:*)",
+      "mcp__imessage-mcp-dev__list_conversations",
+      "mcp__imessage-mcp-dev__get_messages",
+      "mcp__imessage-mcp-dev__get_unread_messages",
+      "mcp__imessage-mcp-dev__search_messages",
+      "mcp__imessage-mcp-dev__get_logs",
+      "mcp__imessage-mcp-dev__get_last_send_error",
+      "Bash(pnpm build:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

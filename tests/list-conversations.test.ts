@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -6,15 +6,7 @@ import { describe, expect, it } from "vitest";
 import { macTimestampToDate } from "../src/db-schema.js";
 import { getContactsDbPaths, getImsgDbPath } from "../src/config.js";
 import { IMessageDB } from "../src/imessage-db.js";
-
-function isGitLfsPointer(path: string): boolean {
-  try {
-    const head = readFileSync(path).subarray(0, 80).toString("utf-8");
-    return head.startsWith("version https://git-lfs.github.com/spec/v1");
-  } catch {
-    return true;
-  }
-}
+import { isGitLfsPointer } from "./helpers.js";
 
 describe("listConversations", () => {
   it("collapses duplicate chat identifiers into stable visible rows", async () => {

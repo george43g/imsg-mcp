@@ -43,13 +43,20 @@
     "ai-agent",
     "applescript"
   ],
-  "author": "",
+  "author": "George G",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/george43g/imsg-mcp.git"
+  },
+  "homepage": "https://github.com/george43g/imsg-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/george43g/imsg-mcp/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^12.6.2",
     "bplist-parser": "^0.3.2",
-    "imessage-parser": "^0.1.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
