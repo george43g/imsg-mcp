@@ -26,7 +26,9 @@ function spawnChild(): void {
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
     shell: true,
+    detached: true, // own process group so we can kill the whole tree
   });
+  child.unref(); // don't keep proxy alive solely for the child
 
   // Forward stdout from child to parent stdout
   child.stdout?.on("data", (data: Buffer) => {
@@ -57,15 +59,25 @@ process.stdin.on("data", (data: Buffer) => {
 });
 
 // Handle parent process shutdown
+function killChildGroup(signal: NodeJS.Signals): void {
+  if (child?.pid) {
+    try {
+      process.kill(-child.pid, signal); // negative pid = entire process group
+    } catch {
+      // process group may already be gone
+    }
+  }
+}
+
 process.on("SIGINT", () => {
   isShuttingDown = true;
-  child?.kill("SIGINT");
+  killChildGroup("SIGINT");
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   isShuttingDown = true;
-  child?.kill("SIGTERM");
+  killChildGroup("SIGTERM");
   process.exit(0);
 });
 
