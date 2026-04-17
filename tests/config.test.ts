@@ -22,6 +22,13 @@ afterEach(() => {
 });
 
 describe("getContactsDbPaths", () => {
+  it("falls back to the standard Address Book path when no env override is set", () => {
+    delete process.env.VITE_CONTACTS_DB_PATH;
+    delete process.env.VITE_ADDRESS_BOOK_UUID;
+
+    expect(getContactsDbPaths()?.[0]).toContain("Library/Application Support/AddressBook/AddressBook-v22.abcddb");
+  });
+
   it("discovers sibling Address Book source databases from the main DB path", () => {
     const root = join(tmpdir(), `imsg-addressbook-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const mainDb = join(root, "AddressBook-v22.abcddb");

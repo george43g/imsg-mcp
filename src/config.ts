@@ -32,8 +32,7 @@ export function getImsgDbPath(): string {
 }
 
 export function getContactsDbPaths(): string[] | undefined {
-  const main = process.env.VITE_CONTACTS_DB_PATH;
-  if (!main) return undefined;
+  const main = process.env.VITE_CONTACTS_DB_PATH ?? join(homedir(), "Library", "Application Support", "AddressBook", "AddressBook-v22.abcddb");
 
   const mainResolved = resolveEnvPath(main, "");
   const paths = new Set<string>([mainResolved]);

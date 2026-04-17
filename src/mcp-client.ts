@@ -1,0 +1,127 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+export interface ToolCallResult {
+  content?: { type: string; text?: string }[];
+  isError?: boolean;
+}
+
+function distRoot(): string {
+  return dirname(fileURLToPath(import.meta.url));
+}
+
+export class LocalMcpClient {
+  private proc: ReturnType<typeof spawn>;
+  private requestId = 0;
+  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private outBuf = "";
+
+  constructor(private readonly onStderr?: (line: string) => void) {
+    const entry = join(distRoot(), "index.js");
+    if (!existsSync(entry)) {
+      throw new Error("dist/index.js not found. Run `pnpm build` first.");
+    }
+
+    this.proc = spawn(process.execPath, [entry], {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    this.proc.stderr!.on("data", (chunk: Buffer) => {
+      this.onStderr?.(chunk.toString("utf8"));
+    });
+
+    this.proc.stdout!.on("data", (chunk: Buffer) => {
+      this.outBuf += chunk.toString("utf8");
+      const lines = this.outBuf.split("\n");
+      this.outBuf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const message = JSON.parse(line) as { id?: number };
+          if (message.id != null && this.pending.has(message.id)) {
+            const pending = this.pending.get(message.id);
+            this.pending.delete(message.id);
+            pending?.resolve(message);
+          }
+        } catch {
+          // Ignore non-JSON lines on stdout.
+        }
+      }
+    });
+  }
+
+  async start(): Promise<void> {
+    const response = (await this.call("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "imsg-cli", version: "1.0.0" },
+    })) as { result?: unknown };
+
+    if (response.result) {
+      this.proc.stdin!.write(
+        `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`,
+      );
+    }
+  }
+
+  async callTool(name: string, args: object, timeoutMs = 30_000): Promise<ToolCallResult> {
+    const response = (await this.call(
+      "tools/call",
+      { name, arguments: args },
+      timeoutMs,
+    )) as {
+      result?: ToolCallResult;
+      error?: { message: string };
+    };
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    return response.result ?? {};
+  }
+
+  async listTools(timeoutMs = 15_000): Promise<{ name: string; description?: string }[]> {
+    const response = (await this.call("tools/list", {}, timeoutMs)) as {
+      result?: { tools?: { name: string; description?: string }[] };
+      error?: { message: string };
+    };
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    return response.result?.tools ?? [];
+  }
+
+  close(): void {
+    this.proc.stdin!.end();
+    this.proc.kill();
+  }
+
+  private call(method: string, params: object, timeoutMs = 15_000): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const id = ++this.requestId;
+      this.pending.set(id, { resolve, reject });
+      this.proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        reject(new Error(`Request timeout after ${timeoutMs}ms.`));
+      }, timeoutMs);
+
+      const original = this.pending.get(id);
+      if (!original) return;
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          original.resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          original.reject(error);
+        },
+      });
+    });
+  }
+}

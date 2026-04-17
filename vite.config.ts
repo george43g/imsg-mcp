@@ -5,7 +5,7 @@ const nodeExternals = [
   ...builtinModules,
   ...builtinModules.map((m) => `node:${m}`),
   "better-sqlite3",
-  "imessage-parser",
+  "bplist-parser",
   "@modelcontextprotocol/sdk",
   "@modelcontextprotocol/sdk/server/index.js",
   "@modelcontextprotocol/sdk/server/stdio.js",
@@ -17,14 +17,19 @@ export default defineConfig({
   build: {
     target: "node22",
     lib: {
-      entry: "src/index.ts",
+      entry: {
+        index: "src/index.ts",
+        cli: "src/cli.ts",
+        tui: "src/tui.ts",
+      },
       formats: ["es"],
-      fileName: () => "index.js",
+      fileName: (_format, entryName) => `${entryName}.js`,
     },
     rollupOptions: {
       external: nodeExternals,
       output: {
-        banner: "#!/usr/bin/env node",
+        banner: (chunk) =>
+          chunk.isEntry ? "#!/usr/bin/env node" : "",
       },
     },
     outDir: "dist",

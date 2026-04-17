@@ -1,25 +1,17 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { macTimestampToDate } from "../src/db-schema.js";
 import { IMessageDB } from "../src/imessage-db.js";
+import { isGitLfsPointer } from "./helpers.js";
 
 const FIXTURE_CHAT_DB = "env-data/chat.db";
 const FIXTURE_CONTACT_DBS = [
   "env-data/AddressBook/AddressBook-v22.abcddb",
   "env-data/AddressBook/Sources/776498A0-67C1-4BD2-93D1-478DB327E31D/AddressBook-v22.abcddb",
 ];
-
-function isGitLfsPointer(path: string): boolean {
-  try {
-    const head = readFileSync(path).subarray(0, 80).toString("utf-8");
-    return head.startsWith("version https://git-lfs.github.com/spec/v1");
-  } catch {
-    return true;
-  }
-}
 
 describe("contact-based thread merging", () => {
   it("merges Michelle's phone and email chats into one visible conversation", async () => {
