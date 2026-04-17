@@ -17,9 +17,13 @@ export default defineConfig({
   build: {
     target: "node22",
     lib: {
-      entry: "src/index.ts",
+      entry: {
+        index: "src/index.ts",
+        cli: "src/cli.ts",
+        tui: "src/tui.ts",
+      },
       formats: ["es"],
-      fileName: () => "index.js",
+      fileName: (_format, entryName) => `${entryName}.js`,
     },
     rollupOptions: {
       external: nodeExternals,
