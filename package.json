@@ -57,6 +57,7 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^12.6.2",
     "bplist-parser": "^0.3.2",
+    "commander": "^14.0.3",
     "zod": "^3.23.0"
   },
   "devDependencies": {
