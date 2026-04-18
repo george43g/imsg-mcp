@@ -9,7 +9,22 @@
       "mcp__imessage-mcp-dev__search_messages",
       "mcp__imessage-mcp-dev__get_logs",
       "mcp__imessage-mcp-dev__get_last_send_error",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "Bash(timeout 120 npx vitest:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(git checkout:*)",
+      "Bash(find:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(node -e \"console.log\\(process.version\\)\")",
+      "mcp__claude_ai_Context7__resolve-library-id",
+      "mcp__claude_ai_Context7__query-docs"
     ]
   },
   "enableAllProjectMcpServers": true,
