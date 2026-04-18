@@ -407,6 +407,11 @@ export class IMessageDB {
       const rows = this.fetchMessagesForChatRowId(chat.ROWID, perChatLimit);
       const extBatch = this.fetchExtendedMessageDataBatch(rows.map((r) => r.ROWID));
 
+      // Batch-fetch reactions for the entire chat instead of per-message LIKE queries
+      const reactionsByGuid = includeReactionDetails
+        ? this.fetchReactionsForChat(chat.ROWID)
+        : undefined;
+
       for (const msg of rows) {
         const text = this.parseMessageText(msg);
         const ext = extBatch.get(msg.ROWID) ?? {};
@@ -416,8 +421,17 @@ export class IMessageDB {
           text,
           chat.chat_identifier,
           ext,
-          includeReactionDetails,
+          false, // don't let convertMessage fetch reactions individually
         );
+
+        // Attach pre-fetched reactions
+        if (reactionsByGuid && !converted.isReaction) {
+          const rxns = reactionsByGuid.get(msg.guid);
+          if (rxns && rxns.length > 0) {
+            converted.reactions = this.consolidateReactions(rxns);
+            if (converted.reactions.length === 0) converted.reactions = undefined;
+          }
+        }
 
         if (!includeReactions && converted.isReaction) continue;
 
@@ -1369,6 +1383,54 @@ export class IMessageDB {
       transferName: r.transfer_name,
       totalBytes: r.total_bytes || 0,
     }));
+  }
+
+  /**
+   * Batch-fetch all reactions in a chat, grouped by target message GUID.
+   * One query replaces N individual LIKE queries (the main perf bottleneck).
+   */
+  private fetchReactionsForChat(chatRowId: number): Map<string, Reaction[]> {
+    const stmt = this.raw.prepare(`
+      SELECT
+        m.associated_message_type,
+        m.associated_message_guid,
+        m.associated_message_emoji,
+        h.id as handle_id,
+        m.is_from_me
+      FROM ${Tables.MESSAGE} m
+      LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      WHERE cmj.chat_id = ?
+        AND m.associated_message_type >= 2000
+    `);
+
+    const rows = stmt.all(chatRowId) as any[];
+    const result = new Map<string, Reaction[]>();
+
+    for (const r of rows) {
+      const typeInfo = TAPBACK_TYPE_MAP[r.associated_message_type] || {
+        type: "unknown" as TapbackType,
+        isRemoval: false,
+      };
+      const parsed = parseAssociatedMessageGuid(r.associated_message_guid);
+      const targetGuid = parsed?.targetGuid;
+      if (!targetGuid) continue;
+
+      const reaction: Reaction = {
+        type: typeInfo.type,
+        emoji: r.associated_message_emoji || undefined,
+        fromHandle: r.is_from_me ? "me" : r.handle_id || "unknown",
+        isRemoval: typeInfo.isRemoval,
+        targetMessageGuid: targetGuid,
+        targetMessagePart: parsed?.partIndex || 0,
+      };
+
+      const existing = result.get(targetGuid);
+      if (existing) existing.push(reaction);
+      else result.set(targetGuid, [reaction]);
+    }
+
+    return result;
   }
 
   /**
