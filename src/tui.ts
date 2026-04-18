@@ -96,6 +96,7 @@ class ImsgTui {
     process.stdin.on("keypress", this.onKeypress);
     process.on("SIGINT", this.shutdown);
     process.on("SIGTERM", this.shutdown);
+    process.on("SIGWINCH", this.onResize);
 
     await this.refreshAll();
   }
@@ -301,8 +302,13 @@ class ImsgTui {
     process.stdout.write(output.join("\n"));
   }
 
+  private onResize = () => {
+    this.render();
+  };
+
   private shutdown = async () => {
     process.stdin.off("keypress", this.onKeypress);
+    process.off("SIGWINCH", this.onResize);
     process.stdout.write("\x1b[?25h\x1b[?1049l");
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);

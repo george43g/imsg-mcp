@@ -6,6 +6,7 @@ const nodeExternals = [
   ...builtinModules.map((m) => `node:${m}`),
   "better-sqlite3",
   "bplist-parser",
+  "commander",
   "@modelcontextprotocol/sdk",
   "@modelcontextprotocol/sdk/server/index.js",
   "@modelcontextprotocol/sdk/server/stdio.js",
