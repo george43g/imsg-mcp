@@ -12,7 +12,7 @@ import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { checkMessagesAvailable, sendMessageAlt, sendToChat, sendToChatId } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { IMessageDB } from "./imessage-db.js";
-import { appendLog, getLastSendError, getLogs } from "./logger.js";
+import { appendLog, getLastSendError, getLogDirectory, getLogs, info } from "./logger.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import type { Message } from "./types.js";
 
@@ -704,8 +704,8 @@ class IMessageMCPServer {
   async run(): Promise<void> {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    appendLog("info", "iMessage MCP Server running on stdio");
-    console.error("iMessage MCP Server running on stdio");
+    info("iMessage MCP Server running on stdio");
+    console.error(`iMessage MCP Server running on stdio (logs: ${getLogDirectory()})`);
   }
 }
 
