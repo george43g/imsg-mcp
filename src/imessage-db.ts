@@ -158,6 +158,14 @@ export class IMessageDB {
   /** In-memory chat guid -> slug for stable per-chat slug lookups. */
   private guidToSlug = new Map<string, string>();
 
+  // ── TTL caches ───────────────────────────────────────────────────────
+  private static readonly CACHE_TTL_MS = 30_000;
+  private cachedAllChats: { data: ChatWithLastDate[]; ts: number } | null = null;
+  private cachedParticipants = new Map<number, string[]>();
+  private cachedMergeKeys = new Map<string, string>();
+  private cachedSnippets = new Map<number, string | null>();
+  private backgroundSyncNeeded = true;
+
   constructor(dbPath?: string, contactsDbPaths?: string | string[], slugStorePath?: string) {
     const span = perf("IMessageDB.constructor");
     this.dbPath = dbPath || join(homedir(), "Library", "Messages", "chat.db");
@@ -174,59 +182,104 @@ export class IMessageDB {
       console.warn("Failed to initialize contacts database:", err);
     }
 
-    this.syncSlugs();
+    this.loadCachedSlugs();
     span.end();
   }
 
   /**
-   * Sync thread slugs: iterate all chats, generate slugs, upsert into SlugStore, prune stale.
+   * Fast startup: load persisted slugs from SlugStore into in-memory maps.
+   * No chat.db queries -- uses the SQLite slug store populated by previous runs.
    */
-  private syncSlugs(): void {
-    const span = perf("syncSlugs");
+  private loadCachedSlugs(): void {
+    const span = perf("loadCachedSlugs");
+    const records = this.slugStore.all();
+    for (const r of records) {
+      this.guidToSlug.set(r.chatGuid, r.slug);
+      this.slugMap.set(r.slug, {
+        ROWID: 0, // placeholder -- will be filled on full sync
+        guid: r.chatGuid,
+        chat_identifier: r.chatIdentifier,
+        display_name: r.displayName,
+        service_name: r.service ?? null,
+        last_date: null,
+      });
+    }
+    span.end({ loaded: records.length });
+  }
+
+  /** Generate and cache a slug for a single chat. */
+  private syncSlugForChat(chat: ChatWithLastDate): string {
+    const isGroup = isGroupGuid(chat.guid) || isGroupChatIdentifier(chat.chat_identifier);
+    const resolvedName =
+      !isGroup && chat.chat_identifier ? this.contacts.lookupHandle(chat.chat_identifier) : null;
+
+    const slug = generateThreadSlug({
+      chatIdentifier: chat.chat_identifier,
+      guid: chat.guid,
+      displayName: chat.display_name,
+      serviceName: chat.service_name ?? null,
+      resolvedContactName: resolvedName !== chat.chat_identifier ? resolvedName : null,
+    });
+
+    const participants = isGroup
+      ? this.fetchChatParticipants(chat.ROWID)
+      : [chat.chat_identifier];
+
+    this.slugStore.upsert({
+      slug,
+      chatGuid: chat.guid,
+      chatIdentifier: chat.chat_identifier,
+      displayName:
+        resolvedName !== chat.chat_identifier ? resolvedName : chat.display_name || null,
+      service: this.detectServiceForChat(chat),
+      isGroup,
+      participants: participants.join(","),
+      updatedAt: Date.now(),
+    });
+
+    this.slugMap.set(slug, chat);
+    this.guidToSlug.set(chat.guid, slug);
+    return slug;
+  }
+
+  /**
+   * Schedule a full slug sync in the background using setImmediate chunks.
+   * Each chunk processes up to 100 chats then yields the event loop.
+   */
+  scheduleBackgroundSlugSync(): void {
+    if (!this.backgroundSyncNeeded) return;
+    this.backgroundSyncNeeded = false;
+
+    const span = perf("backgroundSlugSync");
     const chats = this.getAllChatsWithLastDate();
     const validGuids = new Set<string>();
-    const records: SlugRecord[] = [];
+    let index = 0;
+    let synced = 0;
+    const CHUNK = 100;
 
-    this.slugMap.clear();
-    this.guidToSlug.clear();
+    const processChunk = () => {
+      const end = Math.min(index + CHUNK, chats.length);
+      for (; index < end; index++) {
+        const chat = chats[index];
+        validGuids.add(chat.guid);
+        if (!this.guidToSlug.has(chat.guid)) {
+          this.syncSlugForChat(chat);
+          synced++;
+        } else {
+          // Update the in-memory map with fresh data (ROWID, last_date)
+          const existingSlug = this.guidToSlug.get(chat.guid)!;
+          this.slugMap.set(existingSlug, chat);
+        }
+      }
+      if (index < chats.length) {
+        setImmediate(processChunk);
+      } else {
+        this.slugStore.prune(validGuids);
+        span.end({ chats: chats.length, newSlugs: synced });
+      }
+    };
 
-    for (const chat of chats) {
-      validGuids.add(chat.guid);
-      const isGroup = isGroupGuid(chat.guid) || isGroupChatIdentifier(chat.chat_identifier);
-      const resolvedName =
-        !isGroup && chat.chat_identifier ? this.contacts.lookupHandle(chat.chat_identifier) : null;
-
-      const slug = generateThreadSlug({
-        chatIdentifier: chat.chat_identifier,
-        guid: chat.guid,
-        displayName: chat.display_name,
-        serviceName: chat.service_name ?? null,
-        resolvedContactName: resolvedName !== chat.chat_identifier ? resolvedName : null,
-      });
-
-      const participants = isGroup
-        ? this.fetchChatParticipants(chat.ROWID)
-        : [chat.chat_identifier];
-
-      records.push({
-        slug,
-        chatGuid: chat.guid,
-        chatIdentifier: chat.chat_identifier,
-        displayName:
-          resolvedName !== chat.chat_identifier ? resolvedName : chat.display_name || null,
-        service: this.detectServiceForChat(chat),
-        isGroup,
-        participants: participants.join(","),
-        updatedAt: Date.now(),
-      });
-
-      this.slugMap.set(slug, chat);
-      this.guidToSlug.set(chat.guid, slug);
-    }
-
-    this.slugStore.upsertMany(records);
-    this.slugStore.prune(validGuids);
-    span.end({ chats: chats.length, slugs: records.length });
+    setImmediate(processChunk);
   }
 
   /** Look up a chat by thread slug. */
@@ -267,6 +320,8 @@ export class IMessageDB {
 
   /** Fetch group chat participants from chat_handle_join. */
   private fetchChatParticipants(chatRowId: number): string[] {
+    const cached = this.cachedParticipants.get(chatRowId);
+    if (cached) return cached;
     const stmt = this.raw.prepare(`
       SELECT h.id
       FROM ${Tables.CHAT_HANDLE_JOIN} chj
@@ -274,7 +329,9 @@ export class IMessageDB {
       WHERE chj.chat_id = ?
     `);
     const rows = stmt.all(chatRowId) as { id: string }[];
-    return rows.map((r) => r.id);
+    const result = rows.map((r) => r.id);
+    this.cachedParticipants.set(chatRowId, result);
+    return result;
   }
 
   /** Detect service type from chat data. */
@@ -306,10 +363,11 @@ export class IMessageDB {
     for (const chat of chats) {
       try {
         const rows = this.fetchMessagesForChatRowId(chat.ROWID, Math.min(limit * 2, 40));
+        const extBatch = this.fetchExtendedMessageDataBatch(rows.map((r) => r.ROWID));
 
         for (const msg of rows) {
           const text = this.parseMessageText(msg);
-          const ext = this.fetchExtendedMessageData(msg.ROWID);
+          const ext = extBatch.get(msg.ROWID) ?? {};
           if (isHiddenSystemItem(ext.item_type)) continue;
           const converted = this.convertMessage(msg, text, chat.chat_identifier, ext);
 
@@ -345,10 +403,11 @@ export class IMessageDB {
     const result = new Map<number, Message>();
     for (const chat of chats) {
       const rows = this.fetchMessagesForChatRowId(chat.ROWID, perChatLimit);
+      const extBatch = this.fetchExtendedMessageDataBatch(rows.map((r) => r.ROWID));
 
       for (const msg of rows) {
         const text = this.parseMessageText(msg);
-        const ext = this.fetchExtendedMessageData(msg.ROWID);
+        const ext = extBatch.get(msg.ROWID) ?? {};
         if (isHiddenSystemItem(ext.item_type)) continue;
         const converted = this.convertMessage(
           msg,
@@ -403,13 +462,14 @@ export class IMessageDB {
     `);
 
     const rows = stmt.all(limit) as (MessageRow & { chat_identifier: string | null })[];
+    const validRows = rows.filter((r) => r.chat_identifier != null);
+    const extBatch = this.fetchExtendedMessageDataBatch(validRows.map((r) => r.ROWID));
 
     const result: Message[] = [];
-    for (const row of rows) {
-      if (!row.chat_identifier) continue;
+    for (const row of validRows) {
       const text = this.parseMessageText(row);
-      const ext = this.fetchExtendedMessageData(row.ROWID);
-      result.push(this.convertMessage(row, text, row.chat_identifier, ext));
+      const ext = extBatch.get(row.ROWID) ?? {};
+      result.push(this.convertMessage(row, text, row.chat_identifier!, ext));
     }
 
     result.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -703,25 +763,37 @@ export class IMessageDB {
 
   private resolveConversationSnippet(last?: LastConversationRow): string | null {
     if (!last) return null;
+    const cached = this.cachedSnippets.get(last.lastMessageId);
+    if (cached !== undefined) return cached;
+
+    let result: string | null = null;
 
     const directSnippet = pickConversationSnippet({ rawText: last.snippet });
     if (directSnippet && !this.shouldFallbackToPreviousSnippet(directSnippet, last)) {
-      return directSnippet;
+      result = directSnippet;
     }
 
-    const parsedSnippet = pickConversationSnippet({
-      parsedText: this.getMessageTextByRowId(last.lastMessageId),
-    });
-    if (parsedSnippet && !this.shouldFallbackToPreviousSnippet(parsedSnippet, last)) {
-      return parsedSnippet;
+    if (result == null) {
+      const parsedSnippet = pickConversationSnippet({
+        parsedText: this.getMessageTextByRowId(last.lastMessageId),
+      });
+      if (parsedSnippet && !this.shouldFallbackToPreviousSnippet(parsedSnippet, last)) {
+        result = parsedSnippet;
+      }
     }
 
-    const previousSnippet = this.getPreviousConversationSnippet(last);
-    if (previousSnippet) return previousSnippet;
+    if (result == null) {
+      result = this.getPreviousConversationSnippet(last);
+    }
 
-    return pickConversationSnippet({
-      summaryText: extractChatSummaryText(last.chatProperties) ?? null,
-    });
+    if (result == null) {
+      result = pickConversationSnippet({
+        summaryText: extractChatSummaryText(last.chatProperties) ?? null,
+      });
+    }
+
+    this.cachedSnippets.set(last.lastMessageId, result);
+    return result;
   }
 
   private shouldFallbackToPreviousSnippet(snippet: string, last: LastConversationRow): boolean {
@@ -838,16 +910,22 @@ export class IMessageDB {
   }
 
   private getConversationMergeKey(chatIdentifier: string, chatGuid: string, isGroup: boolean): string {
+    const cacheKey = `${chatIdentifier}::${chatGuid}::${isGroup}`;
+    const cached = this.cachedMergeKeys.get(cacheKey);
+    if (cached) return cached;
+
+    let key: string;
     if (isGroup) {
-      return `group:${chatGuid}`;
+      key = `group:${chatGuid}`;
+    } else {
+      const contact = this.contacts.lookupContact(chatIdentifier);
+      key = contact
+        ? `contact:${contact.contactId}`
+        : `identifier:${chatIdentifier.replace(/[\s\-()]/g, "").toLowerCase()}`;
     }
 
-    const contact = this.contacts.lookupContact(chatIdentifier);
-    if (contact) {
-      return `contact:${contact.contactId}`;
-    }
-
-    return `identifier:${chatIdentifier.replace(/[\s\-()]/g, "").toLowerCase()}`;
+    this.cachedMergeKeys.set(cacheKey, key);
+    return key;
   }
 
   private resolveChatsForConversation(identifier: string): ChatRow[] {
@@ -890,6 +968,10 @@ export class IMessageDB {
    * Results are suitable for filtering by handle/identifier then sorting by last_date descending.
    */
   private getAllChatsWithLastDate(): ChatWithLastDate[] {
+    const now = Date.now();
+    if (this.cachedAllChats && now - this.cachedAllChats.ts < IMessageDB.CACHE_TTL_MS) {
+      return this.cachedAllChats.data;
+    }
     const stmt = this.raw.prepare(`
       SELECT
         c.ROWID as rowid,
@@ -913,7 +995,7 @@ export class IMessageDB {
       service_name: string | null;
       last_date: number | null;
     }[];
-    return rows.map((r) => ({
+    const data = rows.map((r) => ({
       ROWID: r.rowid,
       guid: r.guid,
       chat_identifier: r.chat_identifier,
@@ -921,6 +1003,8 @@ export class IMessageDB {
       service_name: r.service_name,
       last_date: r.last_date,
     }));
+    this.cachedAllChats = { data, ts: now };
+    return data;
   }
 
   /** Get all chats (without last_date subquery -- lighter for listing). */
@@ -1158,6 +1242,26 @@ export class IMessageDB {
   }
 
   /**
+   * Schedule a non-blocking background refresh of caches.
+   * Call after responding to an MCP tool call or TUI refresh.
+   */
+  scheduleBackgroundRefresh(): void {
+    setImmediate(() => {
+      // Invalidate allChats cache so the next request gets fresh data
+      this.cachedAllChats = null;
+      // Pre-warm the cache
+      this.getAllChatsWithLastDate();
+      // Sync any new slugs
+      this.scheduleBackgroundSlugSync();
+    });
+  }
+
+  /** Resolve participant handles to display names via contacts DB. */
+  resolveParticipantNames(handles: string[]): string[] {
+    return handles.map((h) => this.contacts.lookupHandle(h));
+  }
+
+  /**
    * Close database connections
    */
   async close(): Promise<void> {
@@ -1196,6 +1300,40 @@ export class IMessageDB {
       LIMIT 1
     `);
     return (stmt.get(rowid) as ExtendedMessageData) || {};
+  }
+
+  /**
+   * Batch-fetch extended message data for multiple ROWIDs in a single query.
+   * Falls back to individual fetches for very large batches (SQLite bind param limit).
+   */
+  private fetchExtendedMessageDataBatch(rowids: number[]): Map<number, ExtendedMessageData> {
+    const result = new Map<number, ExtendedMessageData>();
+    if (rowids.length === 0) return result;
+
+    const CHUNK = 500;
+    for (let i = 0; i < rowids.length; i += CHUNK) {
+      const chunk = rowids.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => "?").join(",");
+      const stmt = this.raw.prepare(`
+        SELECT
+          m.ROWID as _rowid,
+          m.is_read, m.date_read, m.is_delivered, m.date_delivered,
+          h.id as handle_id, h.service as handle_service,
+          m.associated_message_type, m.associated_message_guid,
+          m.associated_message_emoji, m.thread_originator_guid,
+          m.thread_originator_part, m.balloon_bundle_id,
+          m.item_type, m.date_edited, m.date_retracted,
+          m.cache_has_attachments, m.message_summary_info, m.payload_data
+        FROM ${Tables.MESSAGE} m
+        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+        WHERE m.ROWID IN (${placeholders})
+      `);
+      const rows = stmt.all(...chunk) as (ExtendedMessageData & { _rowid: number })[];
+      for (const row of rows) {
+        result.set(row._rowid, row);
+      }
+    }
+    return result;
   }
 
   /**
