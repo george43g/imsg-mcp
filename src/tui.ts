@@ -208,13 +208,11 @@ class ImsgTui {
       const name = truncate(conversation.displayName ?? conversation.chatIdentifier, Math.max(width - 12, 8));
       const time = relativeDate(conversation.lastMessageDate);
       const unread = conversation.unreadCount > 0 ? ` (${conversation.unreadCount})` : "";
-      lines.push(`${name}${unread}`);
-      lines.push(
-        truncate(
-          `${conversation.lastMessageSnippet ?? ""}${time ? `  ${time}` : ""}`,
-          Math.max(width - 1, 1),
-        ),
-      );
+      const svcBadge = conversation.serviceType === "SMS" ? " [SMS]" : "";
+      lines.push(`${name}${unread}${svcBadge}`);
+      const slug = ansi("2", `~${conversation.threadSlug}`);
+      const snippet = conversation.lastMessageSnippet ?? "";
+      lines.push(truncate(`${slug}  ${snippet}${time ? `  ${time}` : ""}`, Math.max(width - 1, 1)));
       lines.push("");
     }
 
@@ -229,8 +227,44 @@ class ImsgTui {
     return lines.slice(this.sidebarScroll, this.sidebarScroll + visibleRows);
   }
 
+  /** Height available for thread messages (below the info header). */
   private threadBodyHeight(): number {
-    return Math.max((process.stdout.rows ?? 40) - 6, 5);
+    return Math.max((process.stdout.rows ?? 40) - 6 - this.threadInfoLineCount(), 5);
+  }
+
+  /** Number of lines the thread info box occupies. */
+  private threadInfoLineCount(): number {
+    const selected = this.conversations[this.selectedConversation];
+    if (!selected) return 0;
+    // Line 1: name + identifier + service
+    // Line 2: members
+    // Line 3: slug
+    return 3;
+  }
+
+  /** Build the info box lines shown above thread messages. */
+  private threadInfoLines(width: number): string[] {
+    const selected = this.conversations[this.selectedConversation];
+    if (!selected) return [];
+
+    const name = selected.displayName ?? selected.chatIdentifier;
+    const ident = selected.displayName ? ` (${selected.rawIdentifier})` : "";
+    const svc = selected.serviceType === "SMS" ? " [SMS]" : " [iMessage]";
+    const group = selected.isGroupChat ? " [Group]" : "";
+    const line1 = truncate(`${name}${ident}${svc}${group}`, width);
+
+    const resolved = this.db.resolveParticipantNames(selected.participants);
+    const memberParts: string[] = [];
+    for (let i = 0; i < selected.participants.length; i++) {
+      const handle = selected.participants[i];
+      const display = resolved[i];
+      memberParts.push(display !== handle ? `${display} (${handle})` : handle);
+    }
+    const line2 = truncate(`Members: ${memberParts.join(", ")}`, width);
+
+    const line3 = ansi("2", `~${selected.threadSlug}`);
+
+    return [line1, line2, line3];
   }
 
   private threadLines(): string[] {
@@ -243,7 +277,9 @@ class ImsgTui {
     }
 
     for (const message of this.messages) {
-      const who = message.isFromMe ? "me" : selected.displayName ?? selected.chatIdentifier;
+      const who = message.isFromMe
+        ? "me"
+        : message.displayName ?? selected.displayName ?? selected.chatIdentifier;
       const prefix = message.isFromMe ? ">" : "<";
       const header = `${prefix} ${who}  ${message.date.toLocaleString()}`;
       lines.push(header);
@@ -269,6 +305,7 @@ class ImsgTui {
     const sidebarWidth = this.sidebarWidth();
     const threadWidth = Math.max(columns - sidebarWidth - 3, 20);
     const selected = this.conversations[this.selectedConversation];
+    const infoLines = this.threadInfoLines(threadWidth);
     const threadLines = this.threadLines();
     const threadVisible = threadLines.slice(this.messageScroll, this.messageScroll + this.threadBodyHeight());
     const sidebarVisible = this.sidebarLines(sidebarWidth, rows);
@@ -288,12 +325,25 @@ class ImsgTui {
       )}`,
     );
 
+    // Thread info box (right pane top) alongside sidebar rows
+    const infoRowCount = infoLines.length;
     const bodyRows = rows - 5;
     for (let index = 0; index < bodyRows; index += 1) {
       const left = padRight(sidebarVisible[index] ?? "", sidebarWidth);
-      const right = padRight(threadVisible[index] ?? "", threadWidth);
       const isSelectedRow = index + this.sidebarScroll === this.selectedConversation * 3;
-      output.push(`${isSelectedRow ? ansi("7", left) : left} | ${right}`);
+      const styledLeft = isSelectedRow ? ansi("7", left) : left;
+
+      let right: string;
+      if (index < infoRowCount) {
+        right = padRight(ansi("2", infoLines[index]), threadWidth);
+      } else if (index === infoRowCount) {
+        right = padRight("-".repeat(Math.min(threadWidth, 40)), threadWidth);
+      } else {
+        const msgIndex = index - infoRowCount - 1;
+        right = padRight(threadVisible[msgIndex] ?? "", threadWidth);
+      }
+
+      output.push(`${styledLeft} | ${right}`);
     }
 
     output.push("-".repeat(columns));
