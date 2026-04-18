@@ -348,6 +348,8 @@ class IMessageMCPServer {
           ],
           isError: true,
         };
+      } finally {
+        this.db.scheduleBackgroundRefresh();
       }
     });
   }
