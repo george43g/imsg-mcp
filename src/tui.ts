@@ -177,6 +177,7 @@ class ImsgTui {
     }
 
     await this.loadSelectedMessages();
+    this.db.scheduleBackgroundRefresh();
     this.loading = false;
     this.status = "Ready. Tab switches panes, arrows/jk move, r refresh, q quit.";
     this.render();
