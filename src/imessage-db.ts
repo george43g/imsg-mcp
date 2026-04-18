@@ -33,6 +33,7 @@ export interface MessageRow {
 }
 import { extractAttributedBodyText } from "./attributed-body-text.js";
 import { ContactsDB } from "./contacts-db.js";
+import { info, perf } from "./logger.js";
 import {
   AssociatedMessageType,
   isReactionType,
@@ -158,24 +159,30 @@ export class IMessageDB {
   private guidToSlug = new Map<string, string>();
 
   constructor(dbPath?: string, contactsDbPaths?: string | string[], slugStorePath?: string) {
+    const span = perf("IMessageDB.constructor");
     this.dbPath = dbPath || join(homedir(), "Library", "Messages", "chat.db");
     this.raw = new Database(this.dbPath, { readonly: true });
     this.contacts = new ContactsDB(contactsDbPaths);
     this.slugStore = new SlugStore(slugStorePath);
 
+    const contactsSpan = perf("contacts.initialize");
     try {
       this.contacts.initialize();
+      contactsSpan.end();
     } catch (err) {
+      contactsSpan.end({ error: String(err) });
       console.warn("Failed to initialize contacts database:", err);
     }
 
     this.syncSlugs();
+    span.end();
   }
 
   /**
    * Sync thread slugs: iterate all chats, generate slugs, upsert into SlugStore, prune stale.
    */
   private syncSlugs(): void {
+    const span = perf("syncSlugs");
     const chats = this.getAllChatsWithLastDate();
     const validGuids = new Set<string>();
     const records: SlugRecord[] = [];
@@ -219,6 +226,7 @@ export class IMessageDB {
 
     this.slugStore.upsertMany(records);
     this.slugStore.prune(validGuids);
+    span.end({ chats: chats.length, slugs: records.length });
   }
 
   /** Look up a chat by thread slug. */
@@ -288,6 +296,7 @@ export class IMessageDB {
     limit: number = 20,
     includeReactions: boolean = false,
   ): Promise<Message[]> {
+    const span = perf("getRecentMessages");
     const chats = this.getAllChatsWithLastDate()
       .sort((a, b) => (b.last_date ?? 0) - (a.last_date ?? 0))
       .slice(0, 10);
@@ -313,7 +322,9 @@ export class IMessageDB {
       }
     }
 
-    return allMessages.sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, limit);
+    const result = allMessages.sort((a, b) => b.date.getTime() - a.date.getTime()).slice(0, limit);
+    span.end({ limit, returned: result.length });
+    return result;
   }
 
   /**
@@ -325,9 +336,10 @@ export class IMessageDB {
     limit: number = 50,
     options: { includeReactions?: boolean; includeReactionDetails?: boolean } = {},
   ): Promise<Message[]> {
+    const span = perf("getMessagesForChat");
     const { includeReactions = false, includeReactionDetails = false } = options;
     const chats = this.resolveChatsForConversation(chatIdentifier);
-    if (chats.length === 0) return [];
+    if (chats.length === 0) { span.end({ limit, returned: 0 }); return []; }
 
     const perChatLimit = Math.max(limit * 2, 50);
     const result = new Map<number, Message>();
@@ -353,9 +365,11 @@ export class IMessageDB {
     }
 
     // Sort by timestamp ascending (chronological conversation order)
-    return [...result.values()]
+    const sorted = [...result.values()]
       .sort((a, b) => a.date.getTime() - b.date.getTime())
       .slice(-limit);
+    span.end({ limit, chats: chats.length, returned: sorted.length });
+    return sorted;
   }
 
   /**
@@ -364,6 +378,7 @@ export class IMessageDB {
    * @param limit Max number of messages to return (default 100).
    */
   async getUnreadMessages(limit: number = 100): Promise<Message[]> {
+    const span = perf("getUnreadMessages");
     const stmt = this.raw.prepare(`
       SELECT
         m.ROWID,
@@ -398,7 +413,9 @@ export class IMessageDB {
     }
 
     result.sort((a, b) => b.date.getTime() - a.date.getTime());
-    return result.slice(0, limit);
+    const sliced = result.slice(0, limit);
+    span.end({ limit, rows: rows.length, returned: sliced.length });
+    return sliced;
   }
 
   /**
@@ -425,6 +442,7 @@ export class IMessageDB {
    * Populates lastMessageDate, lastMessageSnippet, and unreadCount to match Messages.app left pane.
    */
   async listConversations(limit: number = 200): Promise<Conversation[]> {
+    const span = perf("listConversations");
     const chats = this.getAllChats();
 
     // Last message per chat (date, snippet from text column; attributedBody-only messages may have empty snippet)
@@ -539,10 +557,12 @@ export class IMessageDB {
     const deduped = this.mergeDuplicateConversations(prepared);
     const selected = deduped.slice(0, limit);
 
-    return selected.map(({ conversation, last }) => ({
+    const result = selected.map(({ conversation, last }) => ({
       ...conversation,
       lastMessageSnippet: this.resolveConversationSnippet(last),
     }));
+    span.end({ chats: chats.length, deduped: deduped.length, returned: result.length });
+    return result;
   }
 
   /**
@@ -602,6 +622,7 @@ export class IMessageDB {
    * hiding older text matches entirely.
    */
   async searchMessages(query: string, limit: number = 20): Promise<Message[]> {
+    const span = perf("searchMessages");
     // Phase 1: direct text match -- fast and reliable
     const textStmt = this.raw.prepare(`
       SELECT
@@ -669,6 +690,7 @@ export class IMessageDB {
       if (messages.length >= limit) break;
     }
 
+    span.end({ query, limit, textHits: textRows.length, blobScanned: blobRows.length, returned: messages.length });
     return messages;
   }
 
