@@ -161,6 +161,8 @@ export class IMessageDB {
   // ── TTL caches ───────────────────────────────────────────────────────
   private static readonly CACHE_TTL_MS = 30_000;
   private cachedAllChats: { data: ChatWithLastDate[]; ts: number } | null = null;
+  private cachedLastByChat: { data: Record<number, LastConversationRow>; ts: number } | null = null;
+  private cachedUnreadByChat: { data: Record<number, number>; ts: number } | null = null;
   private cachedParticipants = new Map<number, string[]>();
   private cachedMergeKeys = new Map<string, string>();
   private cachedSnippets = new Map<number, string | null>();
@@ -504,76 +506,29 @@ export class IMessageDB {
   async listConversations(limit: number = 200): Promise<Conversation[]> {
     const span = perf("listConversations");
     const chats = this.getAllChats();
+    const lastByChat = this.getLastMessageByChat();
+    const unreadByChat = this.getUnreadByChat();
 
-    // Last message per chat (date, snippet from text column; attributedBody-only messages may have empty snippet)
-    const lastMsgStmt = this.raw.prepare(`
-      SELECT chat_id, last_date, last_message_id, last_service, last_is_from_me, balloon_bundle_id, snippet, chat_properties FROM (
-        SELECT cmj.chat_id, m.date as last_date, m.ROWID as last_message_id,
-          m.service as last_service,
-          m.is_from_me as last_is_from_me,
-          m.balloon_bundle_id as balloon_bundle_id,
-          COALESCE(TRIM(SUBSTR(m.text, 1, 200)), '') as snippet,
-          c.properties as chat_properties,
-          ROW_NUMBER() OVER (PARTITION BY cmj.chat_id ORDER BY m.date DESC) as rn
-        FROM ${Tables.MESSAGE} m
-        JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
-        JOIN ${Tables.CHAT} c ON c.ROWID = cmj.chat_id
-        WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
-          AND COALESCE(m.item_type, 0) = 0
-      ) WHERE rn = 1
-    `);
-    const lastByChat = (
-      lastMsgStmt.all() as {
-        chat_id: number;
-        last_date: number;
-        last_message_id: number;
-        last_service: string | null;
-        last_is_from_me: number;
-        balloon_bundle_id: string | null;
-        snippet: string;
-        chat_properties: Buffer | null;
-      }[]
-    ).reduce(
-      (acc, row) => {
-        acc[row.chat_id] = {
-          chatId: row.chat_id,
-          lastDate: row.last_date,
-          lastMessageId: row.last_message_id,
-          lastService: row.last_service,
-          lastIsFromMe: Boolean(row.last_is_from_me),
-          balloonBundleId: row.balloon_bundle_id,
-          snippet: row.snippet || null,
-          chatProperties: row.chat_properties,
-        };
-        return acc;
-      },
-      {} as Record<number, LastConversationRow>,
-    );
+    // ── Pass 1: lightweight sort entries for ALL chats (no DB lookups) ──
+    type SortEntry = { chat: ChatRow; lastDate: number; isGroup: boolean; last?: LastConversationRow };
+    const sortEntries: SortEntry[] = chats.map((chat) => ({
+      chat,
+      lastDate: lastByChat[chat.ROWID]?.lastDate ?? 0,
+      isGroup: isGroupGuid(chat.guid) || isGroupChatIdentifier(chat.chat_identifier),
+      last: lastByChat[chat.ROWID],
+    }));
 
-    // Unread count per chat (incoming, not read, normal messages only)
-    const unreadStmt = this.raw.prepare(`
-      SELECT cmj.chat_id, COUNT(*) as unread
-      FROM ${Tables.MESSAGE} m
-      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
-      WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
-        AND COALESCE(m.item_type, 0) = 0
-        AND m.is_from_me = 0 AND m.is_read = 0
-      GROUP BY cmj.chat_id
-    `);
-    const unreadByChat = (unreadStmt.all() as { chat_id: number; unread: number }[]).reduce(
-      (acc, row) => {
-        acc[row.chat_id] = row.unread;
-        return acc;
-      },
-      {} as Record<number, number>,
-    );
+    // Sort by last message date descending
+    sortEntries.sort((a, b) => b.lastDate - a.lastDate);
 
-    const prepared = chats.map((chat) => {
-      const last = lastByChat[chat.ROWID];
+    // Over-fetch to account for dedup (multiple chat rows can merge into one conversation)
+    const candidates = sortEntries.slice(0, limit * 3);
+
+    // ── Pass 2: full enrichment only on candidates ──
+    const prepared = candidates.map(({ chat, isGroup, last }) => {
       const lastDate = last ? macTimestampToDate(last.lastDate) : null;
-
       const rawIdentifier = chat.chat_identifier;
-      const isGroup = isGroupGuid(chat.guid) || isGroupChatIdentifier(rawIdentifier);
+
       let displayName = chat.display_name;
       if (!displayName && rawIdentifier && !isGroup) {
         const resolved = this.contacts.lookupHandle(rawIdentifier);
@@ -582,9 +537,7 @@ export class IMessageDB {
 
       const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [rawIdentifier];
       const mergeKey = this.getConversationMergeKey(rawIdentifier, chat.guid, isGroup);
-
       const slug = this.getSlugForChatGuid(chat.guid) ?? rawIdentifier;
-
       const chatData = this.slugMap.get(slug);
       const serviceType = chatData ? this.detectServiceForChat(chatData) : "iMessage";
 
@@ -607,13 +560,6 @@ export class IMessageDB {
       };
     });
 
-    // Sort by last message date descending (newest first), then merge duplicate rows
-    prepared.sort((a, b) => {
-      const aTime = a.conversation.lastMessageDate?.getTime() ?? 0;
-      const bTime = b.conversation.lastMessageDate?.getTime() ?? 0;
-      return bTime - aTime;
-    });
-
     const deduped = this.mergeDuplicateConversations(prepared);
     const selected = deduped.slice(0, limit);
 
@@ -621,7 +567,7 @@ export class IMessageDB {
       ...conversation,
       lastMessageSnippet: this.resolveConversationSnippet(last),
     }));
-    span.end({ chats: chats.length, deduped: deduped.length, returned: result.length });
+    span.end({ chats: chats.length, candidates: candidates.length, deduped: deduped.length, returned: result.length });
     return result;
   }
 
@@ -1007,6 +953,70 @@ export class IMessageDB {
     return data;
   }
 
+  /** Last message metadata per chat (window function over message table). Cached with TTL. */
+  private getLastMessageByChat(): Record<number, LastConversationRow> {
+    const now = Date.now();
+    if (this.cachedLastByChat && now - this.cachedLastByChat.ts < IMessageDB.CACHE_TTL_MS) {
+      return this.cachedLastByChat.data;
+    }
+    const stmt = this.raw.prepare(`
+      SELECT chat_id, last_date, last_message_id, last_service, last_is_from_me, balloon_bundle_id, snippet, chat_properties FROM (
+        SELECT cmj.chat_id, m.date as last_date, m.ROWID as last_message_id,
+          m.service as last_service,
+          m.is_from_me as last_is_from_me,
+          m.balloon_bundle_id as balloon_bundle_id,
+          COALESCE(TRIM(SUBSTR(m.text, 1, 200)), '') as snippet,
+          c.properties as chat_properties,
+          ROW_NUMBER() OVER (PARTITION BY cmj.chat_id ORDER BY m.date DESC) as rn
+        FROM ${Tables.MESSAGE} m
+        JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+        JOIN ${Tables.CHAT} c ON c.ROWID = cmj.chat_id
+        WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
+          AND COALESCE(m.item_type, 0) = 0
+      ) WHERE rn = 1
+    `);
+    const data = (
+      stmt.all() as {
+        chat_id: number; last_date: number; last_message_id: number;
+        last_service: string | null; last_is_from_me: number;
+        balloon_bundle_id: string | null; snippet: string; chat_properties: Buffer | null;
+      }[]
+    ).reduce((acc, row) => {
+      acc[row.chat_id] = {
+        chatId: row.chat_id, lastDate: row.last_date, lastMessageId: row.last_message_id,
+        lastService: row.last_service, lastIsFromMe: Boolean(row.last_is_from_me),
+        balloonBundleId: row.balloon_bundle_id, snippet: row.snippet || null,
+        chatProperties: row.chat_properties,
+      };
+      return acc;
+    }, {} as Record<number, LastConversationRow>);
+    this.cachedLastByChat = { data, ts: now };
+    return data;
+  }
+
+  /** Unread count per chat. Cached with TTL. */
+  private getUnreadByChat(): Record<number, number> {
+    const now = Date.now();
+    if (this.cachedUnreadByChat && now - this.cachedUnreadByChat.ts < IMessageDB.CACHE_TTL_MS) {
+      return this.cachedUnreadByChat.data;
+    }
+    const stmt = this.raw.prepare(`
+      SELECT cmj.chat_id, COUNT(*) as unread
+      FROM ${Tables.MESSAGE} m
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      WHERE m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
+        AND m.is_from_me = 0 AND m.is_read = 0
+      GROUP BY cmj.chat_id
+    `);
+    const data = (stmt.all() as { chat_id: number; unread: number }[]).reduce((acc, row) => {
+      acc[row.chat_id] = row.unread;
+      return acc;
+    }, {} as Record<number, number>);
+    this.cachedUnreadByChat = { data, ts: now };
+    return data;
+  }
+
   /** Get all chats (without last_date subquery -- lighter for listing). */
   private getAllChats(): ChatRow[] {
     const rows = this.raw
@@ -1247,8 +1257,10 @@ export class IMessageDB {
    */
   scheduleBackgroundRefresh(): void {
     setImmediate(() => {
-      // Invalidate allChats cache so the next request gets fresh data
+      // Invalidate caches so the next request gets fresh data
       this.cachedAllChats = null;
+      this.cachedLastByChat = null;
+      this.cachedUnreadByChat = null;
       // Pre-warm the cache
       this.getAllChatsWithLastDate();
       // Sync any new slugs
