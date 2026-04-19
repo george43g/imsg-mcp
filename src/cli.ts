@@ -131,7 +131,7 @@ async function runConsoleCommand(cmd: string, args: string[], client: LocalMcpCl
       }
       return;
     case "tui": {
-      const { runTui } = await import("./tui.js");
+      const { runTui } = await import("./tui/index.js");
       await runTui();
       return;
     }
@@ -340,13 +340,13 @@ program
   .command("tui")
   .description("Launch the read-only terminal UI")
   .action(async () => {
-    const { runTui } = await import("./tui.js");
+    const { runTui } = await import("./tui/index.js");
     await runTui();
   });
 
 // Handle --tui as a global flag for backwards compat
 if (process.argv.includes("--tui")) {
-  import("./tui.js").then(({ runTui }) => runTui()).catch((error) => {
+  import("./tui/index.js").then(({ runTui }) => runTui()).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });
