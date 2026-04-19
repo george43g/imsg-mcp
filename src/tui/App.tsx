@@ -16,6 +16,7 @@ export function App() {
   const { width: columns, height: rows } = useScreenSize();
   const imsg = useImsg();
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const moveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sidebarWidth = Math.max(Math.floor(columns * 0.32), 28);
   const threadWidth = Math.max(columns - sidebarWidth, 20);
@@ -145,30 +146,27 @@ export function App() {
     if (state.loading) return;
 
     if (state.focus === "sidebar") {
+      let next: number | null = null;
       if (input === "j" || key.downArrow) {
-        const next = Math.min(state.selectedIdx + 1, state.conversations.length - 1);
-        if (next !== state.selectedIdx) {
-          dispatch({ type: "SELECT", index: next });
-          await loadMessages(next);
-        }
+        next = Math.min(state.selectedIdx + 1, state.conversations.length - 1);
       } else if (input === "k" || key.upArrow) {
-        const next = Math.max(state.selectedIdx - 1, 0);
-        if (next !== state.selectedIdx) {
-          dispatch({ type: "SELECT", index: next });
-          await loadMessages(next);
-        }
+        next = Math.max(state.selectedIdx - 1, 0);
       } else if (input === "G") {
-        const last = state.conversations.length - 1;
-        dispatch({ type: "SELECT", index: last });
-        await loadMessages(last);
+        next = state.conversations.length - 1;
       } else if (key.pageDown) {
-        const next = Math.min(state.selectedIdx + 10, state.conversations.length - 1);
-        dispatch({ type: "SELECT", index: next });
-        await loadMessages(next);
+        next = Math.min(state.selectedIdx + 10, state.conversations.length - 1);
       } else if (key.pageUp) {
-        const next = Math.max(state.selectedIdx - 10, 0);
+        next = Math.max(state.selectedIdx - 10, 0);
+      }
+      if (next !== null && next !== state.selectedIdx) {
         dispatch({ type: "SELECT", index: next });
-        await loadMessages(next);
+        // Debounce message loading -- only load when user stops navigating
+        if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
+        const target = next;
+        moveDebounceRef.current = setTimeout(() => {
+          moveDebounceRef.current = null;
+          loadMessages(target);
+        }, 80);
       }
     } else {
       // Thread focus -- scroll messages
@@ -223,6 +221,7 @@ export function App() {
   useEffect(() => {
     return () => {
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
     };
   }, []);
 
