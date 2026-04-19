@@ -196,3 +196,42 @@ export function getLogFilePath(): string | null {
 export function getLogDirectory(): string {
   return getLogDir();
 }
+
+// ── Heap monitor ───────────────────────────────────────────────────────
+
+const HEAP_WARN_MB = 150;
+const HEAP_CHECK_INTERVAL_MS = 60_000; // every 60s
+let heapMonitorTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start periodic heap monitoring. Logs a warning if heap exceeds the
+ * threshold. Call once at server startup.
+ */
+export function startHeapMonitor(): void {
+  if (heapMonitorTimer) return;
+  heapMonitorTimer = setInterval(() => {
+    const heap = heapMB();
+    const { rss } = process.memoryUsage();
+    const rssMb = Math.round((rss / 1024 / 1024) * 10) / 10;
+    if (heap > HEAP_WARN_MB) {
+      warn("heap exceeds threshold", { heap_mb: heap, rss_mb: rssMb, threshold_mb: HEAP_WARN_MB });
+    }
+    // Always log a periodic heartbeat at info level for post-mortem analysis
+    emit({
+      ts: new Date().toISOString(),
+      level: "info",
+      msg: "heartbeat",
+      mem_mb: heap,
+      data: { rss_mb: rssMb, uptime_s: Math.round(process.uptime()) },
+    });
+  }, HEAP_CHECK_INTERVAL_MS);
+  // Don't prevent process exit
+  heapMonitorTimer.unref();
+}
+
+export function stopHeapMonitor(): void {
+  if (heapMonitorTimer) {
+    clearInterval(heapMonitorTimer);
+    heapMonitorTimer = null;
+  }
+}

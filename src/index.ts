@@ -12,7 +12,7 @@ import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { checkMessagesAvailable, sendMessageAlt, sendToChat, sendToChatId } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { IMessageDB } from "./imessage-db.js";
-import { appendLog, getLastSendError, getLogDirectory, getLogs, info } from "./logger.js";
+import { appendLog, getLastSendError, getLogDirectory, getLogs, info, startHeapMonitor } from "./logger.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import type { Message } from "./types.js";
 
@@ -242,8 +242,9 @@ function relativeDate(d: Date): string {
 
 /**
  * Format a message for output with display name, service, relative date, and delivery status.
+ * Optional conversationLabel adds context for cross-conversation views (unread, search).
  */
-function formatMessage(msg: Message): string {
+function formatMessage(msg: Message, conversationLabel?: string): string {
   const direction = msg.isFromMe ? "→" : "←";
   const dateStr = relativeDate(msg.date);
   const svcTag = msg.service === "SMS" ? " [SMS]" : "";
@@ -268,7 +269,8 @@ function formatMessage(msg: Message): string {
     }
   }
 
-  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${msg.text || "(no text)"}${status}`;
+  const convCtx = conversationLabel ? ` {${conversationLabel}}` : "";
+  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${msg.text || "(no text)"}${status}${convCtx}`;
 }
 
 /**
@@ -450,7 +452,7 @@ class IMessageMCPServer {
       };
     }
 
-    const formatted = messages.map(formatMessage).join("\n");
+    const formatted = messages.map((m) => formatMessage(m)).join("\n");
     return {
       content: [
         {
@@ -471,7 +473,12 @@ class IMessageMCPServer {
       };
     }
 
-    const formatted = messages.map(formatMessage).join("\n");
+    // Add conversation context per message (slug or display name)
+    const formatted = messages.map((msg) => {
+      const slug = this.db.getSlugForChatIdentifier(msg.chatId);
+      const label = slug ?? msg.chatId;
+      return formatMessage(msg, label);
+    }).join("\n");
     return {
       content: [
         {
@@ -616,7 +623,7 @@ class IMessageMCPServer {
       const newMessages = await this.db.getMessagesAfter(chat.chatIdentifier, lastKnownId);
 
       if (newMessages.length > 0) {
-        const formatted = newMessages.map(formatMessage).join("\n");
+        const formatted = newMessages.map((m) => formatMessage(m)).join("\n");
         return {
           content: [
             {
@@ -655,7 +662,15 @@ class IMessageMCPServer {
     const formatted = limited
       .map((conv) => {
         const slug = conv.threadSlug ?? conv.chatIdentifier;
-        const name = conv.displayName || conv.chatIdentifier;
+        let name = conv.displayName || conv.chatIdentifier;
+        // For group chats without a display name, show resolved participant names
+        if (conv.isGroupChat && !conv.displayName) {
+          const resolved = this.db.resolveParticipantNames(conv.participants);
+          const names = resolved.filter((n, i) => n !== conv.participants[i]);
+          if (names.length > 0) {
+            name = names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")} +${names.length - 3}`;
+          }
+        }
         const ident =
           conv.displayName && conv.displayName !== conv.rawIdentifier
             ? ` (${conv.rawIdentifier})`
@@ -692,7 +707,11 @@ class IMessageMCPServer {
       };
     }
 
-    const formatted = messages.map(formatMessage).join("\n");
+    const formatted = messages.map((msg) => {
+      const slug = this.db.getSlugForChatIdentifier(msg.chatId);
+      const label = slug ?? msg.chatId;
+      return formatMessage(msg, label);
+    }).join("\n");
     return {
       content: [
         {
@@ -707,6 +726,7 @@ class IMessageMCPServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     info("iMessage MCP Server running on stdio");
+    startHeapMonitor();
     console.error(`iMessage MCP Server running on stdio (logs: ${getLogDirectory()})`);
   }
 }
