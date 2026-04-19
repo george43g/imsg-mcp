@@ -14,8 +14,9 @@ export async function runTui(): Promise<void> {
     process.exit(1);
   }
 
-  const { waitUntilExit } = withFullScreen(<App />);
-  await waitUntilExit();
+  const screen = withFullScreen(<App />);
+  await screen.start();
+  await screen.waitUntilExit();
 }
 
 if (process.argv[1]?.endsWith("tui.js")) {
