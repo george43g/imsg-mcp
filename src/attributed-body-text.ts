@@ -28,6 +28,10 @@ const CONTROL_SPLIT_RE = new RegExp("[\\x00-\\x1F\\x7F]+", "g");
 function normalizeCandidate(text: string): string | null {
   const normalized = text
     .replace(/^[+;:"'()&\s]+/, "")
+    // Strip single-byte typedstream artifacts: a non-letter/digit char (or single lowercase)
+    // followed immediately by an uppercase letter indicates a length/metadata byte leaked in.
+    .replace(/^[^A-Za-z\d\s](?=[A-Z])/, "")
+    .replace(/^[a-z\d](?=[A-Z])/, "")
     .replace(CONTROL_OR_DEL_RE, " ")
     .replace(/\uFFFD+/g, "")
     .replace(/\s+/g, " ")
