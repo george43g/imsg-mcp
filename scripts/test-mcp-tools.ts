@@ -144,8 +144,18 @@ async function main() {
     return checkResult(r, { hasText: ["conversation"] });
   });
 
-  await test("list_conversations(501) rejects > 500", async () => {
-    const r = await client.callTool("list_conversations", { limit: 501 });
+  await test("list_conversations(0) accepts limit=0 as unlimited", async () => {
+    const r = await client.callTool("list_conversations", { limit: 0 });
+    return checkResult(r, { hasText: ["conversation"] });
+  });
+
+  await test("list_conversations(50000) accepts arbitrarily large limit", async () => {
+    const r = await client.callTool("list_conversations", { limit: 50000 });
+    return checkResult(r, { hasText: ["conversation"] });
+  });
+
+  await test("list_conversations(-1) is rejected", async () => {
+    const r = await client.callTool("list_conversations", { limit: -1 });
     return r.isError === true;
   });
 
@@ -160,9 +170,28 @@ async function main() {
     return checkResult(r, { hasText: ["message"] });
   });
 
-  await test("get_messages(1001) rejects > 1000", async () => {
-    const r = await client.callTool("get_messages", { limit: 1001 });
-    return r.isError === true;
+  await test("get_messages(0) accepts limit=0 as unlimited", async () => {
+    const r = await client.callTool("get_messages", { limit: 0 });
+    return checkResult(r, { hasText: ["message"] });
+  });
+
+  await test("get_messages(50000) accepts arbitrarily large limit", async () => {
+    const r = await client.callTool("get_messages", { limit: 50000 });
+    return checkResult(r, { hasText: ["message"] });
+  });
+
+  await test("health_check returns vital signs", async () => {
+    const r = await client.callTool("health_check", {});
+    return checkResult(r, { hasText: ["Status:", "Uptime:", "Heap:", "Engine:"] });
+  });
+
+  await test("health_check is fast even after a heavy query", async () => {
+    // Kick off a heavy query (don't await) then call health_check
+    void client.callTool("list_conversations", { limit: 0 });
+    const t0 = Date.now();
+    const r = await client.callTool("health_check", {});
+    const ms = Date.now() - t0;
+    return ms < 1500 && checkResult(r, { hasText: ["Status:"] });
   });
 
   // Test response includes performance metadata

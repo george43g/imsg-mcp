@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hasNativeModule } from "../../native-bridge.js";
+import { readWatchdogState } from "../../watchdog.js";
 
 export interface DevStatsData {
   engine: "Rust" | "TS";
@@ -8,6 +9,8 @@ export interface DevStatsData {
   pid: number;
   uptime: string;
   lastQueryMs: number | null;
+  eventLoopP99Ms: number;
+  lastActivityAgo: string;
 }
 
 function formatUptime(seconds: number): string {
@@ -18,6 +21,14 @@ function formatUptime(seconds: number): string {
   return `${h}h${m}m`;
 }
 
+function formatAgo(ms: number): string {
+  if (ms < 1_000) return "now";
+  const sec = Math.floor(ms / 1_000);
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  return `${Math.floor(sec / 3600)}h`;
+}
+
 export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: number) => void } {
   const [stats, setStats] = useState<DevStatsData>({
     engine: hasNativeModule() ? "Rust" : "TS",
@@ -26,6 +37,8 @@ export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: numb
     pid: process.pid,
     uptime: "0s",
     lastQueryMs: null,
+    eventLoopP99Ms: 0,
+    lastActivityAgo: "now",
   });
 
   const lastCpuRef = useRef(process.cpuUsage());
@@ -49,6 +62,7 @@ export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: numb
       const { rss } = process.memoryUsage();
       const memMB = Math.round((rss / 1024 / 1024) * 10) / 10;
 
+      const wd = readWatchdogState();
       setStats({
         engine: hasNativeModule() ? "Rust" : "TS",
         cpuPercent: Math.round(cpuPercent * 10) / 10,
@@ -56,6 +70,8 @@ export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: numb
         pid: process.pid,
         uptime: formatUptime(process.uptime()),
         lastQueryMs: lastQueryMsRef.current,
+        eventLoopP99Ms: Math.round(wd.eventLoopP99Ms * 10) / 10,
+        lastActivityAgo: formatAgo(Date.now() - wd.lastActivityTs),
       });
     }, 2000);
     timer.unref();

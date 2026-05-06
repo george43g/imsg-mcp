@@ -50,6 +50,18 @@ export function DevStats({ stats, width }: Props) {
             <Text color={stats.lastQueryMs > 500 ? theme.edited : theme.sms}>{stats.lastQueryMs}ms</Text>
           </Box>
         )}
+        <Box justifyContent="space-between">
+          <Text color={theme.info.label}>Lag</Text>
+          <Text color={
+            stats.eventLoopP99Ms > 500 ? "#FF4444" :
+            stats.eventLoopP99Ms > 100 ? theme.edited :
+            theme.info.value
+          }>{stats.eventLoopP99Ms}ms</Text>
+        </Box>
+        <Box justifyContent="space-between">
+          <Text color={theme.info.label}>Active</Text>
+          <Text color={theme.info.value}>{stats.lastActivityAgo}</Text>
+        </Box>
       </Box>
     </Box>
   );

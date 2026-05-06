@@ -57,7 +57,29 @@ Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}
 
 `native/` contains a Rust acceleration module (`napi-rs` + `rusqlite` + `rayon`). Build with `pnpm native:build`. Falls back to TypeScript automatically if not built. The dev stats panel (`d` key in TUI) shows which engine is active.
 
+## Tool limits
+
+`limit: 0` = unlimited (bounded only by the per-tool timeout). No upper cap.
+Defaults: 20 for most tools, 100 for `get_unread_messages`.
+
+## Self-healing watchdog
+
+`src/watchdog.ts` runs three monitors that self-kill (so the host respawns) on:
+- Event-loop p99 lag > 10s
+- RSS > 1GB or monotonic heap growth across 10 × 60s samples
+- Uptime > 24h with no activity in the last hour
+
+All thresholds are env-overridable (`IMSG_EVENT_LOOP_KILL_MS`, `IMSG_MAX_RSS_MB`, etc.).
+
+## MCP cancellation
+
+The server honors `notifications/cancelled`. Long-running handlers (`wait_for_reply`) abort cleanly when the host cancels.
+
 ## Debugging & Logs
+
+### MCP tool: `health_check`
+
+Returns vital signs (uptime, heap, RSS, event-loop p99, tool calls, engine) in milliseconds — works even when the DB is wedged.
 
 ### MCP tool: `get_logs`
 

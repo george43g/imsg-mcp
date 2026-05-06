@@ -68,12 +68,18 @@ For any `--mode`, Vite loads (each step overrides the previous): **`.env`** → 
 
 | Tool                   | Purpose |
 |------------------------|--------|
-| `get_messages`         | Recent messages; optional `chatIdentifier` (phone/email/raw id), `limit` (1–100). |
-| `get_unread_messages`  | All unread messages. |
+| `get_messages`         | Recent messages; optional `chatIdentifier` (phone/email/raw id), `limit` (`0` = unlimited, default 20). |
+| `get_unread_messages`  | All unread messages. `limit` (`0` = unlimited, default 100). |
 | `send_message`         | `recipient` and/or **`threadSlug`** (from `list_conversations`); **`message`** required. Messages.app + Automation when not mocked. |
-| `wait_for_reply`       | **`chatIdentifier`** or **`threadSlug`**; `timeoutSeconds`, `pollIntervalSeconds`, optional `afterMessageId`. |
-| `list_conversations`   | List chats with **`threadSlug`**, snippets, unread; `limit` (1–50). |
-| `search_messages`      | Search text; `query`, `limit` (1–50). |
+| `wait_for_reply`       | **`chatIdentifier`** or **`threadSlug`**; `timeoutSeconds`, `pollIntervalSeconds`, optional `afterMessageId`. Honors MCP `notifications/cancelled`. |
+| `list_conversations`   | List chats with **`threadSlug`**, snippets, unread; `limit` (`0` = unlimited, default 20). |
+| `search_messages`      | Search text; `query`, `limit` (`0` = unlimited, default 20). |
+| `health_check`         | MCP vital signs (uptime, heap, RSS, event-loop lag, tool counts, engine). Returns instantly even when SQL is wedged — use this to verify the server is alive when other tools hang. |
+
+### Tool limits & timeouts
+
+- **No upper cap on `limit`.** `0` = unlimited (bounded only by per-tool timeout). Default is 20 for most tools; 100 for `get_unread_messages`.
+- **Per-tool timeouts** (in `src/index.ts:TOOL_TIMEOUTS_MS`): default 30s. `wait_for_reply` has its own `timeoutSeconds` arg and skips the wrapper. `health_check` is capped at 5s. On timeout the server returns `isError: true` so the host unblocks immediately, even if the underlying SQL keeps running.
 
 ## Conventions for Development
 
@@ -95,6 +101,22 @@ Full-screen terminal UI built with Ink (React for terminal). Vim-style keybindin
 ## Process Lifecycle & Reliability
 
 - **`src/shutdown.ts`** — central cleanup registry. All entry points register cleanup functions (DB close, heap monitor stop, screen unmount). Traps SIGINT, SIGTERM, SIGHUP, SIGQUIT.
+
+### Self-healing watchdog (`src/watchdog.ts`)
+
+Three independent monitors run on `unref()`'d timers — they self-kill the process via `shutdown()` when something is unrecoverable, so the host (Cursor / Claude / Warp) respawns a clean instance.
+
+| Monitor | Trigger | Default threshold | Env override |
+|---|---|---|---|
+| Event-loop lag | p99 lag over 5s window | warn 500ms / kill 10s | `IMSG_EVENT_LOOP_WARN_MS`, `IMSG_EVENT_LOOP_KILL_MS`, `IMSG_EVENT_LOOP_SAMPLE_MS` |
+| Memory | RSS or 10 consecutive monotonic heap growth samples | RSS 1024MB, 10 samples × 60s | `IMSG_MAX_RSS_MB`, `IMSG_HEAP_GROWTH_SAMPLES`, `IMSG_MEMORY_SAMPLE_MS` |
+| Idle / uptime | uptime > 24h AND no activity for 1h | 24h / 1h | `IMSG_RESTART_AFTER_MS`, `IMSG_RESTART_QUIET_MS`, `IMSG_IDLE_CHECK_MS` |
+
+Logs surface as `level: "warn"` or `level: "error"` with `msg: "event_loop_lag" | "watchdog_kill: <reason>"`. After self-kill, `event_loop_blocked`, `memory_leak_suspected`, `rss_exceeded`, or `idle_restart` will be the last log entry — followed by `shutdown` if cleanup completed in time.
+
+### MCP cancellation
+
+The server honors `notifications/cancelled` per the MCP spec. The SDK wires per-request `AbortSignal`s automatically; long-running handlers (`wait_for_reply`) check `signal.aborted` between iterations and return `isError: true` with a "Cancelled by client" message.
 - **Orphan detection**: Parent PID watchdog (detects reparenting to launchd = orphaned process) + stdin EOF detection (MCP host died → pipe closed).
 - **After crashes**: Always check `ps aux | grep imsg` for orphaned processes.
 

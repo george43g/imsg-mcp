@@ -14,12 +14,30 @@ import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { IMessageDB } from "./imessage-db.js";
 import { appendLog, getFileLogLines, getLastSendError, getLogDirectory, getLogFilePath, getLogs, info, logShutdown, logStartup, perf, startHeapMonitor, stopHeapMonitor } from "./logger.js";
 import { enableOrphanWatchdog, enableStdinEofDetection, installShutdownHandlers, registerCleanup, shutdown } from "./shutdown.js";
+import { hasNativeModule } from "./native-bridge.js";
+import { installWatchdog, noteActivity, readWatchdogState } from "./watchdog.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import type { Message } from "./types.js";
 
 // Tool input schemas
+//
+// Limit semantics:
+//   - 0 means UNLIMITED — bounded only by the per-tool timeout (Priority 1a).
+//   - omitted -> default
+//   - positive integer -> exact cap
+// All previous hard upper bounds (50/100/500/1000) have been removed; the
+// timeout watchdog provides safety instead of arbitrary numeric caps.
+const UNLIMITED = Number.MAX_SAFE_INTEGER;
+
+/** Resolve a user-supplied limit (with 0 = unlimited) to a concrete number for the DB layer. */
+function resolveLimit(limit: number | undefined, defaultValue = 20): number {
+  if (limit === undefined) return defaultValue;
+  if (limit === 0) return UNLIMITED;
+  return limit;
+}
+
 const GetMessagesSchema = z.object({
-  limit: z.number().int().min(1).max(1000).default(20).describe("Number of messages to retrieve (1-1000)"),
+  limit: z.number().int().min(0).default(20).describe("Number of messages to retrieve. 0 = unlimited (bounded only by tool timeout). Default 20."),
   chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID to filter by"),
   threadSlug: z.string().optional().describe("Thread slug from list_conversations"),
 });
@@ -27,10 +45,10 @@ const GetMessagesSchema = z.object({
 const GetUnreadMessagesSchema = z.object({
   limit: z
     .number()
-    .min(1)
-    .max(500)
+    .int()
+    .min(0)
     .optional()
-    .describe("Max number of unread messages to return (default 100)"),
+    .describe("Max unread messages. 0 = unlimited. Default 100."),
 });
 
 const SendMessageSchema = z.object({
@@ -61,12 +79,12 @@ const WaitForReplySchema = z.object({
 });
 
 const ListConversationsSchema = z.object({
-  limit: z.number().int().min(1).max(500).default(20).describe("Number of conversations to list (1-500)"),
+  limit: z.number().int().min(0).default(20).describe("Number of conversations. 0 = unlimited (bounded only by tool timeout). Default 20."),
 });
 
 const SearchMessagesSchema = z.object({
   query: z.string().describe("Search query"),
-  limit: z.number().int().min(1).max(500).default(20).describe("Number of results (1-500)"),
+  limit: z.number().int().min(0).default(20).describe("Number of results. 0 = unlimited (bounded only by tool timeout). Default 20."),
 });
 
 const GetLogsSchema = z.object({
@@ -76,6 +94,58 @@ const GetLogsSchema = z.object({
 
 const _RunBuildSchema = z.object({});
 const _RequestRestartSchema = z.object({});
+
+// ── Per-tool timeouts ────────────────────────────────────────────────────
+//
+// Every tool dispatch is wrapped in a Promise.race against this timeout so
+// that a single bad query or hung handler never wedges the MCP protocol.
+// On timeout, the tool returns isError:true to the host (which unblocks the
+// agent immediately) — the orphaned promise keeps running but the watchdog
+// will catch the resulting event-loop lag if it persists.
+const TOOL_TIMEOUTS_MS: Record<string, number> = {
+  // wait_for_reply has its own timeoutSeconds parameter (max 1h) — don't
+  // double-clip it here, just give it generous headroom.
+  wait_for_reply: 0, // 0 = no wrapper timeout
+  run_build: 120_000,
+  search_messages: 60_000,
+  get_messages: 60_000,
+  list_conversations: 60_000,
+  get_unread_messages: 60_000,
+  send_message: 60_000,
+  // Health/status tools should be near-instant — short ceiling
+  health_check: 5_000,
+  get_logs: 10_000,
+  get_last_send_error: 5_000,
+  request_restart: 5_000,
+};
+const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
+
+class ToolTimeoutError extends Error {
+  constructor(public readonly toolName: string, public readonly timeoutMs: number) {
+    super(`Tool '${toolName}' timed out after ${timeoutMs}ms. The MCP server has unblocked; the underlying query may still be running in the background.`);
+    this.name = "ToolTimeoutError";
+  }
+}
+
+/** Race a tool handler against its configured timeout. */
+function withTimeout<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
+  const ms = TOOL_TIMEOUTS_MS[toolName] ?? DEFAULT_TOOL_TIMEOUT_MS;
+  if (ms <= 0) return fn();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new ToolTimeoutError(toolName, ms)), ms);
+    timer.unref();
+    fn().then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 // Tool definitions
 const TOOLS = [
@@ -87,7 +157,7 @@ const TOOLS = [
       properties: {
         limit: {
           type: "number",
-          description: "Number of messages to retrieve (1-1000)",
+          description: "Number of messages to retrieve. 0 = unlimited (bounded only by tool timeout). Default 20.",
           default: 20,
         },
         chatIdentifier: {
@@ -110,7 +180,7 @@ const TOOLS = [
       properties: {
         limit: {
           type: "number",
-          description: "Max number of unread messages to return (1-500, default 100)",
+          description: "Max unread messages. 0 = unlimited (bounded only by tool timeout). Default 100.",
         },
       },
     },
@@ -170,7 +240,7 @@ const TOOLS = [
       properties: {
         limit: {
           type: "number",
-          description: "Number of conversations to list (1-500)",
+          description: "Number of conversations to list. 0 = unlimited (bounded only by tool timeout). Default 20.",
           default: 20,
         },
       },
@@ -183,7 +253,7 @@ const TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search query" },
-        limit: { type: "number", description: "Number of results (1-500)", default: 20 },
+        limit: { type: "number", description: "Number of results. 0 = unlimited (bounded only by tool timeout). Default 20.", default: 20 },
       },
       required: ["query"],
     },
@@ -218,7 +288,28 @@ const TOOLS = [
       "Exit the MCP server process so the client can restart it and load new code. Call after run_build to apply changes.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "health_check",
+    description:
+      "Return MCP server vital signs: uptime, heap, RSS, event-loop lag, recent activity, tool call count, engine. Reads in-memory state only — returns instantly even when SQL is blocked, so it's the right tool to verify the server is alive when other calls hang.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
+/** Format a millisecond duration as e.g. "1h 23m" or "5s". */
+function formatDuration(ms: number): string {
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  const sec = Math.floor(ms / 1_000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ${sec % 60}s`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ${min % 60}m`;
+}
 
 /**
  * Format a date as a relative short string ("Today 12:05 AM", "Yesterday 3:14 PM", or "2/14 9:00 AM").
@@ -290,6 +381,11 @@ class IMessageMCPServer {
   private server: Server;
   private db: IMessageDB;
 
+  // Activity tracking — surfaced via health_check and watchdog
+  private toolCallCount = 0;
+  private recentErrorCount = 0;
+  private lastActivityTs = Date.now();
+
   constructor() {
     this.server = new Server(
       {
@@ -314,36 +410,26 @@ class IMessageMCPServer {
     }));
 
     // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { name, arguments: args } = request.params;
+      this.lastActivityTs = Date.now();
+      this.toolCallCount++;
+      noteActivity();
+
+      // The SDK gives us an AbortSignal per request that fires when the host
+      // sends notifications/cancelled with this request's id. We pass it down
+      // to long-running handlers so they can bail out early.
+      const signal = extra?.signal;
 
       try {
-        switch (name) {
-          case "get_messages":
-            return await this.handleGetMessages(args);
-          case "get_unread_messages":
-            return await this.handleGetUnreadMessages(args);
-          case "send_message":
-            return await this.handleSendMessage(args);
-          case "wait_for_reply":
-            return await this.handleWaitForReply(args);
-          case "list_conversations":
-            return await this.handleListConversations(args);
-          case "search_messages":
-            return await this.handleSearchMessages(args);
-          case "get_logs":
-            return await this.handleGetLogs(args);
-          case "get_last_send_error":
-            return await this.handleGetLastSendError();
-          case "run_build":
-            return await this.handleRunBuild();
-          case "request_restart":
-            return await this.handleRequestRestart();
-          default:
-            throw new Error(`Unknown tool: ${name}`);
-        }
+        return await withTimeout(name, () => this.dispatchTool(name, args, signal));
       } catch (error: any) {
-        appendLog("error", "Tool error", { tool: name, error: error.message || String(error) });
+        const isTimeout = error instanceof ToolTimeoutError;
+        appendLog(isTimeout ? "warn" : "error", isTimeout ? "Tool timed out" : "Tool error", {
+          tool: name,
+          error: error.message || String(error),
+        });
+        if (!isTimeout) this.recentErrorCount++;
         return {
           content: [
             {
@@ -357,6 +443,35 @@ class IMessageMCPServer {
         this.db.scheduleBackgroundRefresh();
       }
     });
+  }
+
+  private async dispatchTool(name: string, args: unknown, signal?: AbortSignal) {
+    switch (name) {
+      case "get_messages":
+        return await this.handleGetMessages(args);
+      case "get_unread_messages":
+        return await this.handleGetUnreadMessages(args);
+      case "send_message":
+        return await this.handleSendMessage(args);
+      case "wait_for_reply":
+        return await this.handleWaitForReply(args, signal);
+      case "list_conversations":
+        return await this.handleListConversations(args);
+      case "search_messages":
+        return await this.handleSearchMessages(args);
+      case "get_logs":
+        return await this.handleGetLogs(args);
+      case "get_last_send_error":
+        return await this.handleGetLastSendError();
+      case "run_build":
+        return await this.handleRunBuild();
+      case "request_restart":
+        return await this.handleRequestRestart();
+      case "health_check":
+        return await this.handleHealthCheck();
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
   }
 
   private async handleGetLogs(args: unknown) {
@@ -437,9 +552,62 @@ class IMessageMCPServer {
     return { content: [{ type: "text", text: msg }] };
   }
 
+  /**
+   * Returns vital signs in a fixed text format. Designed to never touch the
+   * DB so it returns instantly even when SQL is blocked — that's the whole
+   * point: this tool verifies "the MCP is alive even though queries are slow".
+   */
+  private async handleHealthCheck(): Promise<any> {
+    const wd = readWatchdogState();
+    const uptimeMs = Date.now() - wd.startedAt;
+    const idleMs = Date.now() - this.lastActivityTs;
+
+    // Compute status: healthy < degraded < unhealthy
+    let status = "healthy";
+    const issues: string[] = [];
+    if (wd.eventLoopP99Ms > 500) {
+      status = "degraded";
+      issues.push(`event-loop lag p99 ${wd.eventLoopP99Ms.toFixed(0)}ms`);
+    }
+    if (wd.eventLoopP99Ms > 5_000) {
+      status = "unhealthy";
+    }
+    if (wd.rssMb > 800) {
+      status = status === "healthy" ? "degraded" : status;
+      issues.push(`RSS ${wd.rssMb}MB`);
+    }
+    if (this.recentErrorCount > 5) {
+      status = status === "healthy" ? "degraded" : status;
+      issues.push(`${this.recentErrorCount} recent errors`);
+    }
+
+    const lines = [
+      `Status: ${status}`,
+      issues.length ? `Issues: ${issues.join("; ")}` : "",
+      "",
+      `Uptime: ${formatDuration(uptimeMs)}`,
+      `Last activity: ${formatDuration(idleMs)} ago`,
+      `PID: ${process.pid}`,
+      `Node: ${process.version}`,
+      "",
+      `Heap: ${wd.heapMb || round1(process.memoryUsage().heapUsed / 1024 / 1024)}MB`,
+      `RSS: ${wd.rssMb || round1(process.memoryUsage().rss / 1024 / 1024)}MB`,
+      `Event-loop p99: ${wd.eventLoopP99Ms.toFixed(1)}ms`,
+      `Event-loop max: ${wd.eventLoopMaxMs.toFixed(1)}ms`,
+      "",
+      `Total tool calls: ${this.toolCallCount}`,
+      `Recent errors: ${this.recentErrorCount}`,
+      `Engine: ${hasNativeModule() ? "Rust+TS" : "TS"}`,
+    ].filter((l) => l !== null);
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+
   private async handleGetMessages(args: unknown) {
     const span = perf("tool:get_messages");
-    const { limit, chatIdentifier, threadSlug } = GetMessagesSchema.parse(args);
+    const parsed = GetMessagesSchema.parse(args);
+    const { chatIdentifier, threadSlug } = parsed;
+    const limit = resolveLimit(parsed.limit);
 
     let messages: Message[];
     let threadHeader = "";
@@ -490,7 +658,7 @@ class IMessageMCPServer {
 
   private async handleGetUnreadMessages(args: unknown) {
     const { limit } = GetUnreadMessagesSchema.parse(args ?? {});
-    const messages = await this.db.getUnreadMessages(limit ?? 100);
+    const messages = await this.db.getUnreadMessages(resolveLimit(limit, 100));
 
     if (messages.length === 0) {
       return {
@@ -596,7 +764,7 @@ class IMessageMCPServer {
     }
   }
 
-  private async handleWaitForReply(args: unknown): Promise<any> {
+  private async handleWaitForReply(args: unknown, signal?: AbortSignal): Promise<any> {
     const { chatIdentifier, threadSlug, timeoutSeconds, pollIntervalSeconds, afterMessageId } =
       WaitForReplySchema.parse(args);
 
@@ -643,8 +811,16 @@ class IMessageMCPServer {
       lastKnownId = lastMsg?.id || 0;
     }
 
-    // Poll for new messages
+    // Poll for new messages — bail out early on cancellation
     while (Date.now() - startTime < timeoutMs) {
+      if (signal?.aborted) {
+        return {
+          content: [
+            { type: "text", text: `Cancelled by client after ${Math.round((Date.now() - startTime) / 1000)}s` },
+          ],
+          isError: true,
+        };
+      }
       const newMessages = await this.db.getMessagesAfter(chat.chatIdentifier, lastKnownId);
 
       if (newMessages.length > 0) {
@@ -675,8 +851,7 @@ class IMessageMCPServer {
 
   private async handleListConversations(args: unknown) {
     const { limit } = ListConversationsSchema.parse(args);
-
-    const limited = await this.db.listConversations(limit);
+    const limited = await this.db.listConversations(resolveLimit(limit));
 
     if (limited.length === 0) {
       return {
@@ -723,8 +898,7 @@ class IMessageMCPServer {
 
   private async handleSearchMessages(args: unknown) {
     const { query, limit } = SearchMessagesSchema.parse(args);
-
-    const messages = await this.db.searchMessages(query, limit);
+    const messages = await this.db.searchMessages(query, resolveLimit(limit));
 
     if (messages.length === 0) {
       return {
@@ -755,6 +929,7 @@ class IMessageMCPServer {
     registerCleanup(() => this.db.close());
     enableStdinEofDetection();
     enableOrphanWatchdog();
+    installWatchdog();
     logStartup("mcp-server");
 
     const transport = new StdioServerTransport();
