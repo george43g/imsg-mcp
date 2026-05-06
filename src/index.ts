@@ -19,7 +19,7 @@ import type { Message } from "./types.js";
 
 // Tool input schemas
 const GetMessagesSchema = z.object({
-  limit: z.number().min(1).max(100).default(20).describe("Number of messages to retrieve"),
+  limit: z.number().int().min(1).max(1000).default(20).describe("Number of messages to retrieve (1-1000)"),
   chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID to filter by"),
   threadSlug: z.string().optional().describe("Thread slug from list_conversations"),
 });
@@ -61,12 +61,12 @@ const WaitForReplySchema = z.object({
 });
 
 const ListConversationsSchema = z.object({
-  limit: z.number().min(1).max(50).default(20).describe("Number of conversations to list"),
+  limit: z.number().int().min(1).max(500).default(20).describe("Number of conversations to list (1-500)"),
 });
 
 const SearchMessagesSchema = z.object({
   query: z.string().describe("Search query"),
-  limit: z.number().min(1).max(50).default(20).describe("Number of results"),
+  limit: z.number().int().min(1).max(500).default(20).describe("Number of results (1-500)"),
 });
 
 const GetLogsSchema = z.object({
@@ -87,7 +87,7 @@ const TOOLS = [
       properties: {
         limit: {
           type: "number",
-          description: "Number of messages to retrieve (1-100)",
+          description: "Number of messages to retrieve (1-1000)",
           default: 20,
         },
         chatIdentifier: {
@@ -170,7 +170,7 @@ const TOOLS = [
       properties: {
         limit: {
           type: "number",
-          description: "Number of conversations to list (1-50)",
+          description: "Number of conversations to list (1-500)",
           default: 20,
         },
       },
@@ -183,7 +183,7 @@ const TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search query" },
-        limit: { type: "number", description: "Number of results (1-50)", default: 20 },
+        limit: { type: "number", description: "Number of results (1-500)", default: 20 },
       },
       required: ["query"],
     },

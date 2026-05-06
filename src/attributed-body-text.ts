@@ -33,6 +33,12 @@ function normalizeCandidate(text: string): string | null {
     .replace(/^[+;:"'()&\s]+/, "")
     .replace(/^[^A-Za-z\d\s](?=[A-Z])/, "")
     .replace(/^[a-z\d](?=[A-Z])/, "")
+    // Strip leading single uppercase letter when followed by another uppercase + lowercase
+    // (length-byte artifact from typedstream — e.g. "OYes" -> "Yes" for a 79-char string,
+    //  "JThat" -> "That" for a 74-char string). Only triggers when the leading letter is
+    //  immediately followed by an uppercase + lowercase pattern indicating the real
+    //  sentence start.
+    .replace(/^[A-Z](?=[A-Z][a-z])/, "")
     .replace(CONTROL_OR_DEL_RE, " ")
     .replace(/\uFFFD+/g, "")
     .replace(/\s+/g, " ")
@@ -57,6 +63,9 @@ function scoreCandidate(text: string): number {
   return score;
 }
 
+/** Boost factor for structured NSString candidates over heuristic byte-scan ones. */
+const STRUCTURED_BOOST = 500;
+
 export function extractAttributedBodyText(blob: Buffer | null): string | undefined {
   if (!blob) return undefined;
 
@@ -64,24 +73,30 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
   const candidates = new Map<string, number>();
   const deadline = Date.now() + PARSE_TIMEOUT_MS;
 
-  const remember = (values: string[]) => {
+  const remember = (values: string[], boost = 0) => {
     for (const value of values) {
       const normalized = normalizeCandidate(value);
       if (!normalized) continue;
-      candidates.set(normalized, scoreCandidate(normalized));
+      const score = scoreCandidate(normalized) + boost;
+      // Use the highest score we've seen for this candidate
+      const prev = candidates.get(normalized) ?? -Infinity;
+      if (score > prev) candidates.set(normalized, score);
     }
   };
 
-  // Phase 1: structured NSString parsing (fastest, most reliable)
+  // Phase 1: structured NSString parsing — these have correct length bytes,
+  // so they avoid the "leading length-byte" artifact (e.g. "OYes lmk..." for a 79-char string).
+  // Boost their score so they win over byte-scan fallbacks.
   try {
     if (Date.now() < deadline) {
-      remember(parser.parseAllNSStrings().map((entry) => entry.content));
+      remember(parser.parseAllNSStrings().map((entry) => entry.content), STRUCTURED_BOOST);
     }
   } catch {
     // Ignore parser failures — continue with fallback strategies
   }
 
   // Phase 2: heuristic text extraction (byte-by-byte scan)
+  // Lower priority — may pick up length bytes as text artifacts.
   try {
     if (Date.now() < deadline) {
       remember(parser.extractReadableText());

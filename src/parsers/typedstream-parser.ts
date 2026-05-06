@@ -15,7 +15,27 @@ export interface NSStringData {
   encoding: string;
 }
 
-const PREAMBLE_NSSTRING = Buffer.from([0x01, 0x94, 0x84, 0x01, 0x2b]);
+/**
+ * Preamble bytes following "NSString" before the length byte.
+ * Apple uses variants of this 5-byte sequence — most commonly 0x94, but
+ * 0x95 appears for messages that contain DataDetector annotations
+ * (phone numbers, dates, auth codes). Both must be recognized or the
+ * length byte will be misread (causing extracted text leaks like
+ * "()*+Z$classname...").
+ */
+const PREAMBLE_BYTE_2_VARIANTS = new Set([0x94, 0x95]);
+const PREAMBLE_LEN = 5;
+
+function matchesNSStringPreamble(bytes: Buffer | null): boolean {
+  if (!bytes || bytes.length < PREAMBLE_LEN) return false;
+  return (
+    bytes[0] === 0x01 &&
+    PREAMBLE_BYTE_2_VARIANTS.has(bytes[1]) &&
+    bytes[2] === 0x84 &&
+    bytes[3] === 0x01 &&
+    bytes[4] === 0x2b
+  );
+}
 
 const METADATA_KEYWORDS = [
   "streamtyped",
@@ -173,9 +193,9 @@ export class TypedStreamParser {
 
     this.reader.seek(pos + 8); // skip "NSString"
 
-    const preamble = this.reader.peekBytes(5);
-    if (preamble && preamble.equals(PREAMBLE_NSSTRING)) {
-      this.reader.skip(5);
+    const preamble = this.reader.peekBytes(PREAMBLE_LEN);
+    if (matchesNSStringPreamble(preamble)) {
+      this.reader.skip(PREAMBLE_LEN);
     }
 
     if (this.reader.remaining < 1) return null;
