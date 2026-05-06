@@ -75,9 +75,17 @@ let _native: NativeModule | null | undefined;
 /**
  * Try to load the native module. Returns null if unavailable.
  * Result is cached after first attempt.
+ *
+ * Set `IMSG_DISABLE_NATIVE=1` to force the TypeScript fallback (useful for
+ * testing the fallback path or comparing performance).
  */
 export function tryLoadNative(): NativeModule | null {
   if (_native !== undefined) return _native;
+
+  if (process.env.IMSG_DISABLE_NATIVE === "1") {
+    _native = null;
+    return null;
+  }
 
   try {
     const require = createRequire(import.meta.url);
