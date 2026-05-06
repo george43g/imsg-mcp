@@ -1,4 +1,30 @@
+import { tryLoadNative } from "./native-bridge.js";
 import { TypedStreamParser } from "./parsers/typedstream-parser.js";
+
+/** Cache the native lookup once — null means TS fallback path. */
+let _nativeParseAttributedBody: ((blob: Buffer) => string | null) | null | undefined;
+function getNativeParser(): ((blob: Buffer) => string | null) | null {
+  if (_nativeParseAttributedBody !== undefined) return _nativeParseAttributedBody;
+  const native = tryLoadNative();
+  _nativeParseAttributedBody = native ? native.parseAttributedBody.bind(native) : null;
+  return _nativeParseAttributedBody;
+}
+
+/**
+ * Decide whether to trust a native parser result. The Rust path uses simpler
+ * heuristics and may return attachment IDs / metadata that the TS path knows
+ * to filter. When we're unsure, fall through to TS for safety.
+ */
+function nativeResultLooksTrustworthy(text: string): boolean {
+  // Attachment GUID markers — never user-visible text
+  if (/at_\d+_[0-9A-F-]{8,}/i.test(text)) return false;
+  // Apple internal attribute name markers
+  if (/__kIM[A-Z]/.test(text)) return false;
+  // Class / archiver metadata
+  if (/\$class|streamtyped|NSKeyedArchiver/.test(text)) return false;
+  if (/^NS[A-Z][a-z]+/.test(text)) return false;
+  return true;
+}
 
 const METADATA_PATTERNS = [
   /^streamtyped$/i,
@@ -68,6 +94,22 @@ const STRUCTURED_BOOST = 500;
 
 export function extractAttributedBodyText(blob: Buffer | null): string | undefined {
   if (!blob) return undefined;
+
+  // Fast path: native Rust parser, when available. We only trust the native
+  // result when it looks like a real message (passes our metadata filter and
+  // doesn't start with attachment-id markers). Otherwise fall through to the
+  // TS implementation, which has more sophisticated heuristics.
+  const native = getNativeParser();
+  if (native) {
+    try {
+      const result = native(blob);
+      if (result && result.length > 1 && nativeResultLooksTrustworthy(result)) {
+        return result;
+      }
+    } catch {
+      // Fall through to TS implementation on any native failure
+    }
+  }
 
   const parser = new TypedStreamParser(blob);
   const candidates = new Map<string, number>();
