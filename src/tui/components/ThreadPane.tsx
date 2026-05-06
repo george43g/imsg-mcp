@@ -87,6 +87,19 @@ export function ThreadPane({
 
   const visibleMessages = messages.slice(visibleStart, Math.min(visibleEnd, messages.length));
 
+  // Build a GUID → text lookup so MessageBubble can resolve missing replyToText
+  // from the loaded message set when iMessage didn't populate it. Memoized to
+  // avoid rebuilding on every render.
+  const messagesByGuid = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of messages) {
+      if (m.guid && m.text) map.set(m.guid, m.text);
+    }
+    return map;
+  }, [messages]);
+
+  const lookupReplyText = (guid: string): string | null => messagesByGuid.get(guid) ?? null;
+
   return (
     <Box
       flexDirection="column"
@@ -147,7 +160,11 @@ export function ThreadPane({
               return (
                 <React.Fragment key={msg.id}>
                   {showDateSep && (
-                    <Box justifyContent="center">
+                    // Always 1 row of breathing room above date separators so the
+                    // visual rhythm is consistent — without this, separators that
+                    // appear after a same-sender continuation feel cramped while
+                    // ones after a different-sender row feel fine.
+                    <Box justifyContent="center" marginTop={realIdx === 0 ? 0 : 1}>
                       <Text color={theme.dateSep}>─── {dateSeparator(msg.date)} ───</Text>
                     </Box>
                   )}
@@ -161,6 +178,7 @@ export function ThreadPane({
                     isFirstInGroup={firstInGroup || showDateSep}
                     isLastInGroup={lastInGroup}
                     bgTint={bgTint}
+                    lookupReplyText={lookupReplyText}
                   />
                   {/* Group separator line between different senders */}
                   {lastInGroup && nextMsg && !isDifferentDay(msg.date, nextMsg.date) && (
@@ -203,8 +221,8 @@ function lineHeight(messages: Message[], i: number): number {
   if (i < 0 || i >= messages.length) return 1;
   const msg = messages[i];
   let h = 1; // base: one line for the message
-  // Reply context adds a line
-  if (msg.isReply && msg.replyTo?.replyToText) h += 1;
+  // Reply context always adds a line when isReply (placeholder shown if no text)
+  if (msg.isReply) h += 1;
   // Date separator adds a line (if day changed from previous message)
   if (i === 0 || (i > 0 && isDifferentDay(messages[i - 1].date, msg.date))) h += 1;
   // First in sender group may have slightly more visual weight but still 1 line

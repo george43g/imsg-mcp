@@ -61,6 +61,15 @@ interface Props {
   isFirstInGroup?: boolean; // first message from this sender in a consecutive run
   isLastInGroup?: boolean;  // last message from this sender in a consecutive run
   bgTint?: string;          // alternating background for sender groups
+  /**
+   * Optional resolver for reply target text by GUID. When `m.isReply` is
+   * true but `m.replyTo.replyToText` is null/undefined (the iMessage DB
+   * sometimes leaves it unpopulated even when the link metadata exists),
+   * we fall back to looking up the target message in the currently loaded
+   * messages array via this callback. If still not found, render a
+   * placeholder so the reader at least sees the reply indicator.
+   */
+  lookupReplyText?: (guid: string) => string | null;
 }
 
 /**
@@ -78,6 +87,7 @@ export function MessageBubble({
   isFirstInGroup,
   isLastInGroup,
   bgTint,
+  lookupReplyText,
 }: Props) {
   const isSent = m.isFromMe;
   const text = m.text ?? "(attachment)";
@@ -157,14 +167,28 @@ export function MessageBubble({
         {m.isEdited && <Text color={theme.edited}> ✎</Text>}
       </Box>
 
-      {/* Reply context - indented under the message */}
-      {m.isReply && m.replyTo?.replyToText && (
-        <Box>
-          {lineNum !== undefined && <Text>{"    "}</Text>}
-          <Text>{"  "}</Text>
-          <Text color={theme.replyContext} italic>{"  ↩ "}{m.replyTo.replyToText.slice(0, maxWidth - 12)}</Text>
-        </Box>
-      )}
+      {/* Reply context — always render the indicator when isReply, even if
+          replyToText is missing. iMessage sometimes leaves the text NULL
+          even when the GUID link is present, so we try a runtime lookup
+          and fall back to a placeholder so the user knows it IS a reply. */}
+      {m.isReply && (() => {
+        let replyText: string | null = m.replyTo?.replyToText ?? null;
+        if (!replyText && m.replyTo?.replyToGuid && lookupReplyText) {
+          replyText = lookupReplyText(m.replyTo.replyToGuid);
+        }
+        const display = replyText
+          ? replyText.slice(0, maxWidth - 12)
+          : "(replied to earlier message)";
+        return (
+          <Box>
+            {lineNum !== undefined && <Text>{"    "}</Text>}
+            <Text>{"  "}</Text>
+            <Text color={theme.replyContext} italic>
+              {"  ↩ "}{display}
+            </Text>
+          </Box>
+        );
+      })()}
     </Box>
   );
 }

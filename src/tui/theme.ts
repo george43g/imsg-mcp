@@ -8,9 +8,9 @@ export const theme = {
   sentText: "#8CB8FF",    // light blue for sent message text
   receivedText: "#D2D2D7", // light gray for received message text
   senderName: "#5AC8C8",   // teal for other people's names
-  replyContext: "#64646A",  // dim for reply quotes
+  replyContext: "#9090A0",  // muted but readable on dark group bgs
   attachment: "#FFB347",   // orange for attachment indicator
-  lineNum: "#3C3C41",      // very dim for line numbers
+  lineNum: "#646470",      // visible on group backgrounds without screaming
 
   // Alternating group backgrounds for sender contrast
   groupBg: {
@@ -24,7 +24,7 @@ export const theme = {
     unread: "#FFFFFF",
     read: "#B4B4B9",
     snippet: "#78787D",
-    slug: "#505055",
+    slug: "#7878A0",
     slugBg: "#1A1A1F",
     separator: "#2D2D32",
     time: "#78787D",
@@ -33,7 +33,7 @@ export const theme = {
   dot: "#1982FC",
   header: { focused: { bg: "#2D2D32", fg: "#FFFFFF" }, dim: { bg: "#1E1E23", fg: "#78787D" } },
   info: { label: "#969699", value: "#D2D2D7" },
-  timestamp: "#64646A",
+  timestamp: "#9090A0",
   status: { bg: "#1E1E23", fg: "#B4B4B9", accent: "#1982FC" },
   help: { key: "#B4B4B9", desc: "#64646A" },
   sms: "#5AC85A",
