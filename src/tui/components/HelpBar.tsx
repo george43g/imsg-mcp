@@ -1,20 +1,37 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "../theme.js";
-import type { Mode } from "../types.js";
+import type { FocusPane, Mode } from "../types.js";
 
 interface Props {
   mode: Mode;
+  focus?: FocusPane;
 }
 
-const BROWSE_KEYS = [
-  ["Tab", "panes"],
+const SIDEBAR_KEYS = [
   ["j/k", "move"],
-  ["PgUp/Dn", "scroll"],
-  ["c", "compose"],
+  ["#j/k", "jump"],
+  ["gg/G", "top/btm"],
+  ["^d/u", "½page"],
+  ["y", "copy slug"],
+  ["Tab", "→msgs"],
   ["/", "filter"],
+  ["d", "stats"],
   ["r", "refresh"],
   ["q", "quit"],
+];
+
+const THREAD_KEYS = [
+  ["j/k", "move"],
+  ["#j/k", "jump"],
+  ["{/}", "grp jump"],
+  ["gg/G", "top/btm"],
+  ["^d/u", "½page"],
+  ["Enter", "details"],
+  ["o", "open att"],
+  ["c", "compose"],
+  ["d", "stats"],
+  ["Tab", "→list"],
 ];
 
 const COMPOSE_KEYS = [
@@ -26,15 +43,24 @@ const FILTER_KEYS = [
   ["Enter/Esc", "exit filter"],
 ];
 
-export function HelpBar({ mode }: Props) {
-  const keys = mode === "compose" || mode === "confirm" ? COMPOSE_KEYS : mode === "filter" ? FILTER_KEYS : BROWSE_KEYS;
+const DRAWER_KEYS = [
+  ["Esc/q", "close"],
+  ["o", "open attachment"],
+];
+
+export function HelpBar({ mode, focus }: Props) {
+  let keys: string[][];
+  if (mode === "compose" || mode === "confirm") keys = COMPOSE_KEYS;
+  else if (mode === "filter") keys = FILTER_KEYS;
+  else if (mode === "drawer") keys = DRAWER_KEYS;
+  else keys = focus === "thread" ? THREAD_KEYS : SIDEBAR_KEYS;
 
   return (
-    <Box paddingX={1} height={1} gap={2}>
+    <Box paddingX={1} height={1} gap={1}>
       {keys.map(([key, desc]) => (
         <Box key={key}>
           <Text color={theme.help.key}>{key}</Text>
-          <Text color={theme.help.desc}>: {desc}</Text>
+          <Text color={theme.help.desc}>:{desc} </Text>
         </Box>
       ))}
     </Box>

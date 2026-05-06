@@ -26,9 +26,11 @@ export function Sidebar({ conversations, selectedIdx, scrollOffset, filterQuery,
     );
   }, [conversations, filterQuery]);
 
-  // Each conversation item takes ~4 rows (name, slug, snippet, gap)
+  // Each conversation item takes ~4 rows (name, snippet, slug, separator)
   const itemHeight = 4;
-  const visibleCount = Math.floor(height / itemHeight);
+  const headerH = 1 + (filterQuery ? 1 : 0);
+  const borderH = 2;
+  const visibleCount = Math.floor((height - headerH - borderH) / itemHeight);
   const visible = filtered.slice(scrollOffset, scrollOffset + visibleCount);
 
   return (
@@ -53,18 +55,25 @@ export function Sidebar({ conversations, selectedIdx, scrollOffset, filterQuery,
         </Box>
       )}
 
-      <Box flexDirection="column" flexGrow={1}>
+      <Box flexDirection="column" flexGrow={1} overflow="hidden">
         {visible.length === 0 ? (
           <Box paddingX={1}><Text color={theme.sidebar.snippet}>No conversations</Text></Box>
         ) : (
           visible.map((conv, i) => {
             const realIdx = scrollOffset + i;
+            const relNum = realIdx === selectedIdx
+              ? `${realIdx}`
+              : `${Math.abs(realIdx - selectedIdx)}`;
+
             return (
               <ConversationItem
                 key={conv.threadSlug}
                 conversation={conv}
                 selected={realIdx === selectedIdx}
                 width={width - 2}
+                lineNum={relNum}
+                focused={focused}
+                isLast={i === visible.length - 1}
               />
             );
           })

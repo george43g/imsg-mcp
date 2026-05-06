@@ -8,9 +8,10 @@ interface Props {
   selected: Conversation | undefined;
   status: string;
   loading: boolean;
+  children?: React.ReactNode;
 }
 
-export function StatusBar({ totalUnread, selected, status, loading }: Props) {
+export function StatusBar({ totalUnread, selected, status, loading, children }: Props) {
   return (
     <Box backgroundColor={theme.status.bg} paddingX={1} height={1} justifyContent="space-between">
       <Box gap={2}>
@@ -24,7 +25,10 @@ export function StatusBar({ totalUnread, selected, status, loading }: Props) {
           <Text color={selected.serviceType === "SMS" ? theme.sms : theme.info.label}>{selected.serviceType}</Text>
         )}
       </Box>
-      <Text color={theme.status.fg}>{loading ? "loading..." : status}</Text>
+      <Box gap={2}>
+        {children}
+        <Text color={theme.status.fg}>{loading ? "loading..." : status}</Text>
+      </Box>
     </Box>
   );
 }

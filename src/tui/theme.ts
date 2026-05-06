@@ -1,8 +1,23 @@
-/** iMessage-inspired color theme for the TUI. */
+/** iMessage-inspired color theme for the TUI — optimized for scannability. */
 export const theme = {
   sent: { bg: "#1982FC", fg: "#FFFFFF", border: "#1464C8" },
   received: { bg: "#E5E5EA", fg: "#1E1E1E", border: "#BEC0C3" },
   pending: { bg: "#3C3C41", fg: "#B4B4B9", border: "#505055" },
+
+  // Compact message colors
+  sentText: "#8CB8FF",    // light blue for sent message text
+  receivedText: "#D2D2D7", // light gray for received message text
+  senderName: "#5AC8C8",   // teal for other people's names
+  replyContext: "#64646A",  // dim for reply quotes
+  attachment: "#FFB347",   // orange for attachment indicator
+  lineNum: "#3C3C41",      // very dim for line numbers
+
+  // Alternating group backgrounds for sender contrast
+  groupBg: {
+    sent: "#14213D",       // dark navy tint for sent groups
+    received: "#1A1A2E",   // dark purple-gray tint for received groups
+  },
+
   sidebar: {
     selected: "#1E3C6E",
     selectedFg: "#FFFFFF",
@@ -10,6 +25,8 @@ export const theme = {
     read: "#B4B4B9",
     snippet: "#78787D",
     slug: "#505055",
+    slugBg: "#1A1A1F",
+    separator: "#2D2D32",
     time: "#78787D",
   },
   border: "#3C3C41",
@@ -22,6 +39,41 @@ export const theme = {
   sms: "#5AC85A",
   edited: "#96821E",
   compose: { bg: "#28282D", fg: "#FFFFFF", placeholder: "#64646A" },
+
+  // Date separator
+  dateSep: "#505055",
+
+  // Drawer
+  drawer: { bg: "#1E1E23", border: "#3C3C41", label: "#969699", value: "#D2D2D7" },
+} as const;
+
+/** Nerd Font / Powerline glyphs and Unicode symbols. */
+export const glyphs = {
+  /** Powerline arrow separators */
+  arrowRight: "\uE0B0",      //
+  arrowRightThin: "\uE0B1",  //
+  arrowLeft: "\uE0B2",       //
+  arrowLeftThin: "\uE0B3",   //
+
+  /** Direction indicators for messages */
+  sent: "\uE0B0",            //  (powerline arrow right = sent)
+  received: "\uE0B2",        //  (powerline arrow left = received)
+
+  /** Status indicators */
+  unreadDot: "●",
+  envelope: "✉",
+
+  /** Service icons */
+  iMessage: "💬",
+  sms: "📱",
+
+  /** Misc */
+  paperclip: "📎",
+  group: "☰",
+  search: "⌕",
+  pencil: "✎",
+  refresh: "↻",
+  separator: "─",
 } as const;
 
 export const TAPBACK_EMOJI: Record<string, string> = {

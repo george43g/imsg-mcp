@@ -82,6 +82,46 @@ For any `--mode`, Vite loads (each step overrides the previous): **`.env`** → 
 - **Sending**: `src/applescript.ts` – AppleScript interface to Messages.app.
 - **Tools**: Tool schemas and handlers in `src/index.ts`; validate inputs with Zod, keep tool list and schemas in sync.
 - **Tests**: Vitest; keep coverage for DB and tool behavior where it matters.
+- **Skills**: Canonical skill file is **`skills/imsg-mcp/SKILL.md`** — keep other skill files pointing to it.
+
+## TUI (`imsg`)
+
+Full-screen terminal UI built with Ink (React for terminal). Vim-style keybindings: `j/k` move, `#j/k` numbered jump, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump (next/previous sender), `Enter` message details drawer, `o` open attachment (images → system viewer, videos → mpv), `y` copy thread slug to clipboard, `d` toggle dev stats panel, `Tab` switch sidebar/messages, `/` filter, `c` compose, `q` quit.
+
+## Native Rust Module (optional acceleration)
+
+`native/` contains a Rust napi-rs module for accelerated SQLite queries and blob parsing (`rusqlite` + `rayon`). Build with `pnpm native:build`. The TUI/MCP falls back to TypeScript automatically if the native module is not built. The dev stats panel (`d` key) shows which engine is active.
+
+## Process Lifecycle & Reliability
+
+- **`src/shutdown.ts`** — central cleanup registry. All entry points register cleanup functions (DB close, heap monitor stop, screen unmount). Traps SIGINT, SIGTERM, SIGHUP, SIGQUIT.
+- **Orphan detection**: Parent PID watchdog (detects reparenting to launchd = orphaned process) + stdin EOF detection (MCP host died → pipe closed).
+- **After crashes**: Always check `ps aux | grep imsg` for orphaned processes.
+
+## Debugging & Logs
+
+### Using `get_logs` MCP tool
+
+```
+get_logs({ tail: 50, source: "all" })
+```
+- `source: "memory"` — in-process buffer (default, most recent)
+- `source: "file"` — NDJSON from disk (persists across restarts)
+- `source: "all"` — both sources
+
+### NDJSON log files
+
+Written to `$TMPDIR/imsg-mcp/imsg-mcp-{PID}-{date}.ndjson`. Contains:
+- `level: "perf"` with `dur_ms` — performance spans for every DB query
+- `msg: "heartbeat"` — periodic memory/uptime (every 60s)
+- `msg: "startup"` — process start marker
+- `msg: "shutdown"` — graceful exit marker
+
+**Crash detection**: A log file with no `"shutdown"` entry means the process crashed or hung.
+
+### MCP response metadata
+
+Tool responses include performance metadata: engine (TS/Rust), query time, result count.
 
 ## Permissions (for Users)
 

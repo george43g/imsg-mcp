@@ -1,29 +1,126 @@
 # imsg-mcp
 
-Optional companion skill for agents using the `imsg-mcp` server.
+Companion skill for agents using or developing the `imsg-mcp` iMessage MCP server.
 
 ## When to use
 
 - When an agent needs to text the human for clarification or approval.
 - When an agent should wait for an iMessage reply before continuing.
 - When an agent needs to inspect recent conversations or unread messages.
+- When developing/debugging the imsg-mcp codebase itself.
 
-## Usage notes
+## Quick start
 
-- Prefer `list_conversations` first and use the returned `threadSlug` for follow-up actions.
-- Use `send_message` with `threadSlug` for existing threads, especially groups.
-- Use `wait_for_reply` after sending when the workflow depends on a human answer.
-- Treat the iMessage database as sensitive local user data.
+1. Run `imsg-cli doctor` on a new machine to check permissions.
+2. Use `list_conversations` to identify the correct thread (returns `threadSlug`).
+3. Use `send_message` with `threadSlug` for existing threads, especially groups.
+4. Use `wait_for_reply` after sending when the workflow depends on a human answer.
 
 ## Local machine requirements
 
 - macOS only for live reads and sends.
-- Full Disk Access is required to read `~/Library/Messages/chat.db` and Address Book data.
+- Full Disk Access required to read `~/Library/Messages/chat.db` and Address Book.
 - Messages.app must be open to send messages.
+- Node >= 24 (see `package.json` / Volta).
 
-## Recommended workflow
+## Git LFS (required in cloud / CI / fresh clones)
 
-1. Run `imsg-cli doctor` on a new machine.
-2. Use `list_conversations` to identify the correct thread.
-3. Use `send_message` only when the user explicitly wants outbound texting.
-4. Use `wait_for_reply` with a bounded timeout.
+Large binaries (`*.db`, `*.abcddb`) are stored with Git LFS. A normal clone may leave pointer stubs.
+
+```bash
+git lfs install   # once per machine
+git lfs pull      # before pnpm install / tests / running against env-data/
+```
+
+## Thread slugs
+
+Stable, human-readable IDs for conversations: `{name}~{service}~{4-hex}` (e.g. `alice~imsg~a3f2`).
+
+- `list_conversations` returns `threadSlug` per row
+- `send_message` accepts `threadSlug` or `recipient`
+- `wait_for_reply` accepts `threadSlug` or `chatIdentifier`
+- See `src/thread-slug.ts`, `src/slug-store.ts`
+
+## Binaries
+
+| Binary | Purpose |
+|--------|---------|
+| `imsg-mcp` | MCP stdio server (used by AI hosts like Claude, Cursor) |
+| `imsg-cli` | Interactive CLI with REPL |
+| `imsg` | Full-screen TUI (Ink/React) |
+
+## TUI (`imsg`)
+
+Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump, `Enter` message details, `o` open attachment, `y` copy slug, `d` toggle dev stats, `Tab` switch panes, `/` filter, `c` compose, `q` quit.
+
+## Native Rust module (optional)
+
+`native/` contains a Rust acceleration module (`napi-rs` + `rusqlite` + `rayon`). Build with `pnpm native:build`. Falls back to TypeScript automatically if not built. The dev stats panel (`d` key in TUI) shows which engine is active.
+
+## Debugging & Logs
+
+### MCP tool: `get_logs`
+
+```
+get_logs({ tail: 50, source: "all" })
+```
+
+- `source: "memory"` — in-process buffer (default)
+- `source: "file"` — NDJSON log from `$TMPDIR/imsg-mcp/`
+- `source: "all"` — both
+
+### Log files
+
+Full NDJSON logs are written to `$TMPDIR/imsg-mcp/imsg-mcp-{PID}-{date}.ndjson`. These persist across restarts and contain:
+
+- `level: "perf"` + `dur_ms` — performance spans for every DB query
+- `level: "info"`, `msg: "heartbeat"` — periodic memory/uptime (every 60s)
+- `msg: "startup"` — process start marker (with PID, node version)
+- `msg: "shutdown"` — graceful exit marker (with uptime, reason)
+
+**Crash detection:** If a log file has no `"shutdown"` entry, the process crashed or hung.
+
+### Process lifecycle
+
+- `src/shutdown.ts` — central cleanup registry, signal handlers (SIGINT, SIGTERM, SIGHUP, SIGQUIT)
+- Orphan detection: parent PID watchdog (detects reparenting to launchd) + stdin EOF detection (MCP host died)
+- After TUI crashes, check for orphans: `ps aux | grep imsg`
+
+## Environment variables (Vite / Vitest)
+
+Precedence: `.env` → `.env.local` → `.env.[mode]` → `.env.[mode].local`
+
+| File | Role |
+|------|------|
+| `.env` | Baseline: `VITE_ENV=development` |
+| `.env.local` | Machine paths (`VITE_IMSG_DB_PATH`, etc.) |
+| `.env.test` | `VITE_ENV=ai` + `env-data/` paths for `pnpm test` |
+
+- `pnpm test` — Vitest mode `test` (loads `.env.test`)
+- `pnpm test:native` — mode `development` (Mac paths from `.env.local`)
+- Vitest always mocks AppleScript sends (`VITEST=true`)
+
+## Code map
+
+| Area | Location |
+|------|----------|
+| MCP tools / Zod | `src/index.ts` |
+| SQLite messages | `src/imessage-db.ts` |
+| Blob parsing | `src/attributed-body-text.ts`, `src/parsers/typedstream-parser.ts` |
+| Contacts | `src/contacts-db.ts` |
+| Slugs | `src/thread-slug.ts`, `src/slug-store.ts` |
+| Send / mock | `src/applescript.ts`, `src/mock-send-db.ts` |
+| TUI | `src/tui/` (Ink/React) |
+| Native module | `native/` (Rust + napi-rs) |
+| Shutdown | `src/shutdown.ts` |
+| Logging | `src/logger.ts` |
+| Config | `src/config.ts` |
+| Types | `src/types.ts` |
+| DB schema | `docs/IMESSAGE_DB_SCHEMA.md` |
+
+## Security / guardrails
+
+- Treat iMessage data as sensitive local user data.
+- Never publish private message content.
+- Confirm before sending messages on behalf of the user.
+- See `AGENTS.md` for thread isolation and MCP guardrails.
