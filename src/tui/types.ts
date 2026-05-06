@@ -1,7 +1,7 @@
 import type { Conversation, Message } from "../types.js";
 
 export type FocusPane = "sidebar" | "thread";
-export type Mode = "browse" | "compose" | "confirm" | "filter" | "drawer";
+export type Mode = "browse" | "compose" | "confirm" | "filter" | "drawer" | "select" | "export" | "date-jump";
 
 export interface PendingMessage {
   text: string;
@@ -31,6 +31,18 @@ export interface AppState {
   conversationLoadingMore: boolean;     // true while a "load more" fetch is in-flight
   messageOldestLoadedId: number | null; // oldest message ROWID currently in `messages` (for "load older")
   messageLoadingOlder: boolean;         // true while a "load older" fetch is in-flight
+
+  // Visual selection (vim V)
+  selectionAnchor: number | null;       // where the user pressed V — selection extends from anchor to selectedMsgIdx
+
+  // Export modal state
+  exportFormat: "markdown" | "csv" | "json";
+  exportPath: string;
+  exportStatus: string;                 // last export status message (e.g. "Exported 247 msgs")
+
+  // Date-jump modal state
+  dateJumpInput: string;
+  dateJumpError: string;
 }
 
 export type Action =
@@ -61,7 +73,18 @@ export type Action =
   | { type: "TOGGLE_DEV_STATS" }
   | { type: "APPEND_CONVERSATIONS"; data: Conversation[]; loadedCount: number }
   | { type: "PREPEND_MESSAGES"; data: Message[]; oldestId: number }
-  | { type: "SET_LOADING_OLDER"; loading: boolean };
+  | { type: "SET_LOADING_OLDER"; loading: boolean }
+  | { type: "ENTER_SELECT_MODE" }
+  | { type: "EXIT_SELECT_MODE" }
+  | { type: "ENTER_EXPORT_MODE"; defaultPath: string }
+  | { type: "EXIT_EXPORT_MODE" }
+  | { type: "SET_EXPORT_FORMAT"; format: "markdown" | "csv" | "json" }
+  | { type: "SET_EXPORT_PATH"; path: string }
+  | { type: "SET_EXPORT_STATUS"; status: string }
+  | { type: "ENTER_DATE_JUMP" }
+  | { type: "EXIT_DATE_JUMP" }
+  | { type: "SET_DATE_JUMP_INPUT"; value: string }
+  | { type: "SET_DATE_JUMP_ERROR"; error: string };
 
 export const initialState: AppState = {
   conversations: [],
@@ -83,6 +106,12 @@ export const initialState: AppState = {
   conversationLoadingMore: false,
   messageOldestLoadedId: null,
   messageLoadingOlder: false,
+  selectionAnchor: null,
+  exportFormat: "markdown",
+  exportPath: "",
+  exportStatus: "",
+  dateJumpInput: "",
+  dateJumpError: "",
 };
 
 /** Clamp message cursor and ensure it's visible by adjusting scroll */
@@ -181,6 +210,28 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "SET_LOADING_OLDER":
       return { ...state, messageLoadingOlder: action.loading };
+    case "ENTER_SELECT_MODE":
+      return { ...state, mode: "select", selectionAnchor: state.selectedMsgIdx };
+    case "EXIT_SELECT_MODE":
+      return { ...state, mode: "browse", selectionAnchor: null };
+    case "ENTER_EXPORT_MODE":
+      return { ...state, mode: "export", exportPath: action.defaultPath };
+    case "EXIT_EXPORT_MODE":
+      return { ...state, mode: state.selectionAnchor != null ? "select" : "browse" };
+    case "SET_EXPORT_FORMAT":
+      return { ...state, exportFormat: action.format };
+    case "SET_EXPORT_PATH":
+      return { ...state, exportPath: action.path };
+    case "SET_EXPORT_STATUS":
+      return { ...state, exportStatus: action.status };
+    case "ENTER_DATE_JUMP":
+      return { ...state, mode: "date-jump", dateJumpInput: "", dateJumpError: "" };
+    case "EXIT_DATE_JUMP":
+      return { ...state, mode: "browse", dateJumpInput: "", dateJumpError: "" };
+    case "SET_DATE_JUMP_INPUT":
+      return { ...state, dateJumpInput: action.value, dateJumpError: "" };
+    case "SET_DATE_JUMP_ERROR":
+      return { ...state, dateJumpError: action.error };
     case "SELECT": {
       const idx = Math.max(0, Math.min(action.index, Math.max(0, state.conversations.length - 1)));
       const sidebarScroll = action.visibleCount

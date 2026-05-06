@@ -18,6 +18,9 @@ export const theme = {
     received: "#1A1A2E",   // dark purple-gray tint for received groups
   },
 
+  // Background tint for messages in an active visual selection (V mode)
+  selectionBg: "#3C3814",  // muted yellow — visible against dark group bgs but not screaming
+
   sidebar: {
     selected: "#1E3C6E",
     selectedFg: "#FFFFFF",

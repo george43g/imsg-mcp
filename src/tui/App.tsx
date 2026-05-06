@@ -1,8 +1,12 @@
 import { execSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import React, { useCallback, useEffect, useReducer, useRef } from "react";
 import { Box, useApp, useInput } from "ink";
 import { registerCleanup } from "../shutdown.js";
 import { useScreenSize } from "fullscreen-ink";
+import { extensionFor, toCSV, toJSON, toMarkdown } from "./exportFormats.js";
 import { useImsg } from "./hooks/useImsg.js";
 import { useMouse } from "./hooks/useMouse.js";
 import { initialState, reducer } from "./types.js";
@@ -11,7 +15,10 @@ import { HelpBar } from "./components/HelpBar.js";
 import { MessageDrawer } from "./components/MessageDrawer.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { StatusBar } from "./components/StatusBar.js";
+import { DateJumpModal } from "./components/DateJumpModal.js";
+import { ExportModal } from "./components/ExportModal.js";
 import { ThreadPane, nextGroupBoundary, prevGroupBoundary } from "./components/ThreadPane.js";
+import { formatJumpTarget, parseUserDate } from "./dateParse.js";
 import { useDevStats } from "./hooks/useDevStats.js";
 
 export function App() {
@@ -251,8 +258,75 @@ export function App() {
       return;
     }
 
+    // Date-jump modal mode — Esc cancels; Enter handled by TextInput.onSubmit
+    if (state.mode === "date-jump") {
+      if (key.escape) {
+        dispatch({ type: "EXIT_DATE_JUMP" });
+      }
+      return;
+    }
+
+    // Export-modal mode — Tab cycles format, Esc cancels.
+    // Path text input + Enter handled by the inline TextInput inside the modal.
+    if (state.mode === "export") {
+      if (key.escape) {
+        dispatch({ type: "EXIT_EXPORT_MODE" });
+      } else if (key.tab) {
+        const order: Array<"markdown" | "csv" | "json"> = ["markdown", "csv", "json"];
+        const next = order[(order.indexOf(state.exportFormat) + 1) % order.length];
+        dispatch({ type: "SET_EXPORT_FORMAT", format: next });
+        // Update path extension to match new format
+        const stripped = state.exportPath.replace(/\.(md|csv|json)$/, "");
+        dispatch({ type: "SET_EXPORT_PATH", path: `${stripped}.${extensionFor(next)}` });
+      }
+      return;
+    }
+
+    // Select mode — V'd. j/k extend, Esc exits, e opens export modal,
+    // y copies selected text to clipboard.
+    if (state.mode === "select") {
+      if (key.escape) {
+        dispatch({ type: "EXIT_SELECT_MODE" });
+        return;
+      }
+      if (input === "e") {
+        const slug = selected?.threadSlug ?? "messages";
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const defaultPath = join(homedir(), `imsg-export-${slug}-${stamp}.md`);
+        dispatch({ type: "ENTER_EXPORT_MODE", defaultPath });
+        return;
+      }
+      if (input === "y" && state.selectionAnchor != null) {
+        const [lo, hi] = [
+          Math.min(state.selectionAnchor, state.selectedMsgIdx),
+          Math.max(state.selectionAnchor, state.selectedMsgIdx),
+        ];
+        const text = state.messages
+          .slice(lo, hi + 1)
+          .map((m) => `[${m.date.toISOString()}] ${m.isFromMe ? "Me" : (m.displayName ?? m.handle)}: ${m.text ?? "(no text)"}`)
+          .join("\n");
+        try {
+          execSync("pbcopy", { input: text });
+          dispatch({ type: "SET_STATUS", status: `Copied ${hi - lo + 1} msgs` });
+        } catch {
+          dispatch({ type: "SET_STATUS", status: "Copy failed" });
+        }
+        setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 2000);
+        return;
+      }
+      // j/k/G/gg/Ctrl-d/Ctrl-u — fall through to browse-mode movement (anchor stays)
+    }
+
     // Browse mode
     if (input === "d" && state.mode === "browse") { dispatch({ type: "TOGGLE_DEV_STATS" }); return; }
+    if (input === "V" && state.focus === "thread" && state.selectedMsgIdx >= 0) {
+      dispatch({ type: "ENTER_SELECT_MODE" });
+      return;
+    }
+    if (input === ":" && state.focus === "thread" && state.mode === "browse") {
+      dispatch({ type: "ENTER_DATE_JUMP" });
+      return;
+    }
     if (input === "q") { await imsg.close(); exit(); return; }
     if (input === "r") { await refreshAll(); return; }
     if (input === "c" || (key.return && state.focus === "thread" && state.mode === "browse")) {
@@ -404,6 +478,92 @@ export function App() {
     }
   });
 
+  // ── Date jump ──────────────────────────────────────────────────────
+
+  const MAX_JUMP_BATCHES = 100; // bounded loop: 100 × 100 = 10,000 messages
+
+  const doDateJump = useCallback(async (input: string) => {
+    const target = parseUserDate(input);
+    if (!target) {
+      dispatch({ type: "SET_DATE_JUMP_ERROR", error: `Could not parse "${input}". Try YYYY-MM-DD or "1 week ago".` });
+      return;
+    }
+    if (!selected) {
+      dispatch({ type: "EXIT_DATE_JUMP" });
+      return;
+    }
+    let batches = 0;
+    // Loop: load older messages until oldest <= target, or exhausted
+    while (batches < MAX_JUMP_BATCHES) {
+      const oldest = state.messages.length > 0 ? state.messages[0].date : new Date();
+      if (oldest <= target) break;
+      if (state.messageOldestLoadedId == null || state.messageOldestLoadedId === -1) break;
+      const older = await imsg.loadOlderMessages(selected.chatIdentifier, state.messageOldestLoadedId);
+      if (older.length === 0) break;
+      const newOldestId = Math.min(...older.map((m) => m.id));
+      dispatch({ type: "PREPEND_MESSAGES", data: older, oldestId: newOldestId });
+      batches++;
+      // Yield to render between batches
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // Find first message at or after target
+    const idx = state.messages.findIndex((m) => m.date >= target);
+    if (idx >= 0) {
+      dispatch({ type: "SELECT_MSG", index: idx });
+    }
+    dispatch({ type: "EXIT_DATE_JUMP" });
+    dispatch({
+      type: "SET_STATUS",
+      status:
+        batches >= MAX_JUMP_BATCHES
+          ? `Jumped (capped) — load more manually for older history`
+          : `Jumped to ${formatJumpTarget(target)}`,
+    });
+    setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 4000);
+  }, [imsg, selected, state.messages, state.messageOldestLoadedId]);
+
+  // ── Export action ──────────────────────────────────────────────────
+
+  const doExport = useCallback(() => {
+    const messagesToExport = state.selectionAnchor != null
+      ? state.messages.slice(
+          Math.min(state.selectionAnchor, state.selectedMsgIdx),
+          Math.max(state.selectionAnchor, state.selectedMsgIdx) + 1,
+        )
+      : state.messages;
+    if (messagesToExport.length === 0) {
+      dispatch({ type: "SET_STATUS", status: "Nothing to export" });
+      return;
+    }
+    const expandedPath = state.exportPath.replace(/^~/, homedir());
+    try {
+      let content: string;
+      const header = {
+        thread: selected?.displayName ?? selected?.chatIdentifier ?? "thread",
+        participants: selected?.participants ?? [],
+        serviceType: selected?.serviceType,
+      };
+      switch (state.exportFormat) {
+        case "markdown":
+          content = toMarkdown(messagesToExport, header);
+          break;
+        case "csv":
+          content = toCSV(messagesToExport);
+          break;
+        case "json":
+          content = toJSON(messagesToExport, header);
+          break;
+      }
+      writeFileSync(expandedPath, content, "utf8");
+      dispatch({ type: "EXIT_EXPORT_MODE" });
+      dispatch({ type: "EXIT_SELECT_MODE" });
+      dispatch({ type: "SET_STATUS", status: `Exported ${messagesToExport.length} msgs to ${expandedPath}` });
+      setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 4000);
+    } catch (err) {
+      dispatch({ type: "SET_STATUS", status: `Export failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  }, [state.exportFormat, state.exportPath, state.messages, state.selectedMsgIdx, state.selectionAnchor, selected]);
+
   // ── Open attachment ────────────────────────────────────────────────
 
   function openAttachment(msg: import("../types.js").Message | undefined) {
@@ -493,6 +653,7 @@ export function App() {
           resolvedNames={resolvedNames}
           scrollOffset={state.threadScroll}
           selectedMsgIdx={state.selectedMsgIdx}
+          selectionAnchor={state.selectionAnchor}
           focused={state.focus === "thread"}
           width={threadWidth}
           height={bodyHeight}
@@ -511,6 +672,34 @@ export function App() {
           <DevStats stats={devStats} width={devStatsWidth} />
         )}
       </Box>
+
+      {/* Date-jump modal */}
+      {state.mode === "date-jump" && (
+        <DateJumpModal
+          value={state.dateJumpInput}
+          error={state.dateJumpError}
+          onChange={(v) => dispatch({ type: "SET_DATE_JUMP_INPUT", value: v })}
+          onSubmit={(v) => doDateJump(v)}
+        />
+      )}
+
+      {/* Export modal — overlays the bottom of the body when active */}
+      {state.mode === "export" && (
+        <ExportModal
+          format={state.exportFormat}
+          path={state.exportPath}
+          rangeSummary={(() => {
+            if (state.selectionAnchor != null) {
+              const lo = Math.min(state.selectionAnchor, state.selectedMsgIdx);
+              const hi = Math.max(state.selectionAnchor, state.selectedMsgIdx);
+              return `${hi - lo + 1} selected messages`;
+            }
+            return `entire loaded thread (${state.messages.length} messages)`;
+          })()}
+          onChangePath={(p) => dispatch({ type: "SET_EXPORT_PATH", path: p })}
+          onSubmit={doExport}
+        />
+      )}
 
       {/* Status + Help */}
       <StatusBar totalUnread={totalUnread} selected={selected} status={state.status} loading={state.loading}>

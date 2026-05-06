@@ -70,6 +70,8 @@ interface Props {
    * placeholder so the reader at least sees the reply indicator.
    */
   lookupReplyText?: (guid: string) => string | null;
+  /** True when this message is inside an active visual selection range. */
+  inSelection?: boolean;
 }
 
 /**
@@ -88,6 +90,7 @@ export function MessageBubble({
   isLastInGroup,
   bgTint,
   lookupReplyText,
+  inSelection,
 }: Props) {
   const isSent = m.isFromMe;
   const text = m.text ?? "(attachment)";
@@ -109,7 +112,7 @@ export function MessageBubble({
   const groupColor = isSent ? theme.sent.border : theme.received.border;
 
   return (
-    <Box flexDirection="column" backgroundColor={selected ? theme.sidebar.selected : bgTint}>
+    <Box flexDirection="column" backgroundColor={selected ? theme.sidebar.selected : inSelection ? theme.selectionBg : bgTint}>
       <Box>
         {/* Line number */}
         {lineNum !== undefined && (

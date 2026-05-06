@@ -27,11 +27,33 @@ const THREAD_KEYS = [
   ["{/}", "grp jump"],
   ["gg/G", "top/btm"],
   ["^d/u", "½page"],
+  ["V", "select"],
+  [":", "date jump"],
   ["Enter", "details"],
   ["o", "open att"],
   ["c", "compose"],
   ["d", "stats"],
   ["Tab", "→list"],
+];
+
+const SELECT_KEYS = [
+  ["j/k", "extend"],
+  ["{/}", "grp"],
+  ["gg/G", "top/btm"],
+  ["e", "export"],
+  ["y", "copy text"],
+  ["Esc", "exit select"],
+];
+
+const EXPORT_KEYS = [
+  ["Tab", "format"],
+  ["Enter", "save"],
+  ["Esc", "cancel"],
+];
+
+const DATE_JUMP_KEYS = [
+  ["Enter", "jump"],
+  ["Esc", "cancel"],
 ];
 
 const COMPOSE_KEYS = [
@@ -53,6 +75,9 @@ export function HelpBar({ mode, focus }: Props) {
   if (mode === "compose" || mode === "confirm") keys = COMPOSE_KEYS;
   else if (mode === "filter") keys = FILTER_KEYS;
   else if (mode === "drawer") keys = DRAWER_KEYS;
+  else if (mode === "select") keys = SELECT_KEYS;
+  else if (mode === "export") keys = EXPORT_KEYS;
+  else if (mode === "date-jump") keys = DATE_JUMP_KEYS;
   else keys = focus === "thread" ? THREAD_KEYS : SIDEBAR_KEYS;
 
   return (

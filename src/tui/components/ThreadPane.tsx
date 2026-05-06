@@ -13,6 +13,8 @@ interface Props {
   resolvedNames: string[];
   scrollOffset: number;
   selectedMsgIdx: number;
+  /** Anchor index for visual selection (set when V is pressed). null = no selection. */
+  selectionAnchor: number | null;
   focused: boolean;
   width: number;
   height: number;
@@ -28,6 +30,7 @@ export function ThreadPane({
   resolvedNames,
   scrollOffset,
   selectedMsgIdx,
+  selectionAnchor,
   focused,
   width,
   height,
@@ -99,6 +102,12 @@ export function ThreadPane({
   }, [messages]);
 
   const lookupReplyText = (guid: string): string | null => messagesByGuid.get(guid) ?? null;
+
+  // Visual selection range — derived from anchor + cursor.
+  const selRange: [number, number] | null =
+    selectionAnchor != null && selectedMsgIdx >= 0
+      ? [Math.min(selectionAnchor, selectedMsgIdx), Math.max(selectionAnchor, selectedMsgIdx)]
+      : null;
 
   return (
     <Box
@@ -179,6 +188,7 @@ export function ThreadPane({
                     isLastInGroup={lastInGroup}
                     bgTint={bgTint}
                     lookupReplyText={lookupReplyText}
+                    inSelection={selRange != null && realIdx >= selRange[0] && realIdx <= selRange[1]}
                   />
                   {/* Group separator line between different senders */}
                   {lastInGroup && nextMsg && !isDifferentDay(msg.date, nextMsg.date) && (
