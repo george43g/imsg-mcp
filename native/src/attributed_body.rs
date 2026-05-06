@@ -129,6 +129,7 @@ pub fn extract_text(blob: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_score_candidate() {
@@ -141,5 +142,55 @@ mod tests {
         assert!(normalize_candidate("streamtyped").is_none());
         assert!(normalize_candidate("NSMutableString").is_none());
         assert!(normalize_candidate("Hello world").is_some());
+    }
+
+    /// Hang resistance: extract_text must complete on adversarial inputs.
+    /// Mirrors the TS regression — the Rust path is structurally simpler
+    /// (no byte-by-byte reader) so it cannot hit the same infinite loop,
+    /// but we still pin the contract here.
+    #[test]
+    fn test_extract_text_does_not_hang_on_zeros() {
+        let zeros = vec![0u8; 8192];
+        let start = Instant::now();
+        let _ = extract_text(&zeros);
+        assert!(start.elapsed().as_millis() < 500, "must complete fast on all-zero input");
+    }
+
+    #[test]
+    fn test_extract_text_does_not_hang_on_high_bits() {
+        let mut blob = vec![0u8; 8192];
+        for (i, b) in blob.iter_mut().enumerate() {
+            *b = if i % 2 == 0 { 0xc0 } else { 0x00 };
+        }
+        let start = Instant::now();
+        let _ = extract_text(&blob);
+        assert!(start.elapsed().as_millis() < 500);
+    }
+
+    /// Real attributedBody header should yield the embedded ASCII text.
+    #[test]
+    fn test_extract_text_finds_message_in_synthetic_blob() {
+        // Synthetic structure: typedstream header bytes, then NSString class
+        // refs, then the actual message text surrounded by control bytes.
+        let mut blob: Vec<u8> = b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@".to_vec();
+        blob.extend_from_slice(b"NSString\x01\x94\x84\x01+");
+        blob.push(28); // length byte
+        blob.extend_from_slice(b"Hello world from typedstream");
+        blob.extend_from_slice(b"\x00\x00\x86\x84\x02iI"); // some trailing structure
+        let result = extract_text(&blob);
+        assert!(result.is_some(), "should find a candidate");
+        let text = result.unwrap();
+        assert!(
+            text.contains("Hello world from typedstream"),
+            "expected message text, got: {text:?}"
+        );
+        assert!(!text.contains("$class"), "no class metadata leak");
+        assert!(!text.contains("NSString"), "no NSString class leak");
+    }
+
+    /// Empty input should return None gracefully, not panic.
+    #[test]
+    fn test_extract_text_empty_input() {
+        assert!(extract_text(&[]).is_none());
     }
 }

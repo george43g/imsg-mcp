@@ -107,3 +107,34 @@ pub fn resolve_handles(
     let db = ContactsDb::open(contacts_main_path, contacts_sources_dir);
     Ok(db.resolve_batch(handles))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_handle_phone() {
+        assert_eq!(normalize_handle("+1 555 555 0108"), "+15555550108");
+        assert_eq!(normalize_handle("+1 (415) 555-1234"), "+14155551234");
+    }
+
+    #[test]
+    fn test_normalize_handle_email() {
+        assert_eq!(normalize_handle("USER@EXAMPLE.com"), "user@example.com");
+    }
+
+    #[test]
+    fn test_open_missing_path_returns_empty() {
+        // Must not panic on missing/invalid file — degrades gracefully.
+        let db = ContactsDb::open("/nonexistent/path/AddressBook.abcddb", None);
+        assert!(db.lookup_handle("anything").is_none());
+    }
+
+    #[test]
+    fn test_resolve_batch_empty_db() {
+        let db = ContactsDb::open("/nonexistent/path/AddressBook.abcddb", None);
+        let handles = vec!["+1234567890".to_string(), "user@example.com".to_string()];
+        let result = db.resolve_batch(&handles);
+        assert!(result.is_empty());
+    }
+}
