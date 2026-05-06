@@ -394,17 +394,17 @@ export class IMessageDB {
   async getMessagesForChat(
     chatIdentifier: string,
     limit: number = 50,
-    options: { includeReactions?: boolean; includeReactionDetails?: boolean; beforeMessageId?: number } = {},
+    options: { includeReactions?: boolean; includeReactionDetails?: boolean; beforeMessageId?: number; afterMessageId?: number } = {},
   ): Promise<Message[]> {
     const span = perf("getMessagesForChat");
-    const { includeReactions = false, includeReactionDetails = false, beforeMessageId } = options;
+    const { includeReactions = false, includeReactionDetails = false, beforeMessageId, afterMessageId } = options;
     const chats = this.resolveChatsForConversation(chatIdentifier);
     if (chats.length === 0) { span.end({ limit, returned: 0 }); return []; }
 
     const perChatLimit = Math.max(limit * 2, 50);
     const result = new Map<number, Message>();
     for (const chat of chats) {
-      const rows = this.fetchMessagesForChatRowId(chat.ROWID, perChatLimit, beforeMessageId);
+      const rows = this.fetchMessagesForChatRowId(chat.ROWID, perChatLimit, beforeMessageId, afterMessageId);
       const extBatch = this.fetchExtendedMessageDataBatch(rows.map((r) => r.ROWID));
 
       // Batch-fetch reactions for the entire chat instead of per-message LIKE queries
@@ -1045,7 +1045,22 @@ export class IMessageDB {
    * Fetch message rows for a chat ROWID, ordered by date DESC.
    * Replaces the upstream IMessageDatabase.getMessagesFromChat().
    */
-  private fetchMessagesForChatRowId(chatRowId: number, limit: number, beforeMessageId?: number): MessageRow[] {
+  private fetchMessagesForChatRowId(chatRowId: number, limit: number, beforeMessageId?: number, afterMessageId?: number): MessageRow[] {
+    if (beforeMessageId != null && afterMessageId != null) {
+      // Gap-fill: messages strictly between two boundary IDs
+      const stmt = this.raw.prepare(`
+        SELECT
+          m.ROWID, m.guid, m.text, m.attributedBody, m.date,
+          m.is_from_me, h.id as handle_id, m.cache_has_attachments
+        FROM ${Tables.MESSAGE} m
+        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+        LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+        WHERE cmj.chat_id = ? AND m.ROWID > ? AND m.ROWID < ?
+        ORDER BY m.date DESC
+        LIMIT ?
+      `);
+      return stmt.all(chatRowId, afterMessageId, beforeMessageId, limit) as MessageRow[];
+    }
     if (beforeMessageId != null) {
       const stmt = this.raw.prepare(`
         SELECT

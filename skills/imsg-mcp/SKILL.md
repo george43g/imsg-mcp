@@ -75,6 +75,20 @@ All thresholds are env-overridable (`IMSG_EVENT_LOOP_KILL_MS`, `IMSG_MAX_RSS_MB`
 
 The server honors `notifications/cancelled`. Long-running handlers (`wait_for_reply`) abort cleanly when the host cancels.
 
+## MCP pagination & export
+
+- `get_messages` returns a footer with `oldestMessageId`. Pass it as `beforeMessageId` to paginate. Hard cap 5000/call.
+- `export_messages` streams a chat to a file (markdown/csv/json/ndjson) — use this instead of huge `get_messages` calls.
+
+## TUI date jump + selection + export
+
+- `:` open date-jump (e.g. `1 year ago`, `2024-01-15`).
+- `V` enter visual select; `e` export selection; `y` copy text.
+
+## Bounded memory
+
+When loaded messages exceed `IMSG_TUI_MSG_HARD_CAP` (default 5000), middle is evicted; first 200 (anchor) + window around cursor stay. Gap markers show evicted regions.
+
 ## TUI lazy loading + cache
 
 - 200 conversations load initially; another 100 lazy-load when within 20 of the end.

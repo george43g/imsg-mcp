@@ -241,6 +241,40 @@ async function main() {
     return ms < 3000 && checkResult(r, { hasText: ["message"] });
   });
 
+  await test("get_messages includes pagination footer with oldestMessageId", async () => {
+    const r = await client.callTool("get_messages", { chatIdentifier: "+15555550102", limit: 20 });
+    return checkResult(r, { hasText: ["oldestMessageId=", "hasMore="] });
+  });
+
+  await test("get_messages with beforeMessageId returns strictly older page", async () => {
+    const first = await client.callTool("get_messages", { chatIdentifier: "+15555550102", limit: 10 });
+    const text = first.content?.[0]?.text ?? "";
+    const m = text.match(/oldestMessageId=(\d+)/);
+    if (!m) return false;
+    const oldestId = Number.parseInt(m[1], 10);
+    const second = await client.callTool("get_messages", { chatIdentifier: "+15555550102", limit: 10, beforeMessageId: oldestId });
+    const secondText = second.content?.[0]?.text ?? "";
+    const m2 = secondText.match(/oldestMessageId=(\d+)/);
+    if (!m2) return false;
+    return Number.parseInt(m2[1], 10) < oldestId;
+  });
+
+  await test("export_messages writes a markdown file", async () => {
+    const path = `/tmp/imsg-mcp-export-test-${Date.now()}.md`;
+    const r = await client.callTool("export_messages", {
+      chatIdentifier: "+15555550102",
+      format: "markdown",
+      outputPath: path,
+    });
+    if (r.isError) return false;
+    // Verify file exists and has the markdown header
+    const fs = await import("node:fs");
+    if (!fs.existsSync(path)) return false;
+    const content = fs.readFileSync(path, "utf8");
+    fs.unlinkSync(path);
+    return content.startsWith("# ");
+  });
+
   console.log(`\n\x1b[1mResults:\x1b[0m ${passed} passed, ${failed} failed`);
   if (failures.length) {
     console.log("\nFailures:");

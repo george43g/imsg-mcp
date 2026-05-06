@@ -118,6 +118,21 @@ Logs surface as `level: "warn"` or `level: "error"` with `msg: "event_loop_lag" 
 
 The server honors `notifications/cancelled` per the MCP spec. The SDK wires per-request `AbortSignal`s automatically; long-running handlers (`wait_for_reply`) check `signal.aborted` between iterations and return `isError: true` with a "Cancelled by client" message.
 
+### MCP pagination & export
+
+- **`get_messages`** response footer includes `oldestMessageId` + `hasMore`. To paginate older history, pass that id as `beforeMessageId` in the next call. Internal cap: 5000 messages per call (regardless of `limit: 0`) to prevent OOM.
+- **`export_messages`** streams a conversation to a file in pages — never loads the whole history into memory. Use this instead of `get_messages` with a huge limit. Formats: `markdown` (default), `csv`, `json` (single doc), `ndjson` (line-delimited, ideal for very large exports). Optional `since`/`until` accept ISO dates or relative strings (`yesterday`, `1 year ago`, `5d`). Optional `pageSize` (100-5000, default 1000).
+
+### TUI date jump + visual selection + export
+
+- Press `:` in thread pane to jump to a date. Same parser as MCP `since`/`until`.
+- Press `V` to enter visual select mode. `j/k/{}/^d/^u` extend; `e` opens export modal; `y` copies selected text to clipboard; `Esc` exits.
+- Export modal: Tab cycles Markdown/CSV/JSON; path defaults to `~/imsg-export-{slug}-{date}.{ext}`.
+
+### Bounded message memory
+
+When loaded message history exceeds `IMSG_TUI_MSG_HARD_CAP` (default 5000), the middle is evicted but two regions are preserved: the last 200 (anchor — fast `G`) and 300 around the cursor (current viewing window). Evicted regions show a "N older messages evicted" placeholder so the user knows there's a gap; scrolling back will lazy-reload them.
+
 ### TUI lazy-loading + smart cache
 
 - **Conversations**: 200 load at startup; another 100 lazy-load when the cursor or scroll comes within 20 of the loaded end. Triggered transparently in `App.tsx`.

@@ -15,6 +15,8 @@ interface Props {
   selectedMsgIdx: number;
   /** Anchor index for visual selection (set when V is pressed). null = no selection. */
   selectionAnchor: number | null;
+  /** Eviction gap markers — placeholders showing "N more messages — scroll to load". */
+  gapMarkers: Array<{ atIdx: number; oldestId: number; newestId: number; count: number }>;
   focused: boolean;
   width: number;
   height: number;
@@ -31,6 +33,7 @@ export function ThreadPane({
   scrollOffset,
   selectedMsgIdx,
   selectionAnchor,
+  gapMarkers,
   focused,
   width,
   height,
@@ -168,6 +171,19 @@ export function ThreadPane({
 
               return (
                 <React.Fragment key={msg.id}>
+                  {(() => {
+                    // Gap marker — show "N more messages" before the first
+                    // message after an evicted region.
+                    const gap = gapMarkers.find((g) => g.atIdx === realIdx);
+                    if (!gap) return null;
+                    return (
+                      <Box justifyContent="center" marginTop={1} marginBottom={1}>
+                        <Text color={theme.edited}>
+                          ─── {gap.count.toLocaleString()} older messages evicted (scroll back to reload) ───
+                        </Text>
+                      </Box>
+                    );
+                  })()}
                   {showDateSep && (
                     // Always 1 row of breathing room above date separators so the
                     // visual rhythm is consistent — without this, separators that

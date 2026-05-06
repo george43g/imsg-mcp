@@ -32,6 +32,9 @@ export interface AppState {
   messageOldestLoadedId: number | null; // oldest message ROWID currently in `messages` (for "load older")
   messageLoadingOlder: boolean;         // true while a "load older" fetch is in-flight
 
+  // Bounded message window — gaps appear when middle of history is evicted
+  gapMarkers: Array<{ atIdx: number; oldestId: number; newestId: number; count: number }>;
+
   // Visual selection (vim V)
   selectionAnchor: number | null;       // where the user pressed V — selection extends from anchor to selectedMsgIdx
 
@@ -106,6 +109,7 @@ export const initialState: AppState = {
   conversationLoadingMore: false,
   messageOldestLoadedId: null,
   messageLoadingOlder: false,
+  gapMarkers: [],
   selectionAnchor: null,
   exportFormat: "markdown",
   exportPath: "",
@@ -120,6 +124,107 @@ function clampMsg(state: AppState, idx: number): Partial<AppState> {
   if (total === 0) return { selectedMsgIdx: -1 };
   const clamped = Math.max(0, Math.min(idx, total - 1));
   return { selectedMsgIdx: clamped };
+}
+
+// ── Bounded message window ───────────────────────────────────────────────
+// When loaded messages exceed HARD_CAP, evict the middle of the array but
+// preserve two regions:
+//   1. ANCHOR_KEEP at the END (most recent messages — user can press G)
+//   2. WINDOW_BUFFER ± selectedMsgIdx (current viewing window)
+// The evicted block becomes a gap marker so the renderer can show "N more
+// messages — scroll to load" and the user can refill on demand.
+
+const MESSAGES_HARD_CAP = Number.parseInt(
+  process.env.IMSG_TUI_MSG_HARD_CAP ?? "5000",
+  10,
+);
+const ANCHOR_KEEP = 200;
+const WINDOW_BUFFER = 300;
+
+/**
+ * Apply the bounding policy to a fresh `messages` array. Returns the trimmed
+ * array, an updated `selectedMsgIdx`, and any new gap markers. Pure function.
+ */
+export function boundMessagesIfNeeded(
+  messages: Message[],
+  selectedMsgIdx: number,
+  existingGaps: AppState["gapMarkers"],
+): {
+  messages: Message[];
+  selectedMsgIdx: number;
+  gapMarkers: AppState["gapMarkers"];
+} {
+  if (messages.length <= MESSAGES_HARD_CAP) {
+    return { messages, selectedMsgIdx, gapMarkers: existingGaps };
+  }
+
+  const total = messages.length;
+  // Keep the LAST ANCHOR_KEEP messages (most recent — anchor for G)
+  const anchorStart = Math.max(total - ANCHOR_KEEP, 0);
+  // Keep WINDOW_BUFFER on each side of the cursor
+  const cursorLo = Math.max(0, selectedMsgIdx - WINDOW_BUFFER);
+  const cursorHi = Math.min(total - 1, selectedMsgIdx + WINDOW_BUFFER);
+
+  // Build the kept-set as a sorted list of [start, end] ranges, merged
+  type Range = [number, number];
+  const ranges: Range[] = [
+    [cursorLo, cursorHi],
+    [anchorStart, total - 1],
+  ];
+  // Sort by start; merge overlapping/adjacent
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged: Range[] = [];
+  for (const r of ranges) {
+    if (merged.length === 0) {
+      merged.push(r);
+      continue;
+    }
+    const last = merged[merged.length - 1];
+    if (r[0] <= last[1] + 1) {
+      last[1] = Math.max(last[1], r[1]);
+    } else {
+      merged.push(r);
+    }
+  }
+
+  // Slice + concat the kept ranges, recording gaps between them
+  const kept: Message[] = [];
+  const gapMarkers: AppState["gapMarkers"] = [];
+  for (let i = 0; i < merged.length; i++) {
+    const [start, end] = merged[i];
+    if (i > 0) {
+      const prevEnd = merged[i - 1][1];
+      const gapStart = prevEnd + 1;
+      const gapEnd = start - 1;
+      if (gapEnd >= gapStart) {
+        gapMarkers.push({
+          atIdx: kept.length,
+          oldestId: messages[gapStart].id,
+          newestId: messages[gapEnd].id,
+          count: gapEnd - gapStart + 1,
+        });
+      }
+    }
+    for (let j = start; j <= end; j++) kept.push(messages[j]);
+  }
+
+  // Map old selectedMsgIdx to new index in `kept`
+  let newCursor = -1;
+  if (selectedMsgIdx >= 0) {
+    let collapsedIdx = 0;
+    for (const [start, end] of merged) {
+      if (selectedMsgIdx >= start && selectedMsgIdx <= end) {
+        newCursor = collapsedIdx + (selectedMsgIdx - start);
+        break;
+      }
+      collapsedIdx += end - start + 1;
+    }
+    if (newCursor === -1) newCursor = 0; // cursor was in evicted region; clamp to start
+  }
+
+  // Note: existingGaps from before this trim aren't re-merged; we replace.
+  // In practice gaps are always recomputed from the current array shape.
+  return { messages: kept, selectedMsgIdx: newCursor, gapMarkers };
 }
 
 /**
@@ -191,6 +296,7 @@ export function reducer(state: AppState, action: Action): AppState {
         threadScroll: scrollToEnd,
         messageOldestLoadedId: oldestId,
         messageLoadingOlder: false,
+        gapMarkers: [],
       };
     }
     case "PREPEND_MESSAGES": {
@@ -200,10 +306,16 @@ export function reducer(state: AppState, action: Action): AppState {
       const fresh = action.data.filter((m) => !existingIds.has(m.id));
       const merged = [...fresh, ...state.messages].sort((a, b) => a.date.getTime() - b.date.getTime());
       const shift = fresh.length;
+      const shiftedCursor = state.selectedMsgIdx >= 0 ? state.selectedMsgIdx + shift : state.selectedMsgIdx;
+
+      // Apply bounded-window eviction if we've grown past the cap
+      const bounded = boundMessagesIfNeeded(merged, shiftedCursor, state.gapMarkers);
+
       return {
         ...state,
-        messages: merged,
-        selectedMsgIdx: state.selectedMsgIdx >= 0 ? state.selectedMsgIdx + shift : state.selectedMsgIdx,
+        messages: bounded.messages,
+        selectedMsgIdx: bounded.selectedMsgIdx,
+        gapMarkers: bounded.gapMarkers,
         messageOldestLoadedId: action.oldestId,
         messageLoadingOlder: false,
       };

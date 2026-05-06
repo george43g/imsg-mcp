@@ -654,6 +654,7 @@ export function App() {
           scrollOffset={state.threadScroll}
           selectedMsgIdx={state.selectedMsgIdx}
           selectionAnchor={state.selectionAnchor}
+          gapMarkers={state.gapMarkers}
           focused={state.focus === "thread"}
           width={threadWidth}
           height={bodyHeight}

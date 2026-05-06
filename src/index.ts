@@ -14,7 +14,9 @@ import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { IMessageDB } from "./imessage-db.js";
 import { appendLog, getFileLogLines, getLastSendError, getLogDirectory, getLogFilePath, getLogs, info, logShutdown, logStartup, perf, startHeapMonitor, stopHeapMonitor } from "./logger.js";
 import { enableOrphanWatchdog, enableStdinEofDetection, installShutdownHandlers, registerCleanup, shutdown } from "./shutdown.js";
+import { streamExport } from "./exportStream.js";
 import { hasNativeModule } from "./native-bridge.js";
+import { parseUserDate } from "./tui/dateParse.js";
 import { installWatchdog, noteActivity, readWatchdogState } from "./watchdog.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import type { Message } from "./types.js";
@@ -40,6 +42,17 @@ const GetMessagesSchema = z.object({
   limit: z.number().int().min(0).default(20).describe("Number of messages to retrieve. 0 = unlimited (bounded only by tool timeout). Default 20."),
   chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID to filter by"),
   threadSlug: z.string().optional().describe("Thread slug from list_conversations"),
+  beforeMessageId: z.number().int().positive().optional().describe("Pagination cursor. Pass the `oldestMessageId` from a previous response footer to fetch the next older page."),
+});
+
+const ExportMessagesSchema = z.object({
+  chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID"),
+  threadSlug: z.string().optional().describe("Thread slug from list_conversations"),
+  format: z.enum(["markdown", "csv", "json", "ndjson"]).default("markdown").describe("Output format"),
+  outputPath: z.string().describe("Absolute path. Parent directory must exist; file will be created/overwritten."),
+  since: z.string().optional().describe("Earliest date (ISO YYYY-MM-DD or relative like '1 year ago'). Default: no lower bound."),
+  until: z.string().optional().describe("Latest date (ISO or relative). Default: now."),
+  pageSize: z.number().int().min(100).max(5000).default(1000).describe("Internal page size for streaming. Higher uses more memory; lower means more SQL round-trips."),
 });
 
 const GetUnreadMessagesSchema = z.object({
@@ -114,6 +127,8 @@ const TOOL_TIMEOUTS_MS: Record<string, number> = {
   send_message: 60_000,
   // Health/status tools should be near-instant — short ceiling
   health_check: 5_000,
+  // Export streams to disk in pages — give it generous headroom for very long histories
+  export_messages: 600_000,
   get_logs: 10_000,
   get_last_send_error: 5_000,
   request_restart: 5_000,
@@ -151,7 +166,7 @@ function withTimeout<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
 const TOOLS = [
   {
     name: "get_messages",
-    description: "Get recent iMessages. Can optionally filter by a specific conversation.",
+    description: "Get recent iMessages. Can optionally filter by a specific conversation. Response footer includes `oldestMessageId` for pagination — pass that as `beforeMessageId` in the next call to fetch older history. For very large histories prefer `export_messages`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -168,6 +183,27 @@ const TOOLS = [
           type: "string",
           description: "Thread slug from list_conversations",
         },
+        beforeMessageId: {
+          type: "number",
+          description: "Pagination cursor: pass `oldestMessageId` from a previous response to fetch the next older page.",
+        },
+      },
+    },
+  },
+  {
+    name: "export_messages",
+    description: "Export an entire conversation (or a date range) to a file. Streams from the DB in pages so it never loads the whole history into memory — use this instead of `get_messages` with a huge limit. Formats: markdown (default), csv, json (single document), ndjson (line-delimited, ideal for streaming/append).",
+    inputSchema: {
+      type: "object",
+      required: ["outputPath"],
+      properties: {
+        chatIdentifier: { type: "string", description: "Phone number, email, or chat ID" },
+        threadSlug: { type: "string", description: "Thread slug from list_conversations" },
+        format: { type: "string", enum: ["markdown", "csv", "json", "ndjson"], default: "markdown" },
+        outputPath: { type: "string", description: "Absolute path. Parent directory must exist; file will be created/overwritten." },
+        since: { type: "string", description: "Earliest date (ISO YYYY-MM-DD or relative like '1 year ago')." },
+        until: { type: "string", description: "Latest date." },
+        pageSize: { type: "number", default: 1000, description: "Internal page size (100-5000). Higher = more memory, fewer SQL round-trips." },
       },
     },
   },
@@ -469,6 +505,8 @@ class IMessageMCPServer {
         return await this.handleRequestRestart();
       case "health_check":
         return await this.handleHealthCheck();
+      case "export_messages":
+        return await this.handleExportMessages(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -606,8 +644,12 @@ class IMessageMCPServer {
   private async handleGetMessages(args: unknown) {
     const span = perf("tool:get_messages");
     const parsed = GetMessagesSchema.parse(args);
-    const { chatIdentifier, threadSlug } = parsed;
-    const limit = resolveLimit(parsed.limit);
+    const { chatIdentifier, threadSlug, beforeMessageId } = parsed;
+    // Internal cap to prevent OOM regardless of caller's request.
+    const HARD_PAGE_CAP = 5000;
+    const requested = resolveLimit(parsed.limit);
+    const limit = Math.min(requested, HARD_PAGE_CAP);
+    const wasCapped = requested > HARD_PAGE_CAP;
 
     let messages: Message[];
     let threadHeader = "";
@@ -624,7 +666,7 @@ class IMessageMCPServer {
         targetIdentifier = slugRecord.chatIdentifier;
       }
 
-      messages = await this.db.getMessagesForChat(targetIdentifier!, limit);
+      messages = await this.db.getMessagesForChat(targetIdentifier!, limit, { beforeMessageId });
       const conv = await this.db.findChatByHandle(targetIdentifier!);
       if (conv) {
         const name = conv.displayName || conv.rawIdentifier;
@@ -645,12 +687,72 @@ class IMessageMCPServer {
     }
 
     const formatted = messages.map((m) => formatMessage(m)).join("\n");
-    const perfLine = `\n\n_Engine: TS | Query: ${durMs.toFixed(0)}ms | Messages: ${messages.length}_`;
+    const oldestId = Math.min(...messages.map((m) => m.id));
+    const hasMore = messages.length === limit; // heuristic — full page suggests more
+    const paginationLine = (chatIdentifier || threadSlug)
+      ? `\n_Pagination: oldestMessageId=${oldestId}, hasMore=${hasMore}${wasCapped ? ` (capped at ${HARD_PAGE_CAP} per call — use beforeMessageId or export_messages)` : ""}_`
+      : "";
+    const perfLine = `\n_Engine: TS | Query: ${durMs.toFixed(0)}ms | Messages: ${messages.length}_`;
     return {
       content: [
         {
           type: "text",
-          text: `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${perfLine}`,
+          text: `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${paginationLine}${perfLine}`,
+        },
+      ],
+    };
+  }
+
+  private async handleExportMessages(args: unknown) {
+    const span = perf("tool:export_messages");
+    const parsed = ExportMessagesSchema.parse(args);
+    const { format, outputPath, since, until, pageSize } = parsed;
+
+    // Resolve target chat
+    let chatIdentifier = parsed.chatIdentifier;
+    if (parsed.threadSlug) {
+      const slugRecord = this.db.getSlugRecord(parsed.threadSlug);
+      if (!slugRecord) {
+        return { content: [{ type: "text", text: `Unknown thread slug: ${parsed.threadSlug}` }], isError: true };
+      }
+      chatIdentifier = slugRecord.chatIdentifier;
+    }
+    if (!chatIdentifier) {
+      return { content: [{ type: "text", text: "chatIdentifier or threadSlug required" }], isError: true };
+    }
+
+    // Parse date bounds (reuse the same parser the TUI uses)
+    const sinceDate = since ? parseUserDate(since) : null;
+    const untilDate = until ? parseUserDate(until) : null;
+    if (since && !sinceDate) {
+      return { content: [{ type: "text", text: `Could not parse 'since': ${since}` }], isError: true };
+    }
+    if (until && !untilDate) {
+      return { content: [{ type: "text", text: `Could not parse 'until': ${until}` }], isError: true };
+    }
+
+    const result = await streamExport({
+      db: this.db,
+      chatIdentifier,
+      format,
+      outputPath,
+      since: sinceDate,
+      until: untilDate,
+      pageSize,
+    });
+    const durMs = span.end({ format, count: result.count, sizeBytes: result.sizeBytes });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: [
+            `Exported ${result.count} message(s) to ${result.savedTo}`,
+            `Format: ${format}`,
+            `Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
+            `Size: ${(result.sizeBytes / 1024).toFixed(1)} KB`,
+            `_Took ${durMs.toFixed(0)}ms_`,
+          ].join("\n"),
         },
       ],
     };
