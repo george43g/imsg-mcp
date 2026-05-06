@@ -3,6 +3,7 @@ import { sendMessageAlt, sendToChat, sendToChatId } from "../../applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../../config.js";
 import { IMessageDB } from "../../imessage-db.js";
 import type { Conversation, Message } from "../../types.js";
+import { getCached, isFresh, prependCached, setCached } from "../messageCache.js";
 
 export function useImsg() {
   const dbRef = useRef<IMessageDB | null>(null);
@@ -14,13 +15,33 @@ export function useImsg() {
     return dbRef.current;
   }, []);
 
-  const loadConversations = useCallback(async (): Promise<Conversation[]> => {
-    return getDb().listConversations(200);
+  const loadConversations = useCallback(async (limit = 200): Promise<Conversation[]> => {
+    return getDb().listConversations(limit);
   }, [getDb]);
 
   const loadMessages = useCallback(async (chatIdentifier: string): Promise<Message[]> => {
-    return getDb().getMessagesForChat(chatIdentifier, 200, { includeReactionDetails: true });
+    // Read-through cache: return fresh entries directly without hitting the DB.
+    const cached = getCached(chatIdentifier);
+    if (cached && isFresh(cached)) return cached.messages;
+
+    const messages = await getDb().getMessagesForChat(chatIdentifier, 200, { includeReactionDetails: true });
+    const oldestId = messages.length > 0 ? Math.min(...messages.map((m) => m.id)) : 0;
+    setCached(chatIdentifier, messages, oldestId);
+    return messages;
   }, [getDb]);
+
+  const loadOlderMessages = useCallback(
+    async (chatIdentifier: string, beforeMessageId: number): Promise<Message[]> => {
+      const older = await getDb().getMessagesForChat(chatIdentifier, 100, {
+        includeReactionDetails: true,
+        beforeMessageId,
+      });
+      // Merge into cache so subsequent re-entries see the full loaded history.
+      if (older.length > 0) prependCached(chatIdentifier, older);
+      return older;
+    },
+    [getDb],
+  );
 
   const resolveNames = useCallback((handles: string[]): string[] => {
     return getDb().resolveParticipantNames(handles);
@@ -50,5 +71,5 @@ export function useImsg() {
     }
   }, []);
 
-  return { loadConversations, loadMessages, resolveNames, send, refresh, close };
+  return { loadConversations, loadMessages, loadOlderMessages, resolveNames, send, refresh, close };
 }

@@ -75,6 +75,12 @@ All thresholds are env-overridable (`IMSG_EVENT_LOOP_KILL_MS`, `IMSG_MAX_RSS_MB`
 
 The server honors `notifications/cancelled`. Long-running handlers (`wait_for_reply`) abort cleanly when the host cancels.
 
+## TUI lazy loading + cache
+
+- 200 conversations load initially; another 100 lazy-load when within 20 of the end.
+- Older messages lazy-load when scrolling within 10 of the top of a thread.
+- Per-chat cache holds messages for fast re-entry. Tunable: `IMSG_TUI_CACHE_TTL_MS`, `IMSG_TUI_CACHE_STALE_MS`, `IMSG_TUI_CACHE_MEM_PRESSURE_MB`.
+
 ## Debugging & Logs
 
 ### MCP tool: `health_check`

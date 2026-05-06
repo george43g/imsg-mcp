@@ -117,6 +117,13 @@ Logs surface as `level: "warn"` or `level: "error"` with `msg: "event_loop_lag" 
 ### MCP cancellation
 
 The server honors `notifications/cancelled` per the MCP spec. The SDK wires per-request `AbortSignal`s automatically; long-running handlers (`wait_for_reply`) check `signal.aborted` between iterations and return `isError: true` with a "Cancelled by client" message.
+
+### TUI lazy-loading + smart cache
+
+- **Conversations**: 200 load at startup; another 100 lazy-load when the cursor or scroll comes within 20 of the loaded end. Triggered transparently in `App.tsx`.
+- **Older messages**: pressing `gg` or scrolling within 10 of the start of a thread fires `loadOlderMessages` with `beforeMessageId` set to the current oldest. New messages prepend; cursor index is shifted to stay on the same logical message.
+- **Cache** (`src/tui/messageCache.ts`): keyed by `chatIdentifier`. Re-entering a chat within `IMSG_TUI_CACHE_STALE_MS` (default 30s) hits cache; older entries refresh from DB. TTL sweep drops entries past `IMSG_TUI_CACHE_TTL_MS` (default 10 min). Memory pressure (heap > `IMSG_TUI_CACHE_MEM_PRESSURE_MB`, default 200MB) evicts the LRU half.
+- The cache subscribes to the watchdog's existing 60s memory sample via `onMemorySample()` — no new sampler.
 - **Orphan detection**: Parent PID watchdog (detects reparenting to launchd = orphaned process) + stdin EOF detection (MCP host died → pipe closed).
 - **After crashes**: Always check `ps aux | grep imsg` for orphaned processes.
 

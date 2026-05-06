@@ -3,6 +3,7 @@ import { withFullScreen } from "fullscreen-ink";
 import { checkLocalAccess, formatAccessReport } from "../access-check.js";
 import { enableOrphanWatchdog, installShutdownHandlers, registerCleanup, shutdown } from "../shutdown.js";
 import { installWatchdog } from "../watchdog.js";
+import { clearCache, installCacheSweepers, stopCacheSweepers } from "./messageCache.js";
 import { App } from "./App.js";
 
 export async function runTui(): Promise<void> {
@@ -20,6 +21,12 @@ export async function runTui(): Promise<void> {
   installShutdownHandlers();
   enableOrphanWatchdog();
   installWatchdog();
+  installCacheSweepers();
+
+  registerCleanup(() => {
+    stopCacheSweepers();
+    clearCache();
+  });
 
   const screen = withFullScreen(<App />);
 

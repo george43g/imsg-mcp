@@ -91,6 +91,22 @@ export function readWatchdogState(): Readonly<WatchdogState> {
   return state;
 }
 
+// ── Memory-pressure subscriber API ───────────────────────────────────────
+type MemorySampleCallback = (rssMb: number, heapMb: number) => void;
+const memSampleSubscribers = new Set<MemorySampleCallback>();
+
+/**
+ * Subscribe to the watchdog's existing 60s memory sample.
+ * Returns an unsubscribe function. Used by the TUI message cache to evict
+ * entries under heap pressure without spinning up its own sampler.
+ */
+export function onMemorySample(cb: MemorySampleCallback): () => void {
+  memSampleSubscribers.add(cb);
+  return () => {
+    memSampleSubscribers.delete(cb);
+  };
+}
+
 /** Install all three monitors. Idempotent — safe to call multiple times. */
 export function installWatchdog(): void {
   if (installed) return;
@@ -125,6 +141,15 @@ export function installWatchdog(): void {
     const heapMb = round1(mu.heapUsed / 1024 / 1024);
     state.rssMb = rssMb;
     state.heapMb = heapMb;
+
+    // Notify subscribers (e.g. TUI message cache) so they can evict on pressure
+    for (const cb of memSampleSubscribers) {
+      try {
+        cb(rssMb, heapMb);
+      } catch {
+        // Subscriber failures must not crash the watchdog
+      }
+    }
 
     // Track heap history for monotonic growth detection
     state.heapHistory.push(heapMb);
