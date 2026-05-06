@@ -97,7 +97,29 @@ fn normalize_candidate(text: &str) -> Option<String> {
     if is_metadata(&cleaned) {
         return None;
     }
-    Some(cleaned)
+
+    // Strip doubled-uppercase-letter prefix: "HHeres" -> "Heres".
+    // This pattern is almost always a typedstream length-byte leak — Apple
+    // stores the length byte as a single ASCII char immediately before the
+    // content, and when the length-byte char happens to match the content's
+    // first letter (e.g. message of length 72 = 'H', starting with "Heres"),
+    // our heuristic byte-scan picks them up as one continuous run.
+    let stripped = strip_doubled_letter_prefix(&cleaned);
+    Some(stripped)
+}
+
+/// If `text` starts with `[A-Z]\1[a-z]`, drop the first char.
+/// Example: "HHeres the question" -> "Heres the question".
+fn strip_doubled_letter_prefix(text: &str) -> String {
+    let bytes = text.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_uppercase()
+        && bytes[0] == bytes[1]
+        && bytes[2].is_ascii_lowercase()
+    {
+        return text[1..].to_string();
+    }
+    text.to_string()
 }
 
 /// Extract readable text from an attributedBody BLOB.
@@ -192,5 +214,39 @@ mod tests {
     #[test]
     fn test_extract_text_empty_input() {
         assert!(extract_text(&[]).is_none());
+    }
+
+    /// Doubled-letter prefix from typedstream length-byte must be stripped.
+    /// "HHeres the question..." was a real bug from a 72-char msg starting with H.
+    #[test]
+    fn test_strip_doubled_letter_prefix() {
+        assert_eq!(strip_doubled_letter_prefix("HHeres the question"), "Heres the question");
+        assert_eq!(strip_doubled_letter_prefix("WWhat happened"), "What happened");
+        assert_eq!(strip_doubled_letter_prefix("OOkay"), "Okay");
+        // Should NOT strip when not a doubled-uppercase-then-lowercase pattern
+        assert_eq!(strip_doubled_letter_prefix("Hello"), "Hello");
+        assert_eq!(strip_doubled_letter_prefix("HH"), "HH"); // too short, no lowercase after
+        assert_eq!(strip_doubled_letter_prefix("HHH"), "HHH"); // third is uppercase
+        assert_eq!(strip_doubled_letter_prefix("hi"), "hi");
+        assert_eq!(strip_doubled_letter_prefix(""), "");
+    }
+
+    /// Synthetic blob with embedded "HHeres" pattern should produce the
+    /// de-doubled "Heres" via normalize_candidate's prefix strip.
+    #[test]
+    fn test_extract_text_strips_doubled_letter_prefix() {
+        // Build a blob whose embedded printable run looks like a length-byte
+        // leak: control byte + "HHeres the question tho" (the doubled H simulates
+        // length byte 0x48 followed by "Heres...").
+        let mut blob = b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@".to_vec();
+        blob.extend_from_slice(b"\x00HHeres the question tho if i go thrre\x00");
+        let result = extract_text(&blob);
+        assert!(result.is_some());
+        let text = result.unwrap();
+        assert!(
+            text.starts_with("Heres"),
+            "expected 'Heres...', got: {text:?}"
+        );
+        assert!(!text.starts_with("HHeres"));
     }
 }
