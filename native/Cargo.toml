@@ -1,0 +1,37 @@
+[package]
+name = "imsg-native"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Native acceleration for imsg-mcp — SQLite queries and binary blob parsing"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# N-API bindings
+napi = { version = "3", features = ["async", "napi9", "tokio_rt"] }
+napi-derive = "3"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+
+# SQLite (single connection per call — no pool needed for read-only access)
+rusqlite = { version = "0.34", features = ["bundled"] }
+
+# Binary parsing (for Apple typedstream / attributedBody blobs)
+binrw = "0.14"
+
+# Parallelism
+rayon = "1.10"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+strip = "symbols"
+codegen-units = 1
+opt-level = 3
