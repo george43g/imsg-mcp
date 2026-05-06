@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { LocalMcpClient } from "./mcp-client.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
+import { installShutdownHandlers, registerCleanup } from "./shutdown.js";
 
 // ── Colour helpers ─────────────────────────────────────────────────────
 
@@ -189,9 +190,8 @@ async function runInteractiveConsole(): Promise<void> {
 
   prompt();
 
-  const shutdown = () => { client.close(); process.exit(0); };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  installShutdownHandlers();
+  registerCleanup(() => client.close());
 }
 
 // ── CLI program (Commander) ────────────────────────────────────────────

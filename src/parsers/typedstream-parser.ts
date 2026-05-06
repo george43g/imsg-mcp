@@ -4,6 +4,8 @@
  *
  * This handles the binary `attributedBody` column in the iMessage database,
  * which stores NSAttributedString data serialised via NSArchiver (typedstream format).
+ *
+ * SAFETY: All loops have iteration guards to prevent infinite loops on malformed blobs.
  */
 import { BufferReader } from "./buffer-reader.js";
 
@@ -50,11 +52,21 @@ export class TypedStreamParser {
     const strings: NSStringData[] = [];
     this.parseHeader();
 
-    while (this.reader.remaining > 0) {
+    const maxIter = this.reader.length;
+    let iter = 0;
+    while (this.reader.remaining > 0 && iter++ < maxIter) {
+      const posBefore = this.reader.position;
       const found = this.parseNSString();
       if (found) {
         strings.push(found);
       } else if (this.reader.remaining > 0) {
+        // If parseNSString didn't advance, skip ahead
+        if (this.reader.position <= posBefore) {
+          this.reader.skip(1);
+        }
+      }
+      // Stall detection: if position hasn't changed, force advance
+      if (this.reader.position <= posBefore && this.reader.remaining > 0) {
         this.reader.skip(1);
       }
     }
@@ -69,25 +81,62 @@ export class TypedStreamParser {
     let current = "";
     let inText = false;
 
-    while (this.reader.remaining > 0) {
+    const maxIter = this.reader.length;
+    let iter = 0;
+    while (this.reader.remaining > 0 && iter++ < maxIter) {
+      const posBefore = this.reader.position;
       const byte = this.reader.readUInt8();
 
       if ((byte >= 32 && byte <= 126) || byte === 9 || byte === 10 || byte === 13) {
+        // ASCII printable or whitespace
         current += String.fromCharCode(byte);
         inText = true;
-      } else if (byte >= 128 && byte <= 255) {
-        if (this.isValidUTF8Sequence(byte)) {
-          current += this.readUTF8Char(byte);
-          inText = true;
+      } else if (byte >= 0xc0 && byte <= 0xf7) {
+        // Potential UTF-8 multi-byte sequence start
+        const extraBytes = byte < 0xe0 ? 1 : byte < 0xf0 ? 2 : 3;
+        if (this.reader.remaining >= extraBytes) {
+          // Read continuation bytes
+          const bytes = [byte];
+          let valid = true;
+          for (let i = 0; i < extraBytes; i++) {
+            const cont = this.reader.readUInt8();
+            if ((cont & 0xc0) !== 0x80) {
+              valid = false;
+              break;
+            }
+            bytes.push(cont);
+          }
+          if (valid) {
+            try {
+              current += Buffer.from(bytes).toString("utf8");
+              inText = true;
+            } catch {
+              this.flushSegment(current, inText, texts);
+              current = "";
+              inText = false;
+            }
+          } else {
+            this.flushSegment(current, inText, texts);
+            current = "";
+            inText = false;
+          }
         } else {
+          // Not enough bytes for UTF-8 sequence
           this.flushSegment(current, inText, texts);
           current = "";
           inText = false;
         }
       } else {
+        // Control char or invalid byte
         this.flushSegment(current, inText, texts);
         current = "";
         inText = false;
+      }
+
+      // Stall detection: position must have advanced
+      if (this.reader.position <= posBefore) {
+        if (this.reader.remaining > 0) this.reader.skip(1);
+        else break;
       }
     }
 
@@ -103,7 +152,10 @@ export class TypedStreamParser {
     if (!magic || magic.toString("ascii") !== "streamtyped") return;
 
     this.reader.skip(11);
-    while (this.reader.remaining > 0) {
+    // Skip until we find an uppercase letter (class name start), with iteration guard
+    const maxSkip = Math.min(this.reader.remaining, 256);
+    let skipped = 0;
+    while (this.reader.remaining > 0 && skipped++ < maxSkip) {
       const next4 = this.reader.peekBytes(4);
       if (next4 && /^[A-Z]/.test(next4.toString("ascii"))) break;
       this.reader.skip(1);
@@ -113,7 +165,11 @@ export class TypedStreamParser {
 
   private parseNSString(): NSStringData | null {
     const pos = this.reader.findPattern("NSString");
-    if (pos === -1) return null;
+    if (pos === -1) {
+      // No more NSString patterns — skip to end to stop the loop
+      this.reader.seek(this.reader.length);
+      return null;
+    }
 
     this.reader.seek(pos + 8); // skip "NSString"
 
@@ -122,9 +178,11 @@ export class TypedStreamParser {
       this.reader.skip(5);
     }
 
+    if (this.reader.remaining < 1) return null;
     const lengthByte = this.reader.readUInt8();
     let length: number;
     if (lengthByte === 0x81) {
+      if (this.reader.remaining < 2) return null;
       length = this.reader.readUInt16LE();
     } else {
       length = lengthByte;
@@ -137,27 +195,6 @@ export class TypedStreamParser {
       content: this.reader.readString(length, "utf8"),
       encoding: "utf8",
     };
-  }
-
-  private isValidUTF8Sequence(firstByte: number): boolean {
-    this.reader.seek(this.reader.position - 1);
-    if ((firstByte & 0xe0) === 0xc0) return this.reader.remaining >= 2;
-    if ((firstByte & 0xf0) === 0xe0) return this.reader.remaining >= 3;
-    if ((firstByte & 0xf8) === 0xf0) return this.reader.remaining >= 4;
-    this.reader.skip(1);
-    return false;
-  }
-
-  private readUTF8Char(firstByte: number): string {
-    const bytes = [firstByte];
-    const extra =
-      (firstByte & 0xe0) === 0xc0 ? 1 : (firstByte & 0xf0) === 0xe0 ? 2 : (firstByte & 0xf8) === 0xf0 ? 3 : 0;
-    for (let i = 0; i < extra; i++) bytes.push(this.reader.readUInt8());
-    try {
-      return Buffer.from(bytes).toString("utf8");
-    } catch {
-      return "";
-    }
   }
 
   private flushSegment(text: string, inText: boolean, out: string[]): void {

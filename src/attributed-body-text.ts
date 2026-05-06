@@ -25,11 +25,12 @@ const METADATA_PATTERNS = [
 const CONTROL_OR_DEL_RE = new RegExp("[\\x00-\\x1F\\x7F]", "g");
 const CONTROL_SPLIT_RE = new RegExp("[\\x00-\\x1F\\x7F]+", "g");
 
+/** Max time (ms) to spend parsing a single attributedBody blob before giving up. */
+const PARSE_TIMEOUT_MS = 200;
+
 function normalizeCandidate(text: string): string | null {
   const normalized = text
     .replace(/^[+;:"'()&\s]+/, "")
-    // Strip single-byte typedstream artifacts: a non-letter/digit char (or single lowercase)
-    // followed immediately by an uppercase letter indicates a length/metadata byte leaked in.
     .replace(/^[^A-Za-z\d\s](?=[A-Z])/, "")
     .replace(/^[a-z\d](?=[A-Z])/, "")
     .replace(CONTROL_OR_DEL_RE, " ")
@@ -61,6 +62,7 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
 
   const parser = new TypedStreamParser(blob);
   const candidates = new Map<string, number>();
+  const deadline = Date.now() + PARSE_TIMEOUT_MS;
 
   const remember = (values: string[]) => {
     for (const value of values) {
@@ -70,19 +72,28 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
     }
   };
 
+  // Phase 1: structured NSString parsing (fastest, most reliable)
   try {
-    remember(parser.parseAllNSStrings().map((entry) => entry.content));
+    if (Date.now() < deadline) {
+      remember(parser.parseAllNSStrings().map((entry) => entry.content));
+    }
   } catch {
-    // Ignore parser failures and keep trying other extraction strategies.
+    // Ignore parser failures — continue with fallback strategies
   }
 
+  // Phase 2: heuristic text extraction (byte-by-byte scan)
   try {
-    remember(parser.extractReadableText());
+    if (Date.now() < deadline) {
+      remember(parser.extractReadableText());
+    }
   } catch {
-    // Ignore parser failures and keep trying other extraction strategies.
+    // Ignore parser failures — continue with fallback strategies
   }
 
-  remember(blob.toString("utf8").split(CONTROL_SPLIT_RE));
+  // Phase 3: raw UTF-8 split (always works, cheapest fallback)
+  if (Date.now() < deadline) {
+    remember(blob.toString("utf8").split(CONTROL_SPLIT_RE));
+  }
 
   const best = [...candidates.entries()].sort((a, b) => b[1] - a[1])[0];
   return best?.[0];

@@ -197,6 +197,38 @@ export function getLogDirectory(): string {
   return getLogDir();
 }
 
+/** Log a startup marker — call at process start. */
+export function logStartup(entrypoint: string): void {
+  info("startup", { pid: process.pid, ppid: process.ppid, entrypoint, node: process.version });
+}
+
+/** Log a shutdown marker — call before process exits. */
+export function logShutdown(reason: string): void {
+  info("shutdown", { pid: process.pid, reason, uptime_s: Math.round(process.uptime()) });
+}
+
+/**
+ * Read the latest NDJSON log file from disk (for external access).
+ * Returns the last N lines from the most recent log file.
+ */
+export function getFileLogLines(tail = 50): string[] {
+  try {
+    const { readdirSync, readFileSync } = require("node:fs") as typeof import("node:fs");
+    const dir = getLogDir();
+    const files = readdirSync(dir)
+      .filter((f: string) => f.endsWith(".ndjson"))
+      .sort()
+      .reverse();
+    if (files.length === 0) return [];
+
+    const content = readFileSync(join(dir, files[0]), "utf8");
+    const lines = content.trim().split("\n").filter(Boolean);
+    return tail > 0 ? lines.slice(-tail) : lines;
+  } catch {
+    return [];
+  }
+}
+
 // ── Heap monitor ───────────────────────────────────────────────────────
 
 const HEAP_WARN_MB = 150;

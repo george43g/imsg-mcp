@@ -1292,6 +1292,7 @@ export class IMessageDB {
    */
   async close(): Promise<void> {
     this.raw.close();
+    this.contacts.close();
     this.slugStore.close();
   }
 

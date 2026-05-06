@@ -17,6 +17,7 @@ export class LocalMcpClient {
   private requestId = 0;
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private outBuf = "";
+  private closed = false;
 
   constructor(private readonly onStderr?: (line: string) => void) {
     const entry = join(distRoot(), "index.js");
@@ -50,6 +51,15 @@ export class LocalMcpClient {
           // Ignore non-JSON lines on stdout.
         }
       }
+    });
+
+    // Handle unexpected child exit — reject all pending requests
+    this.proc.on("exit", (code) => {
+      if (this.closed) return;
+      for (const [, p] of this.pending) {
+        p.reject(new Error(`MCP child exited unexpectedly with code ${code}`));
+      }
+      this.pending.clear();
     });
   }
 
@@ -94,12 +104,37 @@ export class LocalMcpClient {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
+
+    // Close stdin to signal the child
     this.proc.stdin!.end();
-    this.proc.kill();
+
+    // Give child 2s to exit gracefully, then force kill
+    const killTimer = setTimeout(() => {
+      if (!this.proc.killed) {
+        this.proc.kill("SIGKILL");
+      }
+    }, 2000);
+    killTimer.unref();
+
+    this.proc.on("exit", () => clearTimeout(killTimer));
+    this.proc.kill("SIGTERM");
+
+    // Reject any remaining pending requests
+    for (const [, p] of this.pending) {
+      p.reject(new Error("MCP client closed"));
+    }
+    this.pending.clear();
   }
 
   private call(method: string, params: object, timeoutMs = 15_000): Promise<unknown> {
     return new Promise((resolve, reject) => {
+      if (this.closed) {
+        reject(new Error("MCP client is closed"));
+        return;
+      }
+
       const id = ++this.requestId;
       this.pending.set(id, { resolve, reject });
       this.proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
@@ -109,6 +144,7 @@ export class LocalMcpClient {
         this.pending.delete(id);
         reject(new Error(`Request timeout after ${timeoutMs}ms.`));
       }, timeoutMs);
+      timer.unref(); // Don't prevent process exit
 
       const original = this.pending.get(id);
       if (!original) return;

@@ -12,7 +12,8 @@ import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { checkMessagesAvailable, sendMessageAlt, sendToChat, sendToChatId } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { IMessageDB } from "./imessage-db.js";
-import { appendLog, getLastSendError, getLogDirectory, getLogs, info, startHeapMonitor } from "./logger.js";
+import { appendLog, getFileLogLines, getLastSendError, getLogDirectory, getLogFilePath, getLogs, info, logShutdown, logStartup, perf, startHeapMonitor, stopHeapMonitor } from "./logger.js";
+import { enableOrphanWatchdog, enableStdinEofDetection, installShutdownHandlers, registerCleanup, shutdown } from "./shutdown.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import type { Message } from "./types.js";
 
@@ -69,7 +70,8 @@ const SearchMessagesSchema = z.object({
 });
 
 const GetLogsSchema = z.object({
-  tail: z.number().min(1).max(500).optional().describe("Return only last N lines (default: all)"),
+  tail: z.number().min(1).max(500).optional().describe("Return only last N lines (default: 50)"),
+  source: z.enum(["memory", "file", "all"]).optional().describe("Log source: memory, file, or all"),
 });
 
 const _RunBuildSchema = z.object({});
@@ -189,11 +191,12 @@ const TOOLS = [
   {
     name: "get_logs",
     description:
-      "Return in-memory debug log lines from this MCP server (errors and send failures are appended). Use to inspect why send_message failed.",
+      "Return debug log lines from this MCP server. Source: 'memory' (in-process buffer, default), 'file' (NDJSON log from $TMPDIR/imsg-mcp/), or 'all' (both). File logs persist across restarts and include perf spans, heartbeats, startup/shutdown markers. A log file missing a 'shutdown' entry indicates a crash or hang.",
     inputSchema: {
       type: "object",
       properties: {
-        tail: { type: "number", description: "Return only last N lines (default: all)" },
+        tail: { type: "number", description: "Return only last N lines (default: 50)" },
+        source: { type: "string", enum: ["memory", "file", "all"], description: "Log source (default: memory)" },
       },
     },
   },
@@ -357,10 +360,28 @@ class IMessageMCPServer {
   }
 
   private async handleGetLogs(args: unknown) {
-    const { tail } = GetLogsSchema.parse(args ?? {});
-    const lines = getLogs(tail);
-    const text = lines.length === 0 ? "No log lines yet." : lines.join("\n");
-    return { content: [{ type: "text", text }] };
+    const { tail, source } = GetLogsSchema.parse(args ?? {});
+    const n = tail ?? 50;
+    const sections: string[] = [];
+
+    if (source !== "file") {
+      const memLines = getLogs(n);
+      sections.push(`## In-Memory Logs (${memLines.length} lines)\n${memLines.length === 0 ? "No log lines yet." : memLines.join("\n")}`);
+    }
+
+    if (source === "file" || source === "all") {
+      const fileLines = getFileLogLines(n);
+      const logPath = getLogFilePath() ?? getLogDirectory();
+      sections.push(`## File Logs (${logPath})\n${fileLines.length === 0 ? "No file log entries." : fileLines.join("\n")}`);
+    }
+
+    if (source !== "file" && source !== "all") {
+      // Also show log file location for reference
+      const logPath = getLogFilePath() ?? getLogDirectory();
+      sections.push(`\n📁 Full NDJSON logs: ${logPath}`);
+    }
+
+    return { content: [{ type: "text", text: sections.join("\n\n") }] };
   }
 
   private async handleGetLastSendError() {
@@ -412,11 +433,12 @@ class IMessageMCPServer {
   private async handleRequestRestart(): Promise<any> {
     const msg =
       "Restart requested. Please restart the MCP server in your client (e.g. Cursor) to load new code.";
-    setImmediate(() => process.exit(0));
+    setImmediate(() => shutdown(0));
     return { content: [{ type: "text", text: msg }] };
   }
 
   private async handleGetMessages(args: unknown) {
+    const span = perf("tool:get_messages");
     const { limit, chatIdentifier, threadSlug } = GetMessagesSchema.parse(args);
 
     let messages: Message[];
@@ -446,6 +468,8 @@ class IMessageMCPServer {
       messages = await this.db.getRecentMessages(limit);
     }
 
+    const durMs = span.end({ limit, returned: messages.length });
+
     if (messages.length === 0) {
       return {
         content: [{ type: "text", text: `${threadHeader}No messages found.` }],
@@ -453,11 +477,12 @@ class IMessageMCPServer {
     }
 
     const formatted = messages.map((m) => formatMessage(m)).join("\n");
+    const perfLine = `\n\n_Engine: TS | Query: ${durMs.toFixed(0)}ms | Messages: ${messages.length}_`;
     return {
       content: [
         {
           type: "text",
-          text: `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}`,
+          text: `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${perfLine}`,
         },
       ],
     };
@@ -723,6 +748,15 @@ class IMessageMCPServer {
   }
 
   async run(): Promise<void> {
+    // Install process lifecycle handlers
+    installShutdownHandlers();
+    registerCleanup(() => logShutdown("normal"));
+    registerCleanup(() => stopHeapMonitor());
+    registerCleanup(() => this.db.close());
+    enableStdinEofDetection();
+    enableOrphanWatchdog();
+    logStartup("mcp-server");
+
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     info("iMessage MCP Server running on stdio");
@@ -765,11 +799,11 @@ async function main(): Promise<void> {
     const report = await checkLocalAccess();
     console.error("");
     console.error(formatAccessReport(report));
-    process.exit(1);
+    await shutdown(1);
   }
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+  await shutdown(1);
 });
