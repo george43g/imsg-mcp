@@ -25,12 +25,18 @@ export interface AppState {
   status: string;
   numBuffer: string; // for vim-style number prefix (e.g. "12j")
   showDevStats: boolean;
+
+  // Lazy-loading bookkeeping
+  conversationLoadedCount: number;     // how many we've requested from the DB so far
+  conversationLoadingMore: boolean;     // true while a "load more" fetch is in-flight
+  messageOldestLoadedId: number | null; // oldest message ROWID currently in `messages` (for "load older")
+  messageLoadingOlder: boolean;         // true while a "load older" fetch is in-flight
 }
 
 export type Action =
   | { type: "SET_CONVERSATIONS"; data: Conversation[] }
   | { type: "SET_MESSAGES"; data: Message[] }
-  | { type: "SELECT"; index: number }
+  | { type: "SELECT"; index: number; visibleCount?: number }
   | { type: "SELECT_MSG"; index: number }
   | { type: "MOVE_MSG"; delta: number }
   | { type: "FOCUS"; pane: FocusPane }
@@ -52,7 +58,10 @@ export type Action =
   | { type: "OPEN_DRAWER" }
   | { type: "CLOSE_DRAWER" }
   | { type: "SET_NUM_BUFFER"; value: string }
-  | { type: "TOGGLE_DEV_STATS" };
+  | { type: "TOGGLE_DEV_STATS" }
+  | { type: "APPEND_CONVERSATIONS"; data: Conversation[]; loadedCount: number }
+  | { type: "PREPEND_MESSAGES"; data: Message[]; oldestId: number }
+  | { type: "SET_LOADING_OLDER"; loading: boolean };
 
 export const initialState: AppState = {
   conversations: [],
@@ -70,6 +79,10 @@ export const initialState: AppState = {
   status: "Loading...",
   numBuffer: "",
   showDevStats: false,
+  conversationLoadedCount: 0,
+  conversationLoadingMore: false,
+  messageOldestLoadedId: null,
+  messageLoadingOlder: false,
 };
 
 /** Clamp message cursor and ensure it's visible by adjusting scroll */
@@ -80,20 +93,101 @@ function clampMsg(state: AppState, idx: number): Partial<AppState> {
   return { selectedMsgIdx: clamped };
 }
 
+/**
+ * Compute a `sidebarScroll` value that keeps `selectedIdx` inside the
+ * visible window. Adds a 2-row buffer at each edge so the user sees what's
+ * coming next when navigating with j/k. Pure function — used by reducer.
+ *
+ * @param selectedIdx the cursor's target index
+ * @param currentScroll the current sidebar scroll offset
+ * @param visibleCount how many items fit on-screen at once
+ * @param totalCount total items available (for clamping)
+ */
+export function ensureVisibleScroll(
+  selectedIdx: number,
+  currentScroll: number,
+  visibleCount: number,
+  totalCount: number,
+): number {
+  if (visibleCount <= 0 || totalCount <= 0) return 0;
+  const buffer = Math.min(2, Math.floor(visibleCount / 4));
+  // If cursor is above the visible window (with buffer), scroll up
+  if (selectedIdx < currentScroll + buffer) {
+    return Math.max(0, selectedIdx - buffer);
+  }
+  // If cursor is below the visible window (with buffer), scroll down
+  const lastVisible = currentScroll + visibleCount - 1;
+  if (selectedIdx > lastVisible - buffer) {
+    return Math.min(
+      Math.max(0, totalCount - visibleCount),
+      selectedIdx - visibleCount + 1 + buffer,
+    );
+  }
+  // Already visible — don't move
+  return Math.max(0, Math.min(currentScroll, Math.max(0, totalCount - visibleCount)));
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "SET_CONVERSATIONS":
-      return { ...state, conversations: action.data };
+      return {
+        ...state,
+        conversations: action.data,
+        conversationLoadedCount: action.data.length,
+        conversationLoadingMore: false,
+      };
+    case "APPEND_CONVERSATIONS": {
+      // Merge new entries by threadSlug (DB returns the same recent ones too)
+      const existing = new Set(state.conversations.map((c) => c.threadSlug));
+      const fresh = action.data.filter((c) => !existing.has(c.threadSlug));
+      return {
+        ...state,
+        conversations: [...state.conversations, ...fresh],
+        conversationLoadedCount: action.loadedCount,
+        conversationLoadingMore: false,
+      };
+    }
     case "SET_MESSAGES": {
       // Scroll to bottom: set cursor to last message
       const msgs = action.data;
       const lastIdx = Math.max(0, msgs.length - 1);
       // Set threadScroll high so the view shows the bottom
       const scrollToEnd = Math.max(0, msgs.length);
-      return { ...state, messages: msgs, pending: [], selectedMsgIdx: lastIdx, threadScroll: scrollToEnd };
+      const oldestId = msgs.length > 0 ? Math.min(...msgs.map((m) => m.id)) : null;
+      return {
+        ...state,
+        messages: msgs,
+        pending: [],
+        selectedMsgIdx: lastIdx,
+        threadScroll: scrollToEnd,
+        messageOldestLoadedId: oldestId,
+        messageLoadingOlder: false,
+      };
     }
-    case "SELECT":
-      return { ...state, selectedIdx: action.index };
+    case "PREPEND_MESSAGES": {
+      // Merge older messages at the start; dedup by id; preserve cursor on the
+      // same logical message by shifting selectedMsgIdx by the count added.
+      const existingIds = new Set(state.messages.map((m) => m.id));
+      const fresh = action.data.filter((m) => !existingIds.has(m.id));
+      const merged = [...fresh, ...state.messages].sort((a, b) => a.date.getTime() - b.date.getTime());
+      const shift = fresh.length;
+      return {
+        ...state,
+        messages: merged,
+        selectedMsgIdx: state.selectedMsgIdx >= 0 ? state.selectedMsgIdx + shift : state.selectedMsgIdx,
+        messageOldestLoadedId: action.oldestId,
+        messageLoadingOlder: false,
+      };
+    }
+    case "SET_LOADING_OLDER":
+      return { ...state, messageLoadingOlder: action.loading };
+    case "SELECT": {
+      const idx = Math.max(0, Math.min(action.index, Math.max(0, state.conversations.length - 1)));
+      const sidebarScroll = action.visibleCount
+        ? ensureVisibleScroll(idx, state.sidebarScroll, action.visibleCount, state.conversations.length)
+        : state.sidebarScroll;
+      return { ...state, selectedIdx: idx, sidebarScroll };
+    }
     case "SELECT_MSG": {
       const c = clampMsg(state, action.index);
       return { ...state, ...c };

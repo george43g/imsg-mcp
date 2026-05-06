@@ -31,6 +31,16 @@ export function App() {
   const threadWidth = Math.max(columns - sidebarWidth - drawerWidth - devStatsWidth, 20);
   const bodyHeight = rows - 2; // status + help
 
+  // Sidebar item layout: each item = 4 rows (name + snippet + slug + separator)
+  // Header row + filter row + borders subtract from available height.
+  // Mirror the calculation in Sidebar.tsx so SELECT dispatches include the
+  // right visible-count and the cursor stays on screen as the user navigates.
+  const SIDEBAR_ITEM_HEIGHT = 4;
+  const sidebarVisibleCount = Math.max(
+    Math.floor((bodyHeight - 1 - (state.filterQuery ? 1 : 0) - 2) / SIDEBAR_ITEM_HEIGHT),
+    1,
+  );
+
   const selected = state.conversations[state.selectedIdx];
   const totalUnread = state.conversations.reduce((s, c) => s + c.unreadCount, 0);
   const resolvedNames = selected ? imsg.resolveNames(selected.participants) : [];
@@ -57,13 +67,94 @@ export function App() {
       const prevSlug = selected?.threadSlug;
       if (prevSlug) {
         const idx = convs.findIndex((c) => c.threadSlug === prevSlug);
-        if (idx >= 0) dispatch({ type: "SELECT", index: idx });
+        if (idx >= 0) dispatch({ type: "SELECT", index: idx, visibleCount: sidebarVisibleCount });
       }
       await loadMessages(state.selectedIdx);
     }
     imsg.refresh();
     dispatch({ type: "SET_LOADING", loading: false, status: "" });
   }, [imsg, loadMessages, selected?.threadSlug, state.selectedIdx]);
+
+  // ── Lazy-load more conversations when user nears the end ──────────────
+  const NEAR_END_THRESHOLD = 20;
+  const CONV_BATCH_SIZE = 100;
+
+  const loadMoreConversations = useCallback(async () => {
+    if (state.conversationLoadingMore) return;
+    const targetCount = state.conversationLoadedCount + CONV_BATCH_SIZE;
+    dispatch({ type: "SET_STATUS", status: `Loading more conversations (${targetCount})...` });
+    const convs = await imsg.loadConversations(targetCount);
+    dispatch({ type: "APPEND_CONVERSATIONS", data: convs, loadedCount: targetCount });
+    dispatch({ type: "SET_STATUS", status: "" });
+  }, [imsg, state.conversationLoadingMore, state.conversationLoadedCount]);
+
+  // ── Lazy-load older messages when cursor nears the top ────────────────
+  const NEAR_TOP_THRESHOLD = 10;
+  const MSG_BATCH_SIZE = 100;
+
+  const loadOlderMessages = useCallback(async () => {
+    if (!selected) return;
+    if (state.messageLoadingOlder) return;
+    if (state.messageOldestLoadedId == null) return;
+    dispatch({ type: "SET_LOADING_OLDER", loading: true });
+    const olderMsgs = await imsg.loadOlderMessages(
+      selected.chatIdentifier,
+      state.messageOldestLoadedId,
+    );
+    if (olderMsgs.length === 0) {
+      // Chat history exhausted — keep flag clear, mark id at -1 sentinel so we
+      // don't keep retrying on every cursor move at the top.
+      dispatch({ type: "PREPEND_MESSAGES", data: [], oldestId: -1 });
+      return;
+    }
+    const newOldestId = Math.min(...olderMsgs.map((m) => m.id));
+    dispatch({ type: "PREPEND_MESSAGES", data: olderMsgs, oldestId: newOldestId });
+  }, [imsg, selected, state.messageLoadingOlder, state.messageOldestLoadedId]);
+
+  // Trigger when cursor approaches the start of the message list
+  useEffect(() => {
+    if (state.loading || state.messageLoadingOlder) return;
+    if (state.messages.length === 0) return;
+    if (state.messageOldestLoadedId === -1) return; // exhausted
+    if (state.selectedMsgIdx >= 0 && state.selectedMsgIdx < NEAR_TOP_THRESHOLD) {
+      loadOlderMessages();
+    }
+  }, [
+    state.selectedMsgIdx,
+    state.messages.length,
+    state.messageOldestLoadedId,
+    state.messageLoadingOlder,
+    state.loading,
+    loadOlderMessages,
+  ]);
+
+  // Trigger lazy-load when cursor or scroll is near the end of loaded items.
+  // Important: only fire when we've actually grown — DB returns N when N requested,
+  // so once `conversations.length === conversationLoadedCount` and we asked for
+  // 200, asking for 300 may yield no new entries (chat history exhausted).
+  useEffect(() => {
+    if (state.loading || state.conversationLoadingMore) return;
+    if (state.conversations.length === 0) return;
+    const cursorNearEnd =
+      state.selectedIdx >= state.conversations.length - NEAR_END_THRESHOLD;
+    const scrollNearEnd =
+      state.sidebarScroll + sidebarVisibleCount >= state.conversations.length - NEAR_END_THRESHOLD;
+    if (cursorNearEnd || scrollNearEnd) {
+      // Only ask for more if we haven't seen this chat-count plateau yet
+      if (state.conversationLoadedCount === state.conversations.length) {
+        loadMoreConversations();
+      }
+    }
+  }, [
+    state.selectedIdx,
+    state.sidebarScroll,
+    state.conversations.length,
+    state.conversationLoadedCount,
+    state.conversationLoadingMore,
+    state.loading,
+    sidebarVisibleCount,
+    loadMoreConversations,
+  ]);
 
   // Initial load + register cleanup
   useEffect(() => {
@@ -187,7 +278,7 @@ export function App() {
       if (input === "0" && !state.numBuffer) {
         // '0' alone: go to first item (like vim)
         if (state.focus === "sidebar") {
-          dispatch({ type: "SELECT", index: 0 });
+          dispatch({ type: "SELECT", index: 0, visibleCount: sidebarVisibleCount });
           loadMessages(0);
         } else {
           dispatch({ type: "SELECT_MSG", index: 0 });
@@ -253,7 +344,7 @@ export function App() {
       }
 
       if (next !== null && next !== state.selectedIdx) {
-        dispatch({ type: "SELECT", index: next });
+        dispatch({ type: "SELECT", index: next, visibleCount: sidebarVisibleCount });
         // Debounce message loading
         if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
         const target = next;
@@ -344,23 +435,26 @@ export function App() {
         dispatch({ type: "FOCUS", pane: "sidebar" });
         const convIdx = Math.floor((event.y - 2 + state.sidebarScroll * 3) / 3);
         if (convIdx >= 0 && convIdx < state.conversations.length) {
-          dispatch({ type: "SELECT", index: convIdx });
+          dispatch({ type: "SELECT", index: convIdx, visibleCount: sidebarVisibleCount });
           loadMessages(convIdx);
         }
       } else {
         dispatch({ type: "FOCUS", pane: "thread" });
       }
     } else if (event.type === "scroll-up") {
+      // Wheel delta: 1 line per event for fine-grained control. macOS / iTerm
+      // typically batch 2-3 wheel events per touchpad swipe so this still feels
+      // responsive in practice.
       if (event.x <= sidebarWidth) {
-        dispatch({ type: "SCROLL_SIDEBAR", delta: -3 });
+        dispatch({ type: "SCROLL_SIDEBAR", delta: -1 });
       } else {
-        dispatch({ type: "MOVE_MSG", delta: -3 });
+        dispatch({ type: "MOVE_MSG", delta: -1 });
       }
     } else if (event.type === "scroll-down") {
       if (event.x <= sidebarWidth) {
-        dispatch({ type: "SCROLL_SIDEBAR", delta: 3 });
+        dispatch({ type: "SCROLL_SIDEBAR", delta: 1 });
       } else {
-        dispatch({ type: "MOVE_MSG", delta: 3 });
+        dispatch({ type: "MOVE_MSG", delta: 1 });
       }
     }
   }, [sidebarWidth, state.sidebarScroll, state.conversations.length, loadMessages]);
