@@ -11,14 +11,10 @@ concurrency:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    runs-on: macos-latest
     steps:
-      - name: Checkout (with Git LFS)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -31,14 +27,26 @@ jobs:
           node-version: "24"
           cache: pnpm
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm build
+      - name: Generate synthetic fixtures
+        run: pnpm fixtures
 
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Test
+      - name: Build
+        run: pnpm build
+
+      - name: Test (TypeScript)
         run: pnpm test
+
+      - name: Test (Rust native)
+        run: cd native && cargo test --release
+
+      - name: Test (TS-only fallback path)
+        run: pnpm test:no-native
