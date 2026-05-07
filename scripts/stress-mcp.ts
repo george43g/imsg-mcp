@@ -190,9 +190,13 @@ async function main() {
   header("Discovery: pick the largest chat for export tests");
   const lc = await client.callTool("list_conversations", { limit: 100 });
   const lcText = lc.content?.[0]?.text ?? "";
-  // Pick a chat to test against — first non-empty one with a slug
-  const slugMatch = lcText.match(/\[([a-z0-9~-]+)\]/i);
-  const slug = slugMatch?.[1];
+  // Pick a 1-on-1 chat (slugs of the form name~service~hash). Group chats can
+  // have shape `chat1234` which isn't a real thread slug.
+  // Slugs look like `name~service~hash` (e.g. `15550000141~imsg~d790`,
+  // `rivergarciaexamplecom~imsg~1a68`). Group chats may render as bare
+  // `chat1234` — those aren't slug-looking, so skip them.
+  const slugMatches = [...lcText.matchAll(/\[([+\w-]+~[a-z]+~[a-f0-9]+)\]/gi)];
+  const slug = slugMatches[0]?.[1];
   if (!slug) {
     fail("Could not find a chat slug from list_conversations — fixture empty?");
     process.exit(1);
