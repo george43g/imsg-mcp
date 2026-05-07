@@ -45,10 +45,10 @@ That gives you:
 ### From source
 
 ```bash
-git clone https://github.com/yourusername/imsg-mcp.git
+git clone https://github.com/george43g/imsg-mcp.git
 cd imsg-mcp
-pnpm install
-pnpm build
+pnpm install        # also generates synthetic test fixtures + builds
+pnpm test           # 170+ tests should pass
 ```
 
 ## First run on a new machine
@@ -111,11 +111,11 @@ This starts the debug console and talks to the local MCP server under the hood.
 ```bash
 imsg-cli doctor
 imsg-cli conversations 20
-imsg-cli messages "+15555550103" 20
+imsg-cli messages "+15555550100" 20
 imsg-cli unread 100
 imsg-cli search "meeting" 20
-imsg-cli wait "+15555550103" 120
-imsg-cli send "+15555550103" "Hello"
+imsg-cli wait "+15555550100" 120
+imsg-cli send "+15555550100" "Hello"
 imsg-cli tools
 ```
 
@@ -133,13 +133,27 @@ or:
 imsg-cli --tui
 ```
 
-Key bindings:
+Vim-style keybindings:
 
-- `Tab` - switch between sidebar and thread panes
-- `Up` / `Down` or `j` / `k` - move selection or scroll the thread
-- `PageUp` / `PageDown` - scroll the thread faster
-- `r` - refresh conversations and messages
-- `q` - quit
+| Key | Action |
+|-----|--------|
+| `j` / `k` | move cursor down / up |
+| `#j` / `#k` | jump N rows (e.g. `12j`) |
+| `gg` / `G` | jump to top / bottom |
+| `Ctrl-d` / `Ctrl-u` | half-page down / up |
+| `{` / `}` | jump to previous / next sender group |
+| `Tab` | switch sidebar ↔ messages pane |
+| `Enter` | open message detail drawer |
+| `o` | open attachment (image → system viewer; video → mpv) |
+| `:` | open date-jump modal (e.g. `2024-03-15`, `1 year ago`) |
+| `V` | enter visual selection mode |
+| `e` (in select) | open export modal (Markdown / CSV / JSON) |
+| `y` | copy thread slug, or selected text in select mode |
+| `/` | filter conversations |
+| `c` | compose message |
+| `d` | toggle dev stats panel (engine, CPU, mem, lag, query time) |
+| `r` | refresh |
+| `q` | quit |
 
 ## MCP server usage
 
@@ -173,14 +187,33 @@ The server logs to stderr and speaks MCP over stdio on stdout.
 
 ## MCP tools
 
-- `get_messages`
-- `get_unread_messages`
-- `send_message`
-- `wait_for_reply`
-- `list_conversations`
-- `search_messages`
-- `get_logs`
-- `get_last_send_error`
+| Tool | Purpose |
+|------|---------|
+| `get_messages` | Paginated messages from a chat (cursor via `beforeMessageId`). |
+| `get_unread_messages` | All unread messages across chats. |
+| `list_conversations` | Conversations with `threadSlug`, snippets, unread counts. |
+| `search_messages` | Full-text search across all messages. |
+| `send_message` | Send via Messages.app (requires Automation permission). |
+| `wait_for_reply` | Poll for new incoming messages. Honors `notifications/cancelled`. |
+| `export_messages` | **Stream** an entire conversation (or date range) to a file (markdown / csv / json / ndjson). Never loads the whole history into memory. |
+| `health_check` | Server vitals — uptime, heap, RSS, event-loop lag, tool counts. Returns instantly even when SQL is slow. |
+| `get_logs` | In-memory + on-disk NDJSON logs (`source: memory \| file \| all`). |
+| `get_last_send_error` | Detail on the most recent send failure. |
+| `request_restart` | Graceful exit so the host respawns the server. |
+| `run_build` | Run `pnpm build` (dev convenience). |
+
+### Pagination + bounded responses
+
+- `get_messages` returns up to 5000 messages per call (regardless of `limit: 0`). Response footer:
+  ```
+  _Pagination: oldestMessageId=12345, hasMore=true_
+  ```
+  Pass `oldestMessageId` as `beforeMessageId` for the next page.
+- For very large histories, use `export_messages` instead — it streams to disk and won't OOM.
+
+### Self-healing watchdog
+
+The server runs a watchdog that monitors event-loop lag, RSS / heap growth, and idle uptime. If anything goes wrong it self-kills so the MCP host respawns a clean instance — meaning a single bad query can't wedge your agent session.
 
 ### Thread slugs
 
@@ -235,15 +268,19 @@ pnpm lint
 
 ### Fixture data
 
-Bundled fixture databases under `env-data/` are stored with Git LFS.
-
-After cloning, run:
+Tests run against a **synthetic SQLite fixture** generated locally on `pnpm install`. No real iMessage data is committed — fixtures are built from a seeded RNG with lorem-ipsum content and phone numbers in the `+1-555-01xx` fictional reserved range.
 
 ```bash
-git lfs pull
+pnpm fixtures           # regenerate fixtures
+pnpm fixtures:fresh     # delete + regenerate
+pnpm test               # all tests run against fixtures by default
+pnpm stress             # MCP stress harness against fixtures
+pnpm stress:live        # stress harness against your real Mac data
 ```
 
-If fixture DBs are still LFS pointer files, tests and local AI mode will fail with SQLite errors.
+### Privacy
+
+This server reads only your local `~/Library/Messages/chat.db`. Nothing is uploaded anywhere. Whatever MCP host (Claude / Cursor / Warp / etc.) you connect this server to will see the contents of your messages — treat those hosts the same way you treat any app with Full Disk Access.
 
 ## Troubleshooting
 

@@ -74,5 +74,5 @@ export function getSlugsDbPath(): string {
 }
 
 export function getVcfPath(): string {
-  return resolveEnvPath(process.env.VITE_VCF_PATH, join(process.cwd(), "env-data", "contacts.vcf"));
+  return resolveEnvPath(process.env.VITE_VCF_PATH, join(process.cwd(), "fixtures", "contacts.vcf"));
 }

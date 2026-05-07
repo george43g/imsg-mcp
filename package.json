@@ -1,7 +1,7 @@
 {
   "name": "imsg-mcp",
   "version": "1.0.0",
-  "description": "MCP server for iMessage on macOS - enables AI agents to send/receive messages",
+  "description": "MCP server, CLI, and TUI for reading and sending iMessage / SMS on macOS — lets AI agents text humans, fetch conversation history, and stream-export entire chats. Includes a self-healing watchdog and an optional Rust acceleration module.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -11,7 +11,12 @@
   },
   "files": [
     "dist",
+    "native/imsg-native.*.node",
+    "native/index.js",
+    "native/index.d.ts",
     "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
     "skills"
   ],
   "scripts": {
@@ -44,19 +49,33 @@
     "test:rust": "cd native && cargo test --release",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
-    "prepare": "pnpm build",
+    "fixtures": "tsx scripts/generate-fixtures.ts",
+    "fixtures:fresh": "rm -rf fixtures && pnpm fixtures",
+    "prepare": "pnpm build && pnpm fixtures:if-missing",
+    "fixtures:if-missing": "node -e \"if(!require('fs').existsSync('fixtures/chat.db')){require('child_process').execSync('pnpm fixtures', {stdio:'inherit'})}\"",
     "rebuild": "pnpm rebuild better-sqlite3",
     "native:build": "cd native && napi build --platform --release",
     "native:build:debug": "cd native && napi build --platform",
-    "sync-env-data": "tsx scripts/sync-env-data.ts"
+    "stress": "tsx scripts/stress-mcp.ts .env.test",
+    "stress:live": "tsx scripts/stress-mcp.ts .env.local",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
     "imessage",
+    "messages",
     "sms",
     "macos",
     "ai-agent",
-    "applescript"
+    "ai",
+    "anthropic",
+    "claude",
+    "applescript",
+    "tui",
+    "terminal-ui",
+    "cli",
+    "chat-export"
   ],
   "author": "George G",
   "repository": {

@@ -1,19 +1,18 @@
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { getContactsDbPaths } from "../src/config.js";
+import { getContactsDbPaths, getVcfPath } from "../src/config.js";
 import { ContactsDB } from "../src/contacts-db.js";
 import { compareVcfEntriesToContacts, parseVcfFile } from "../src/vcf-contact-compare.js";
 import { isGitLfsPointer } from "./helpers.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const defaultVcf = join(root, "env-data", "contacts.vcf");
+const defaultVcf = getVcfPath();
 
 /** Same threshold as agreed handoff bar; fixture currently ~98% (see script output). */
 const MIN_MATCH_RATE = 0.8;
 
-describe("VCF vs Address Book (env-data fixture)", () => {
+describe("VCF vs Address Book (fixture)", () => {
   it("parseVcfFile reads at least one card", () => {
+    if (!existsSync(defaultVcf)) return; // fixture missing — skip gracefully
     const entries = parseVcfFile(defaultVcf);
     expect(entries.length).toBeGreaterThan(0);
   });
@@ -21,8 +20,8 @@ describe("VCF vs Address Book (env-data fixture)", () => {
   it("lookupHandle match rate meets minimum vs VCF FN strings", () => {
     const paths = getContactsDbPaths();
     const first = paths?.[0];
-    // No paths (e.g. missing .env.test) or Git LFS stub: skip assertion; CI with `git lfs pull` runs the full check.
-    if (!first || isGitLfsPointer(first)) {
+    // Skip gracefully if fixtures aren't generated yet, missing, or LFS stubs.
+    if (!first || isGitLfsPointer(first) || !existsSync(defaultVcf)) {
       return;
     }
 

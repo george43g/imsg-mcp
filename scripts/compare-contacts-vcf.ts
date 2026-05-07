@@ -84,13 +84,12 @@ function main() {
     }
   }
 
-  const aliceResolved = contacts.lookupHandle("+15555550109");
-  const aliceEmailResolved = contacts.lookupHandle("alex.example@example.com");
-  console.log("\nSpot check (from conversation context):");
-  console.log(`  +15555550109 => "${aliceResolved}" ${aliceResolved === "Alice" ? "(expected)" : ""}`);
-  console.log(
-    `  alex.example@example.com => "${aliceEmailResolved}" ${aliceEmailResolved !== "alex.example@example.com" ? "(resolved)" : "(not in Address Book)"}`,
-  );
+  // Spot check on a synthetic fixture handle. Replace with a real number/email
+  // when running against a live Mac Address Book.
+  const probeHandle = "+15555550100";
+  const probeResolved = contacts.lookupHandle(probeHandle);
+  console.log("\nSpot check:");
+  console.log(`  ${probeHandle} => "${probeResolved}"`);
 
   contacts.close();
 }

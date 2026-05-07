@@ -42,12 +42,12 @@ ${cyan("imsg-mcp debug console")} — send and receive messages, call tools
   Slugs look like: ${dim("alice~imsg~a3f2")} — use them anywhere a phone/chat is accepted.
 
 Examples:
-  send alice~imsg~a3f2 "Hey Alice!"
+  send alice~imsg~a3f2 "Hey there!"
   send +15555550100 "Test from debug console"
   messages alice~imsg~a3f2 10
   slugs 30
   thread alice~imsg~a3f2
-  contacts mona
+  contacts alice
   conversations 5
   wait alice~imsg~a3f2 120
 `.trim();

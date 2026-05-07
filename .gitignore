@@ -24,10 +24,23 @@ pnpm-debug.log*
 # Test coverage
 coverage/
 
-# Environment files
+# Environment files (machine-specific paths and secrets)
 .env
+.env.local
 .env*.local
-!.env.local
+.env.ai
+
+# Local dev configurations — user-specific paths
+.mcp.json
+.cursor/
+opencode.json
+.agents/
+
+# Generated synthetic test fixtures (regenerated via `pnpm fixtures`)
+fixtures/
+
+# Live (real, PII-bearing) snapshots — never commit, never ship
+env-data/
 
 # Temporary files
 *.tmp

@@ -114,8 +114,8 @@ mod tests {
 
     #[test]
     fn test_normalize_handle_phone() {
-        assert_eq!(normalize_handle("+1 555 555 0108"), "+15555550108");
-        assert_eq!(normalize_handle("+1 (415) 555-1234"), "+14155551234");
+        assert_eq!(normalize_handle("+1 (555) 555-0100"), "+15555550100");
+        assert_eq!(normalize_handle("+1-555-555-0142"), "+15555550142");
     }
 
     #[test]
