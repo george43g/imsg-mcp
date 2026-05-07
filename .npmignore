@@ -1,0 +1,55 @@
+# What to EXCLUDE from the npm tarball.
+# Anything not listed in package.json `files` is excluded by default; this
+# file is a positive list of "explicit overrides" — things that .gitignore
+# excludes (like the built native .node files) but we want shipped.
+#
+# (npm uses this in preference to .gitignore.)
+
+# Repo internals — never publish
+src/
+tests/
+scripts/
+fixtures/
+env-data/
+docs/
+.github/
+.agents/
+.cursor/
+.claude/
+node_modules/
+target/
+*.tgz
+
+# Dev configs
+.env*
+.mcp.json
+opencode.json
+.gitignore
+.gitattributes
+biome.json
+tsconfig.json
+vite.config.ts
+pnpm-workspace.yaml
+pnpm-lock.yaml
+nodemon.json
+
+# Markdown other than README/CHANGELOG/LICENSE
+AGENTS.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+skills.md
+
+# Native build internals — only the .node binaries + index.{js,d.ts} ship
+native/Cargo.toml
+native/Cargo.lock
+native/build.rs
+native/src/
+native/target/
+native/package.json
+native/.gitignore
+
+# OS junk
+.DS_Store
+*.swp
+*.swo

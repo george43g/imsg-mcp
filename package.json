@@ -11,7 +11,8 @@
   },
   "files": [
     "dist",
-    "native/imsg-native.*.node",
+    "native/imsg-native.darwin-arm64.node",
+    "native/imsg-native.darwin-x64.node",
     "native/index.js",
     "native/index.d.ts",
     "README.md",
