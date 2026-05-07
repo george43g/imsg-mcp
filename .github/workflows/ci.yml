@@ -56,3 +56,24 @@ jobs:
 
       - name: Verify npm tarball is publishable
         run: npm pack --dry-run
+
+      # ── e2e stress: 250k messages, 1200 chats, watchdog under load ──
+      # Generates a heavy synthetic fixture (top 5 chats × 20k messages,
+      # 1100 long-tail), then runs the headless TUI workload while
+      # externally sampling RSS / CPU / event-loop p99 lag once per second.
+      # Fails the job on threshold breach; emits ::warning on softer ones.
+      - name: Generate stress fixture (250k messages, 1200 chats)
+        run: pnpm fixtures:stress
+
+      - name: Stress test TUI / data path (60s)
+        env:
+          IMSG_STRESS_TUI_DURATION_S: "60"
+        run: pnpm stress:tui
+
+      - name: Upload stress report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-tui-report
+          path: stress-tui-report.json
+          if-no-files-found: warn

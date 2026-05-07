@@ -58,9 +58,13 @@ export const glyphs = {
   arrowLeft: "\uE0B2", //
   arrowLeftThin: "\uE0B3", //
 
-  /** Direction indicators for messages */
-  sent: "\uE0B0", //  (powerline arrow right = sent)
-  received: "\uE0B2", //  (powerline arrow left = received)
+  /** Direction indicators for messages.
+   * ASCII-safe / East-Asian fixed-width chars, NOT Powerline glyphs.
+   * Powerline arrows are private-use Unicode that many terminal fonts
+   * render at fractional cell width, which made vertical dividers in
+   * the thread pane drift left/right between rows. */
+  sent: "\u25B6", // sent (us -> them)
+  received: "\u25C0", // received (them -> us)
 
   /** Status indicators */
   unreadDot: "●",

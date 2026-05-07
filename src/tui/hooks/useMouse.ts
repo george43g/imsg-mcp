@@ -16,8 +16,11 @@ export function useMouse(onEvent: (event: MouseEvent) => void) {
   const { stdin, setRawMode } = useStdin();
 
   useEffect(() => {
-    // Enable all-mouse tracking + SGR extended protocol
-    process.stdout.write("\x1b[?1003h\x1b[?1006h");
+    // ?1000h = button-event tracking (press/release + scroll wheel only).
+    // Do NOT use ?1003h (any-event tracking) — it fires for every pixel of
+    // mouse motion, flooding stdin and pinning the event loop.
+    // ?1006h = SGR extended coordinates so x/y aren't capped at 223.
+    process.stdout.write("\x1b[?1000h\x1b[?1006h");
     setRawMode(true);
 
     const handler = (data: Buffer) => {
@@ -46,7 +49,7 @@ export function useMouse(onEvent: (event: MouseEvent) => void) {
     stdin.on("data", handler);
     return () => {
       stdin.off("data", handler);
-      process.stdout.write("\x1b[?1003l\x1b[?1006l");
+      process.stdout.write("\x1b[?1000l\x1b[?1006l");
     };
   }, [stdin, setRawMode, onEvent]);
 }

@@ -39,6 +39,12 @@ interface Config {
   replyRate: number; // 0..1 fraction of messages that are replies
   preamble95Rate: number; // 0..1 fraction of attributedBody using 0x95 variant
   groupParticipantRange: [number, number];
+  /** Number of top chats that get a fixed (large) message count, on top of
+   * the weighted distribution. Used to stress-test the TUI / MCP against a
+   * realistic "few hot threads + long tail" shape. 0 = uniform weighted. */
+  topHeavyChats: number;
+  /** Message count assigned to each topHeavyChats chat. */
+  messagesPerTopChat: number;
 }
 
 const defaultConfig: Config = {
@@ -52,6 +58,21 @@ const defaultConfig: Config = {
   replyRate: 0.05,
   preamble95Rate: 0.05,
   groupParticipantRange: [3, 6],
+  topHeavyChats: 0,
+  messagesPerTopChat: 0,
+};
+
+/** Heavy preset for stress / load testing — top 5 chats get 20k messages
+ * each (~100k), 1200 total chats with a long tail. ~250k messages total.
+ * numContacts must be >= numChats - numGroupChats since each 1-on-1 chat
+ * consumes one unique contact. */
+const stressConfig: Partial<Config> = {
+  numContacts: 1100,
+  numChats: 1200,
+  numGroupChats: 100,
+  totalMessages: 250_000,
+  topHeavyChats: 5,
+  messagesPerTopChat: 20_000,
 };
 
 // ── Seedable RNG (mulberry32) ─────────────────────────────────────────────
@@ -540,13 +561,16 @@ interface Contact {
 
 function generateContacts(rng: Rng, n: number): Contact[] {
   const contacts: Contact[] = [];
-  // Use the +1-555-01xx fictional reserved range. We have 100 numbers. If n>100,
-  // expand to 555-02xx etc but stay in the docs-fictional range 555-0100..0199.
+  // Use the +1-555-01xx fictional reserved range. The index `i` guarantees
+  // uniqueness for both phone and email regardless of the name-pool size, so
+  // the stress preset (n=1100) doesn't hit AddressBook UNIQUE-constraint
+  // collisions (50×50 first/last combinations would otherwise collide many
+  // times before reaching 1100 contacts).
   for (let i = 0; i < n; i++) {
     const first = rng.pick(FIRST_NAMES);
     const last = rng.pick(LAST_NAMES);
     const phone = `+1555${String(100 + i).padStart(7, "0")}`.slice(0, 12);
-    const email = `${first.toLowerCase()}.${last.toLowerCase()}@example.com`;
+    const email = `${first.toLowerCase()}.${last.toLowerCase()}.${i}@example.com`;
     contacts.push({ pk: i + 1, firstName: first, lastName: last, phone, email });
   }
   return contacts;
@@ -675,12 +699,28 @@ function makeChatDb(
   const TWO_YEARS_S = 2 * 365 * 86400;
   const recentMacNs = (ANCHOR_UNIX_S - MAC_EPOCH_OFFSET_S) * 1e9;
 
-  // Distribute messages across chats — weighted so some are bigger than others
-  const chatWeights = chats.map(() => rng.int(1, 20));
-  const totalWeight = chatWeights.reduce((a, b) => a + b, 0);
-  const messageCounts = chatWeights.map((w) =>
-    Math.max(1, Math.floor((w / totalWeight) * cfg.totalMessages)),
-  );
+  // Distribute messages across chats. If topHeavyChats > 0, the first N chats
+  // each receive `messagesPerTopChat` (a "few hot threads" shape) and the
+  // remainder is distributed across the rest by weighted random — long tail.
+  const messageCounts: number[] = new Array(chats.length).fill(0);
+  const topHeavy = Math.min(cfg.topHeavyChats, chats.length);
+  let messagesAssignedToTop = 0;
+  for (let i = 0; i < topHeavy; i++) {
+    messageCounts[i] = cfg.messagesPerTopChat;
+    messagesAssignedToTop += cfg.messagesPerTopChat;
+  }
+  const remainingMessages = Math.max(0, cfg.totalMessages - messagesAssignedToTop);
+  if (chats.length > topHeavy && remainingMessages > 0) {
+    const tailChats = chats.length - topHeavy;
+    const tailWeights = Array.from({ length: tailChats }, () => rng.int(1, 20));
+    const totalTailWeight = tailWeights.reduce((a, b) => a + b, 0);
+    for (let i = 0; i < tailChats; i++) {
+      messageCounts[topHeavy + i] = Math.max(
+        1,
+        Math.floor((tailWeights[i] / totalTailWeight) * remainingMessages),
+      );
+    }
+  }
 
   const messageGuidsByChat = new Map<number, string[]>();
 
@@ -797,12 +837,15 @@ function parseArgs(argv: string[]): Partial<Config> {
     const a = argv[i];
     if (a === "--out") out.outDir = argv[++i];
     else if (a === "--seed") out.seed = Number.parseInt(argv[++i], 10);
+    else if (a === "--stress") Object.assign(out, stressConfig);
   }
   return out;
 }
 
 function main(): void {
-  const cfg: Config = { ...defaultConfig, ...parseArgs(process.argv.slice(2)) };
+  // Env-var preset: IMSG_FIXTURE_PRESET=stress equivalent to --stress flag.
+  const envPreset = process.env.IMSG_FIXTURE_PRESET === "stress" ? stressConfig : {};
+  const cfg: Config = { ...defaultConfig, ...envPreset, ...parseArgs(process.argv.slice(2)) };
   const rng = new Rng(mulberry32(cfg.seed));
   const outDir = cfg.outDir;
   mkdirSync(outDir, { recursive: true });

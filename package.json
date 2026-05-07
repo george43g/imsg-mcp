@@ -53,6 +53,8 @@
     "typecheck": "tsc --noEmit",
     "fixtures": "tsx scripts/generate-fixtures.ts",
     "fixtures:fresh": "rm -rf fixtures && pnpm fixtures",
+    "fixtures:stress": "tsx scripts/generate-fixtures.ts --stress --out fixtures-stress",
+    "stress:tui": "tsx scripts/stress-tui.ts",
     "prepare": "pnpm build && pnpm fixtures:if-missing",
     "fixtures:if-missing": "node -e \"if(!require('fs').existsSync('fixtures/chat.db')){require('child_process').execSync('pnpm fixtures', {stdio:'inherit'})}\"",
     "rebuild": "pnpm rebuild better-sqlite3",

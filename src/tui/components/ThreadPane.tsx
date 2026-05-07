@@ -96,7 +96,11 @@ export function ThreadPane({
     }
 
     return { visibleStart: start, visibleEnd: end + 1 };
-  }, [messages.length, pending.length, selectedMsgIdx, msgAreaHeight, messages]);
+    // `messages` reference is preserved across non-messages reducer cases
+    // (see types.ts reducer), so depending on length is sufficient for the
+    // common fast path. Content-mutating actions (SET_MESSAGES /
+    // PREPEND_MESSAGES) replace the whole array, which also flips length.
+  }, [messages, pending.length, selectedMsgIdx, msgAreaHeight]);
 
   const visibleMessages = messages.slice(visibleStart, Math.min(visibleEnd, messages.length));
 

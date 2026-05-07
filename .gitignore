@@ -38,6 +38,7 @@ opencode.json
 
 # Generated synthetic test fixtures (regenerated via `pnpm fixtures`)
 fixtures/
+fixtures-stress/
 
 # Live (real, PII-bearing) snapshots — never commit, never ship
 env-data/
@@ -50,3 +51,6 @@ env-data/
 # npm pack output / semantic-release tarball staging
 *.tgz
 release/
+
+# Stress harness output (uploaded as a CI artefact, not committed)
+stress-tui-report.json

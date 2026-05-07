@@ -24,6 +24,7 @@
  * environment without rebuilding.
  */
 
+import { writeFileSync } from "node:fs";
 import { type IntervalHistogram, monitorEventLoopDelay } from "node:perf_hooks";
 import { error, info, warn } from "./logger.js";
 import { isShuttingDown, registerCleanup, shutdown } from "./shutdown.js";
@@ -40,6 +41,12 @@ function envNum(name: string, fallback: number): number {
 const EVENT_LOOP_SAMPLE_MS = envNum("IMSG_EVENT_LOOP_SAMPLE_MS", 5_000);
 const EVENT_LOOP_WARN_MS = envNum("IMSG_EVENT_LOOP_WARN_MS", 500);
 const EVENT_LOOP_KILL_MS = envNum("IMSG_EVENT_LOOP_KILL_MS", 10_000);
+// Sustained-lag detector: kill if p99 stays >= the sustained threshold for
+// SUSTAINED_SAMPLES consecutive samples. Catches scenarios where the spike
+// kill threshold (10s) is never crossed but the UI is sustained-unusable
+// (e.g. 800ms event-loop lag for several minutes from a render hot-loop).
+const EVENT_LOOP_SUSTAINED_MS = envNum("IMSG_EVENT_LOOP_SUSTAINED_MS", 750);
+const EVENT_LOOP_SUSTAINED_SAMPLES = envNum("IMSG_EVENT_LOOP_SUSTAINED_SAMPLES", 6);
 
 const MEMORY_SAMPLE_MS = envNum("IMSG_MEMORY_SAMPLE_MS", 60_000);
 const MAX_RSS_MB = envNum("IMSG_MAX_RSS_MB", 1024);
@@ -55,6 +62,8 @@ interface WatchdogState {
   startedAt: number;
   eventLoopP99Ms: number;
   eventLoopMaxMs: number;
+  /** Consecutive samples where p99 was >= EVENT_LOOP_SUSTAINED_MS. */
+  eventLoopSustainedCount: number;
   rssMb: number;
   heapMb: number;
   heapHistory: number[]; // recent heap samples for leak detection
@@ -66,6 +75,7 @@ const state: WatchdogState = {
   startedAt: Date.now(),
   eventLoopP99Ms: 0,
   eventLoopMaxMs: 0,
+  eventLoopSustainedCount: 0,
   rssMb: 0,
   heapMb: 0,
   heapHistory: [],
@@ -116,6 +126,8 @@ export function installWatchdog(): void {
   eventLoopHistogram = monitorEventLoopDelay({ resolution: 20 });
   eventLoopHistogram.enable();
 
+  const stateFilePath = process.env.IMSG_WATCHDOG_STATE_PATH ?? "";
+
   eventLoopTimer = setInterval(() => {
     if (!eventLoopHistogram || isShuttingDown()) return;
     // perf_hooks reports nanoseconds — convert to ms.
@@ -125,13 +137,61 @@ export function installWatchdog(): void {
     state.eventLoopMaxMs = maxMs;
     eventLoopHistogram.reset();
 
+    // External observer hook: write state to a JSON file each sample tick so
+    // a parent process (e.g. the CI stress harness) can read RSS / lag /
+    // sustained-lag-count without parsing logs. Best-effort; failures are
+    // silent so the watchdog never crashes the process it's supposed to
+    // protect.
+    if (stateFilePath) {
+      try {
+        writeFileSync(
+          stateFilePath,
+          JSON.stringify({
+            ts: Date.now(),
+            uptimeMs: Date.now() - state.startedAt,
+            eventLoopP99Ms: state.eventLoopP99Ms,
+            eventLoopMaxMs: state.eventLoopMaxMs,
+            eventLoopSustainedCount: state.eventLoopSustainedCount,
+            rssMb: state.rssMb,
+            heapMb: state.heapMb,
+            killReason: state.killReason,
+          }),
+        );
+      } catch {
+        // ignore — non-essential
+      }
+    }
+
+    // Single-spike kill: one sample crossing the spike threshold.
     if (p99Ms >= EVENT_LOOP_KILL_MS) {
       triggerKill("event_loop_blocked", {
         p99_ms: p99Ms,
         max_ms: maxMs,
         threshold_ms: EVENT_LOOP_KILL_MS,
       });
-    } else if (p99Ms >= EVENT_LOOP_WARN_MS) {
+      return;
+    }
+
+    // Sustained-lag kill: many consecutive samples above the sustained
+    // threshold. Catches a render-hot-loop pinning the UI without ever
+    // reaching the spike threshold.
+    if (p99Ms >= EVENT_LOOP_SUSTAINED_MS) {
+      state.eventLoopSustainedCount += 1;
+      if (state.eventLoopSustainedCount >= EVENT_LOOP_SUSTAINED_SAMPLES) {
+        triggerKill("event_loop_sustained_lag", {
+          p99_ms: p99Ms,
+          max_ms: maxMs,
+          consecutive_samples: state.eventLoopSustainedCount,
+          sample_interval_ms: EVENT_LOOP_SAMPLE_MS,
+          sustained_threshold_ms: EVENT_LOOP_SUSTAINED_MS,
+        });
+        return;
+      }
+    } else {
+      state.eventLoopSustainedCount = 0;
+    }
+
+    if (p99Ms >= EVENT_LOOP_WARN_MS) {
       warn("event_loop_lag", { p99_ms: p99Ms, max_ms: maxMs, threshold_ms: EVENT_LOOP_WARN_MS });
     }
   }, EVENT_LOOP_SAMPLE_MS);
@@ -202,6 +262,8 @@ export function installWatchdog(): void {
   info("watchdog_installed", {
     event_loop_warn_ms: EVENT_LOOP_WARN_MS,
     event_loop_kill_ms: EVENT_LOOP_KILL_MS,
+    event_loop_sustained_ms: EVENT_LOOP_SUSTAINED_MS,
+    event_loop_sustained_samples: EVENT_LOOP_SUSTAINED_SAMPLES,
     max_rss_mb: MAX_RSS_MB,
     memory_growth_samples: MEMORY_GROWTH_SAMPLES,
     idle_restart_after_ms: IDLE_RESTART_AFTER_MS,
