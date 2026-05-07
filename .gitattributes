@@ -1,2 +1,4 @@
-*.db filter=lfs diff=lfs merge=lfs -text
-*.abcddb filter=lfs diff=lfs merge=lfs -text
+# LFS attributes intentionally removed — all *.db / *.abcddb files in this
+# repo are synthetic fixtures generated locally on `pnpm install` (and
+# gitignored). Auto-LFS-tracking *.db would silently push 50MB+ of synthetic
+# fixture data to LFS storage on every accidental commit.
