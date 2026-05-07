@@ -3,7 +3,7 @@
  *
  * Pure module tests — no DB, no React. Each test resets state via clearCache.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   cacheStats,
   clearCache,

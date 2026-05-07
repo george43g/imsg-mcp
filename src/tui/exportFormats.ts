@@ -14,7 +14,10 @@ export interface ExportHeader {
 }
 
 function fmtDate(d: Date): string {
-  return d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+  return d
+    .toISOString()
+    .replace("T", " ")
+    .replace(/\.\d+Z$/, "");
 }
 
 function senderLabel(m: Message): string {
@@ -58,7 +61,7 @@ export function toMarkdown(messages: Message[], header: ExportHeader): string {
 
 /** CSV — for spreadsheet import. RFC 4180-ish quoting. */
 export function toCSV(messages: Message[]): string {
-  const escape = (v: string | null | undefined): string => {
+  const escapeCsv = (v: string | null | undefined): string => {
     if (v == null) return "";
     if (/[",\n\r]/.test(v)) {
       return `"${v.replace(/"/g, '""')}"`;
@@ -67,19 +70,21 @@ export function toCSV(messages: Message[]): string {
   };
 
   const lines: string[] = [];
-  lines.push("id,date,sender,handle,is_from_me,is_read,is_reply,reply_to_text,text,has_attachments");
+  lines.push(
+    "id,date,sender,handle,is_from_me,is_read,is_reply,reply_to_text,text,has_attachments",
+  );
 
   for (const m of messages) {
     const row = [
       String(m.id),
       m.date.toISOString(),
-      escape(senderLabel(m)),
-      escape(m.handle),
+      escapeCsv(senderLabel(m)),
+      escapeCsv(m.handle),
       m.isFromMe ? "1" : "0",
       m.isRead ? "1" : "0",
       m.isReply ? "1" : "0",
-      escape(m.replyTo?.replyToText ?? ""),
-      escape(m.text ?? ""),
+      escapeCsv(m.replyTo?.replyToText ?? ""),
+      escapeCsv(m.text ?? ""),
       m.hasAttachments ? "1" : "0",
     ];
     lines.push(row.join(","));

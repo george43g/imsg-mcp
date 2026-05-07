@@ -24,7 +24,7 @@
  * environment without rebuilding.
  */
 
-import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
+import { type IntervalHistogram, monitorEventLoopDelay } from "node:perf_hooks";
 import { error, info, warn } from "./logger.js";
 import { isShuttingDown, registerCleanup, shutdown } from "./shutdown.js";
 
@@ -126,7 +126,11 @@ export function installWatchdog(): void {
     eventLoopHistogram.reset();
 
     if (p99Ms >= EVENT_LOOP_KILL_MS) {
-      triggerKill("event_loop_blocked", { p99_ms: p99Ms, max_ms: maxMs, threshold_ms: EVENT_LOOP_KILL_MS });
+      triggerKill("event_loop_blocked", {
+        p99_ms: p99Ms,
+        max_ms: maxMs,
+        threshold_ms: EVENT_LOOP_KILL_MS,
+      });
     } else if (p99Ms >= EVENT_LOOP_WARN_MS) {
       warn("event_loop_lag", { p99_ms: p99Ms, max_ms: maxMs, threshold_ms: EVENT_LOOP_WARN_MS });
     }
@@ -162,7 +166,10 @@ export function installWatchdog(): void {
       return;
     }
 
-    if (state.heapHistory.length >= MEMORY_GROWTH_SAMPLES && isMonotonicallyGrowing(state.heapHistory)) {
+    if (
+      state.heapHistory.length >= MEMORY_GROWTH_SAMPLES &&
+      isMonotonicallyGrowing(state.heapHistory)
+    ) {
       triggerKill("memory_leak_suspected", {
         samples: state.heapHistory.slice(),
         sample_interval_ms: MEMORY_SAMPLE_MS,

@@ -2,13 +2,7 @@
  * Pin export formats so future refactors don't silently break round-trips.
  */
 import { describe, expect, it } from "vitest";
-import {
-  extensionFor,
-  toCSV,
-  toJSON,
-  toMarkdown,
-  toNDJSONLine,
-} from "../src/tui/exportFormats.js";
+import { extensionFor, toCSV, toJSON, toMarkdown, toNDJSONLine } from "../src/tui/exportFormats.js";
 import type { Message } from "../src/types.js";
 
 const baseMsg = (overrides: Partial<Message>): Message => ({
@@ -33,7 +27,11 @@ const baseMsg = (overrides: Partial<Message>): Message => ({
 });
 
 const FIXTURE: Message[] = [
-  baseMsg({ id: 1, text: "Hey, are you free tonight?", date: new Date("2024-03-15T10:30:00.000Z") }),
+  baseMsg({
+    id: 1,
+    text: "Hey, are you free tonight?",
+    date: new Date("2024-03-15T10:30:00.000Z"),
+  }),
   baseMsg({
     id: 2,
     text: "Yes — what time?",
@@ -59,7 +57,11 @@ const FIXTURE: Message[] = [
 
 describe("toMarkdown", () => {
   it("includes header with thread name and participants", () => {
-    const md = toMarkdown(FIXTURE, { thread: "Alice", participants: ["+1234567890"], serviceType: "iMessage" });
+    const md = toMarkdown(FIXTURE, {
+      thread: "Alice",
+      participants: ["+1234567890"],
+      serviceType: "iMessage",
+    });
     expect(md).toContain("# Alice");
     expect(md).toContain("**Participants**: +1234567890");
     expect(md).toContain("**Service**: iMessage");
@@ -87,7 +89,9 @@ describe("toCSV", () => {
   it("starts with the header row", () => {
     const csv = toCSV(FIXTURE);
     const firstLine = csv.split("\n")[0];
-    expect(firstLine).toBe("id,date,sender,handle,is_from_me,is_read,is_reply,reply_to_text,text,has_attachments");
+    expect(firstLine).toBe(
+      "id,date,sender,handle,is_from_me,is_read,is_reply,reply_to_text,text,has_attachments",
+    );
   });
 
   it("escapes commas and quotes in text", () => {
@@ -108,7 +112,13 @@ describe("toCSV", () => {
   });
 
   it("encodes booleans as 0 / 1", () => {
-    const m = baseMsg({ id: 7, isFromMe: true, isRead: false, isReply: true, hasAttachments: true });
+    const m = baseMsg({
+      id: 7,
+      isFromMe: true,
+      isRead: false,
+      isReply: true,
+      hasAttachments: true,
+    });
     const csv = toCSV([m]);
     const dataLine = csv.split("\n")[1];
     const fields = dataLine.split(",");
@@ -123,7 +133,10 @@ describe("toCSV", () => {
 describe("toJSON", () => {
   it("produces valid JSON that round-trips", () => {
     const out = toJSON(FIXTURE, { thread: "Alice" });
-    const parsed = JSON.parse(out) as { count: number; messages: Array<{ id: number; date: string }> };
+    const parsed = JSON.parse(out) as {
+      count: number;
+      messages: Array<{ id: number; date: string }>;
+    };
     expect(parsed.count).toBe(4);
     expect(parsed.messages).toHaveLength(4);
     expect(parsed.messages[0].id).toBe(1);

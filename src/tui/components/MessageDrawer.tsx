@@ -1,8 +1,7 @@
-import React from "react";
 import { Box, Text } from "ink";
 import type { Message } from "../../types.js";
-import { TAPBACK_EMOJI, theme } from "../theme.js";
 import { detectImageProtocol, isDisplayableImage, isVideo } from "../terminal-image.js";
+import { TAPBACK_EMOJI, theme } from "../theme.js";
 
 interface Props {
   message: Message;
@@ -41,16 +40,16 @@ export function MessageDrawer({ message: m, width, height }: Props) {
     >
       {/* Header */}
       <Box paddingX={1} backgroundColor={theme.header.focused.bg}>
-        <Text color={theme.header.focused.fg} bold>Message Details</Text>
+        <Text color={theme.header.focused.fg} bold>
+          Message Details
+        </Text>
       </Box>
 
       <Box flexDirection="column" paddingX={1} paddingY={0} gap={0}>
         {/* Sender */}
         <Box>
           <Label>From</Label>
-          <Text color={theme.drawer.value}>
-            {m.isFromMe ? "Me" : (m.displayName ?? m.handle)}
-          </Text>
+          <Text color={theme.drawer.value}>{m.isFromMe ? "Me" : (m.displayName ?? m.handle)}</Text>
         </Box>
 
         {/* Handle */}
@@ -96,7 +95,9 @@ export function MessageDrawer({ message: m, width, height }: Props) {
         {/* GUID */}
         <Box>
           <Label>GUID</Label>
-          <Text color={theme.drawer.value} wrap="truncate">{m.guid}</Text>
+          <Text color={theme.drawer.value} wrap="truncate">
+            {m.guid}
+          </Text>
         </Box>
 
         {/* Edited */}
@@ -111,31 +112,43 @@ export function MessageDrawer({ message: m, width, height }: Props) {
         {m.reactions && m.reactions.length > 0 && (
           <Box flexDirection="column">
             <Text color={theme.drawer.label}>Reactions:</Text>
-            {m.reactions.filter(r => !r.isRemoval).map((r, i) => (
-              <Box key={i} paddingLeft={1}>
-                <Text color={theme.drawer.value}>
-                  {r.emoji ?? TAPBACK_EMOJI[r.type] ?? r.type} {r.fromHandle ?? "unknown"}
-                </Text>
-              </Box>
-            ))}
+            {m.reactions
+              .filter((r) => !r.isRemoval)
+              .map((r) => (
+                <Box
+                  key={`${r.fromHandle}-${r.type}-${r.emoji ?? ""}-${r.targetMessageGuid}-${r.targetMessagePart}`}
+                  paddingLeft={1}
+                >
+                  <Text color={theme.drawer.value}>
+                    {r.emoji ?? TAPBACK_EMOJI[r.type] ?? r.type} {r.fromHandle ?? "unknown"}
+                  </Text>
+                </Box>
+              ))}
           </Box>
         )}
 
         {/* Attachments */}
         {hasAttachments && (
           <Box flexDirection="column" marginTop={1}>
-            <Text color={theme.attachment} bold>Attachments ({m.attachments!.length}):</Text>
-            {m.attachments!.map((att, i) => {
+            <Text color={theme.attachment} bold>
+              Attachments ({m.attachments!.length}):
+            </Text>
+            {m.attachments!.map((att) => {
               const imgProto = detectImageProtocol();
               const canPreview = imgProto && isDisplayableImage(att.mimeType);
               const isVid = isVideo(att.mimeType);
               return (
-                <Box key={i} flexDirection="column" paddingLeft={1}>
+                <Box
+                  key={`${att.filename}-${att.transferName ?? ""}-${att.mimeType ?? ""}-${att.totalBytes}`}
+                  flexDirection="column"
+                  paddingLeft={1}
+                >
                   <Text color={theme.drawer.value} wrap="truncate">
                     {att.transferName ?? att.filename}
                   </Text>
                   <Text color={theme.drawer.label}>
-                    {att.mimeType ?? "unknown"} · {att.totalBytes > 0 ? formatBytes(att.totalBytes) : "?"}
+                    {att.mimeType ?? "unknown"} ·{" "}
+                    {att.totalBytes > 0 ? formatBytes(att.totalBytes) : "?"}
                     {canPreview && <Text color={theme.senderName}> (preview available)</Text>}
                     {isVid && <Text color={theme.attachment}> (video - press o for mpv)</Text>}
                   </Text>

@@ -6,10 +6,11 @@
  * Uses the env-data fixture (committed chat.db). Skips gracefully if the
  * fixture isn't available (e.g. fresh clone without LFS pull).
  */
-import { describe, expect, it } from "vitest";
+
 import { existsSync } from "node:fs";
-import { IMessageDB } from "../src/imessage-db.js";
+import { describe, expect, it } from "vitest";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../src/config.js";
+import { IMessageDB } from "../src/imessage-db.js";
 
 const dbPath = getImsgDbPath();
 const haveFixture = existsSync(dbPath);
@@ -83,6 +84,26 @@ describe.skipIf(!haveFixture)("getMessagesForChat pagination", () => {
       // Use 1 as the lower bound — no message has ROWID < 1
       const older = await db.getMessagesForChat(target, 50, { beforeMessageId: 1 });
       expect(older.length).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("getMessagesAfter fetches incoming messages beyond the latest window", async () => {
+    const db = new IMessageDB(dbPath, getContactsDbPaths(), getSlugsDbPath());
+    try {
+      const convs = await db.listConversations(50);
+      for (const c of convs) {
+        const msgs = await db.getMessagesForChat(c.chatIdentifier, 1200);
+        const incoming = msgs.filter((m) => !m.isFromMe);
+        if (incoming.length < 2) continue;
+
+        const boundary = incoming[0].id;
+        const after = await db.getMessagesAfter(c.chatIdentifier, boundary);
+        expect(after.every((m) => !m.isFromMe && m.id > boundary)).toBe(true);
+        expect(after.map((m) => m.id)).toEqual([...after.map((m) => m.id)].sort((a, b) => a - b));
+        return;
+      }
     } finally {
       await db.close();
     }

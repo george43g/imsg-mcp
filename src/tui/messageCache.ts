@@ -30,8 +30,8 @@ function envNum(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-const TTL_MS = envNum("IMSG_TUI_CACHE_TTL_MS", 600_000);                  // 10 min
-const STALE_MS = envNum("IMSG_TUI_CACHE_STALE_MS", 30_000);               // 30s
+const TTL_MS = envNum("IMSG_TUI_CACHE_TTL_MS", 600_000); // 10 min
+const STALE_MS = envNum("IMSG_TUI_CACHE_STALE_MS", 30_000); // 30s
 const MEMORY_PRESSURE_MB = envNum("IMSG_TUI_CACHE_MEM_PRESSURE_MB", 200); // heap MB
 
 const cache = new Map<string, CacheEntry>();

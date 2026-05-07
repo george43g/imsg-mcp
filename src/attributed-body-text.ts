@@ -55,8 +55,10 @@ const METADATA_PATTERNS = [
   /^\d{2}.*��/,
 ];
 
-const CONTROL_OR_DEL_RE = new RegExp("[\\x00-\\x1F\\x7F]", "g");
-const CONTROL_SPLIT_RE = new RegExp("[\\x00-\\x1F\\x7F]+", "g");
+// biome-ignore lint/suspicious/noControlCharactersInRegex: attributedBody payloads contain binary control bytes.
+const CONTROL_OR_DEL_RE = /[\x00-\x1F\x7F]/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: attributedBody payloads contain binary control bytes.
+const CONTROL_SPLIT_RE = /[\x00-\x1F\x7F]+/g;
 
 /** Max time (ms) to spend parsing a single attributedBody blob before giving up. */
 const PARSE_TIMEOUT_MS = 200;
@@ -138,7 +140,10 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
   // Boost their score so they win over byte-scan fallbacks.
   try {
     if (Date.now() < deadline) {
-      remember(parser.parseAllNSStrings().map((entry) => entry.content), STRUCTURED_BOOST);
+      remember(
+        parser.parseAllNSStrings().map((entry) => entry.content),
+        STRUCTURED_BOOST,
+      );
     }
   } catch {
     // Ignore parser failures — continue with fallback strategies

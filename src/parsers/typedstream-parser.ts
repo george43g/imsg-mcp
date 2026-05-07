@@ -228,11 +228,14 @@ export class TypedStreamParser {
     for (const kw of METADATA_KEYWORDS) {
       cleaned = cleaned.replaceAll(kw, "");
     }
-    return cleaned
-      .replace(/\{[^}]*\}/g, "")
-      .replace(/\[[^\]]*\]/g, "")
-      .replace(/[\x00-\x1f]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return (
+      cleaned
+        .replace(/\{[^}]*\}/g, "")
+        .replace(/\[[^\]]*\]/g, "")
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: typedstream blobs contain binary control bytes.
+        .replace(/[\x00-\x1f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    );
   }
 }

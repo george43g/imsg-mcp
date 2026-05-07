@@ -1,5 +1,5 @@
-import { useEffect } from "react";
 import { useStdin } from "ink";
+import { useEffect } from "react";
 
 export interface MouseEvent {
   type: "click" | "scroll-up" | "scroll-down";
@@ -23,9 +23,10 @@ export function useMouse(onEvent: (event: MouseEvent) => void) {
     const handler = (data: Buffer) => {
       const str = data.toString();
       // SGR mouse format: \x1b[<btn;x;y;M (press) or \x1b[<btn;x;y;m (release)
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: ESC is the terminal mouse protocol prefix.
       const re = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/g;
-      let match: RegExpExecArray | null;
-      while ((match = re.exec(str)) !== null) {
+      let match = re.exec(str);
+      while (match !== null) {
         const btn = Number.parseInt(match[1], 10);
         const x = Number.parseInt(match[2], 10);
         const y = Number.parseInt(match[3], 10);
@@ -38,6 +39,7 @@ export function useMouse(onEvent: (event: MouseEvent) => void) {
         } else if (btn === 0 && isPress) {
           onEvent({ type: "click", x, y, button: btn });
         }
+        match = re.exec(str);
       }
     };
 

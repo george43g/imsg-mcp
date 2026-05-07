@@ -1,6 +1,5 @@
-import React from "react";
-import { Box, Text } from "ink";
 import { TextInput } from "@inkjs/ui";
+import { Box, Text } from "ink";
 import { theme } from "../theme.js";
 
 interface Props {
@@ -12,12 +11,7 @@ interface Props {
 
 export function DateJumpModal({ value, error, onChange, onSubmit }: Props) {
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor={theme.status.accent}
-      paddingX={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor={theme.status.accent} paddingX={1}>
       <Text color={theme.status.accent} bold>
         Jump to date
       </Text>
@@ -37,12 +31,13 @@ export function DateJumpModal({ value, error, onChange, onSubmit }: Props) {
       ) : (
         <Box>
           <Text color={theme.help.desc}>
-            Formats: YYYY-MM-DD · M/D · today · yesterday · N days/weeks/months/years ago · 5d / 2w / 3m / 1y
+            Formats: YYYY-MM-DD · M/D · today · yesterday · N days/weeks/months/years ago · 5d / 2w
+            / 3m / 1y
           </Text>
         </Box>
       )}
       <Box>
-        <Text color={theme.help.desc}>Enter: jump  Esc: cancel</Text>
+        <Text color={theme.help.desc}>Enter: jump Esc: cancel</Text>
       </Box>
     </Box>
   );

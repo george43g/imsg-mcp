@@ -1,5 +1,11 @@
 # imsg-mcp
 
+[![npm version](https://img.shields.io/npm/v/imsg-mcp.svg)](https://www.npmjs.com/package/imsg-mcp)
+[![CI](https://github.com/george43g/imsg-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/george43g/imsg-mcp/actions/workflows/ci.yml)
+[![Release](https://github.com/george43g/imsg-mcp/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/george43g/imsg-mcp/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
+
 MCP server, CLI, and terminal UI for iMessage on macOS.
 
 `imsg-mcp` lets AI agents and local tools read your iMessage/SMS database, resolve contact names from Address Book, inspect unread messages, search history, and optionally send messages through Messages.app.

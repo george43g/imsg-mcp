@@ -3,146 +3,73 @@
  * Enables AI agents to send and receive iMessages on macOS
  */
 
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
+import { promisify } from "node:util";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { checkMessagesAvailable, sendMessageAlt, sendToChat, sendToChatId } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
-import { IMessageDB } from "./imessage-db.js";
-import { appendLog, getFileLogLines, getLastSendError, getLogDirectory, getLogFilePath, getLogs, info, logShutdown, logStartup, perf, startHeapMonitor, stopHeapMonitor } from "./logger.js";
-import { enableOrphanWatchdog, enableStdinEofDetection, installShutdownHandlers, registerCleanup, shutdown } from "./shutdown.js";
 import { streamExport } from "./exportStream.js";
-import { hasNativeModule } from "./native-bridge.js";
-import { parseUserDate } from "./tui/dateParse.js";
-import { installWatchdog, noteActivity, readWatchdogState } from "./watchdog.js";
+import { IMessageDB } from "./imessage-db.js";
+import {
+  appendLog,
+  getFileLogLines,
+  getLastSendError,
+  getLogDirectory,
+  getLogFilePath,
+  getLogs,
+  info,
+  logShutdown,
+  logStartup,
+  perf,
+  startHeapMonitor,
+  stopHeapMonitor,
+} from "./logger.js";
+import {
+  DEFAULT_TOOL_TIMEOUT_MS,
+  ExportMessagesSchema,
+  GetLogsSchema,
+  GetMessagesSchema,
+  GetUnreadMessagesSchema,
+  ListConversationsSchema,
+  resolveLimit,
+  SearchMessagesSchema,
+  SendMessageSchema,
+  TOOL_TIMEOUTS_MS,
+  TOOLS,
+  WaitForReplySchema,
+} from "./mcp-tools.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
+import { hasNativeModule } from "./native-bridge.js";
+import {
+  enableOrphanWatchdog,
+  enableStdinEofDetection,
+  installShutdownHandlers,
+  registerCleanup,
+  shutdown,
+} from "./shutdown.js";
+import { parseUserDate } from "./tui/dateParse.js";
 import type { Message } from "./types.js";
+import { installWatchdog, noteActivity, readWatchdogState } from "./watchdog.js";
 
-// Tool input schemas
-//
-// Limit semantics:
-//   - 0 means UNLIMITED — bounded only by the per-tool timeout (Priority 1a).
-//   - omitted -> default
-//   - positive integer -> exact cap
-// All previous hard upper bounds (50/100/500/1000) have been removed; the
-// timeout watchdog provides safety instead of arbitrary numeric caps.
-const UNLIMITED = Number.MAX_SAFE_INTEGER;
-
-/** Resolve a user-supplied limit (with 0 = unlimited) to a concrete number for the DB layer. */
-function resolveLimit(limit: number | undefined, defaultValue = 20): number {
-  if (limit === undefined) return defaultValue;
-  if (limit === 0) return UNLIMITED;
-  return limit;
-}
-
-const GetMessagesSchema = z.object({
-  limit: z.number().int().min(0).default(20).describe("Number of messages to retrieve. 0 = unlimited (bounded only by tool timeout). Default 20."),
-  chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID to filter by"),
-  threadSlug: z.string().optional().describe("Thread slug from list_conversations"),
-  beforeMessageId: z.number().int().positive().optional().describe("Pagination cursor. Pass the `oldestMessageId` from a previous response footer to fetch the next older page."),
-});
-
-const ExportMessagesSchema = z.object({
-  chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID"),
-  threadSlug: z.string().optional().describe("Thread slug from list_conversations"),
-  format: z.enum(["markdown", "csv", "json", "ndjson"]).default("markdown").describe("Output format"),
-  outputPath: z.string().describe("Absolute path. Parent directory must exist; file will be created/overwritten."),
-  since: z.string().optional().describe("Earliest date (ISO YYYY-MM-DD or relative like '1 year ago'). Default: no lower bound."),
-  until: z.string().optional().describe("Latest date (ISO or relative). Default: now."),
-  pageSize: z.number().int().min(100).max(5000).default(1000).describe("Internal page size for streaming. Higher uses more memory; lower means more SQL round-trips."),
-});
-
-const GetUnreadMessagesSchema = z.object({
-  limit: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe("Max unread messages. 0 = unlimited. Default 100."),
-});
-
-const SendMessageSchema = z.object({
-  recipient: z.string().optional().describe("Phone number or email address to send to"),
-  threadSlug: z
-    .string()
-    .optional()
-    .describe("Thread slug (from list_conversations) to send to — works for groups too"),
-  message: z.string().describe("Message text to send"),
-});
-
-const WaitForReplySchema = z.object({
-  chatIdentifier: z.string().optional().describe("Phone number, email, or chat ID to monitor"),
-  threadSlug: z.string().optional().describe("Thread slug (from list_conversations) to monitor"),
-  timeoutSeconds: z
-    .number()
-    .min(10)
-    .max(3600)
-    .default(300)
-    .describe("Timeout in seconds (default 5 minutes)"),
-  pollIntervalSeconds: z
-    .number()
-    .min(5)
-    .max(60)
-    .default(10)
-    .describe("How often to check for replies"),
-  afterMessageId: z.number().optional().describe("Only return messages after this ID"),
-});
-
-const ListConversationsSchema = z.object({
-  limit: z.number().int().min(0).default(20).describe("Number of conversations. 0 = unlimited (bounded only by tool timeout). Default 20."),
-});
-
-const SearchMessagesSchema = z.object({
-  query: z.string().describe("Search query"),
-  limit: z.number().int().min(0).default(20).describe("Number of results. 0 = unlimited (bounded only by tool timeout). Default 20."),
-});
-
-const GetLogsSchema = z.object({
-  tail: z.number().min(1).max(500).optional().describe("Return only last N lines (default: 50)"),
-  source: z.enum(["memory", "file", "all"]).optional().describe("Log source: memory, file, or all"),
-});
-
-const _RunBuildSchema = z.object({});
-const _RequestRestartSchema = z.object({});
-
-// ── Per-tool timeouts ────────────────────────────────────────────────────
-//
-// Every tool dispatch is wrapped in a Promise.race against this timeout so
-// that a single bad query or hung handler never wedges the MCP protocol.
-// On timeout, the tool returns isError:true to the host (which unblocks the
-// agent immediately) — the orphaned promise keeps running but the watchdog
-// will catch the resulting event-loop lag if it persists.
-const TOOL_TIMEOUTS_MS: Record<string, number> = {
-  // wait_for_reply has its own timeoutSeconds parameter (max 1h) — don't
-  // double-clip it here, just give it generous headroom.
-  wait_for_reply: 0, // 0 = no wrapper timeout
-  run_build: 120_000,
-  search_messages: 60_000,
-  get_messages: 60_000,
-  list_conversations: 60_000,
-  get_unread_messages: 60_000,
-  send_message: 60_000,
-  // Health/status tools should be near-instant — short ceiling
-  health_check: 5_000,
-  // Export streams to disk in pages — give it generous headroom for very long histories
-  export_messages: 600_000,
-  get_logs: 10_000,
-  get_last_send_error: 5_000,
-  request_restart: 5_000,
-};
-const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
+const execFileAsync = promisify(execFile);
 
 class ToolTimeoutError extends Error {
-  constructor(public readonly toolName: string, public readonly timeoutMs: number) {
-    super(`Tool '${toolName}' timed out after ${timeoutMs}ms. The MCP server has unblocked; the underlying query may still be running in the background.`);
+  constructor(
+    public readonly toolName: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(
+      `Tool '${toolName}' timed out after ${timeoutMs}ms. The MCP server has unblocked; the underlying query may still be running in the background.`,
+    );
     this.name = "ToolTimeoutError";
   }
 }
 
-/** Race a tool handler against its configured timeout. */
 function withTimeout<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
   const ms = TOOL_TIMEOUTS_MS[toolName] ?? DEFAULT_TOOL_TIMEOUT_MS;
   if (ms <= 0) return fn();
@@ -150,187 +77,17 @@ function withTimeout<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
     const timer = setTimeout(() => reject(new ToolTimeoutError(toolName, ms)), ms);
     timer.unref();
     fn().then(
-      (v) => {
+      (value) => {
         clearTimeout(timer);
-        resolve(v);
+        resolve(value);
       },
-      (err) => {
+      (error) => {
         clearTimeout(timer);
-        reject(err);
+        reject(error);
       },
     );
   });
 }
-
-// Tool definitions
-const TOOLS = [
-  {
-    name: "get_messages",
-    description: "Get recent iMessages. Can optionally filter by a specific conversation. Response footer includes `oldestMessageId` for pagination — pass that as `beforeMessageId` in the next call to fetch older history. For very large histories prefer `export_messages`.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        limit: {
-          type: "number",
-          description: "Number of messages to retrieve. 0 = unlimited (bounded only by tool timeout). Default 20.",
-          default: 20,
-        },
-        chatIdentifier: {
-          type: "string",
-          description: "Phone number, email, or chat ID to filter by",
-        },
-        threadSlug: {
-          type: "string",
-          description: "Thread slug from list_conversations",
-        },
-        beforeMessageId: {
-          type: "number",
-          description: "Pagination cursor: pass `oldestMessageId` from a previous response to fetch the next older page.",
-        },
-      },
-    },
-  },
-  {
-    name: "export_messages",
-    description: "Export an entire conversation (or a date range) to a file. Streams from the DB in pages so it never loads the whole history into memory — use this instead of `get_messages` with a huge limit. Formats: markdown (default), csv, json (single document), ndjson (line-delimited, ideal for streaming/append).",
-    inputSchema: {
-      type: "object",
-      required: ["outputPath"],
-      properties: {
-        chatIdentifier: { type: "string", description: "Phone number, email, or chat ID" },
-        threadSlug: { type: "string", description: "Thread slug from list_conversations" },
-        format: { type: "string", enum: ["markdown", "csv", "json", "ndjson"], default: "markdown" },
-        outputPath: { type: "string", description: "Absolute path. Parent directory must exist; file will be created/overwritten." },
-        since: { type: "string", description: "Earliest date (ISO YYYY-MM-DD or relative like '1 year ago')." },
-        until: { type: "string", description: "Latest date." },
-        pageSize: { type: "number", default: 1000, description: "Internal page size (100-5000). Higher = more memory, fewer SQL round-trips." },
-      },
-    },
-  },
-  {
-    name: "get_unread_messages",
-    description:
-      "Get unread iMessages across all conversations, sorted by date descending (newest first).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        limit: {
-          type: "number",
-          description: "Max unread messages. 0 = unlimited (bounded only by tool timeout). Default 100.",
-        },
-      },
-    },
-  },
-  {
-    name: "send_message",
-    description:
-      "Send an iMessage or SMS. Use recipient (phone/email) for 1-on-1 or threadSlug (from list_conversations) for any thread including groups.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        recipient: {
-          type: "string",
-          description: "Phone number (e.g., +1234567890) or email address",
-        },
-        threadSlug: {
-          type: "string",
-          description: "Thread slug from list_conversations — works for groups too",
-        },
-        message: { type: "string", description: "Message text to send" },
-      },
-      required: ["message"],
-    },
-  },
-  {
-    name: "wait_for_reply",
-    description:
-      "Wait for a reply in a specific conversation. Use chatIdentifier (phone/email) or threadSlug. Polls until a new message arrives or timeout.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        chatIdentifier: {
-          type: "string",
-          description: "Phone number, email, or chat ID to monitor",
-        },
-        threadSlug: { type: "string", description: "Thread slug from list_conversations" },
-        timeoutSeconds: {
-          type: "number",
-          description: "Timeout in seconds (10-3600, default 300)",
-          default: 300,
-        },
-        pollIntervalSeconds: {
-          type: "number",
-          description: "How often to check for replies (5-60 seconds)",
-          default: 10,
-        },
-        afterMessageId: { type: "number", description: "Only return messages after this ID" },
-      },
-    },
-  },
-  {
-    name: "list_conversations",
-    description:
-      "List recent conversations with metadata like last message date and participant info.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        limit: {
-          type: "number",
-          description: "Number of conversations to list. 0 = unlimited (bounded only by tool timeout). Default 20.",
-          default: 20,
-        },
-      },
-    },
-  },
-  {
-    name: "search_messages",
-    description: "Search for messages containing specific text across all conversations.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Search query" },
-        limit: { type: "number", description: "Number of results. 0 = unlimited (bounded only by tool timeout). Default 20.", default: 20 },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "get_logs",
-    description:
-      "Return debug log lines from this MCP server. Source: 'memory' (in-process buffer, default), 'file' (NDJSON log from $TMPDIR/imsg-mcp/), or 'all' (both). File logs persist across restarts and include perf spans, heartbeats, startup/shutdown markers. A log file missing a 'shutdown' entry indicates a crash or hang.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tail: { type: "number", description: "Return only last N lines (default: 50)" },
-        source: { type: "string", enum: ["memory", "file", "all"], description: "Log source (default: memory)" },
-      },
-    },
-  },
-  {
-    name: "get_last_send_error",
-    description:
-      "Return the last send_message/send failure details (stderr, stdout, code from osascript). Use to debug why texting failed.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "run_build",
-    description:
-      "Run `pnpm build` in the project directory and return stdout/stderr. Restart the MCP server after building to load new code.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "request_restart",
-    description:
-      "Exit the MCP server process so the client can restart it and load new code. Call after run_build to apply changes.",
-    inputSchema: { type: "object", properties: {} },
-  },
-  {
-    name: "health_check",
-    description:
-      "Return MCP server vital signs: uptime, heap, RSS, event-loop lag, recent activity, tool call count, engine. Reads in-memory state only — returns instantly even when SQL is blocked, so it's the right tool to verify the server is alive when other calls hang.",
-    inputSchema: { type: "object", properties: {} },
-  },
-];
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
@@ -403,11 +160,60 @@ function formatMessage(msg: Message, conversationLabel?: string): string {
   return `[${dateStr}] ${direction} ${sender}${svcTag}: ${msg.text || "(no text)"}${status}${convCtx}`;
 }
 
+function messageToStructured(msg: Message) {
+  return {
+    ...msg,
+    date: msg.date.toISOString(),
+    dateRead: msg.dateRead?.toISOString() ?? null,
+    dateDelivered: msg.dateDelivered?.toISOString() ?? null,
+  };
+}
+
 /**
  * Sleep utility
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toolText(text: string, structuredContent?: Record<string, unknown>) {
+  return {
+    content: [{ type: "text" as const, text }],
+    ...(structuredContent ? { structuredContent } : {}),
+  };
+}
+
+function toolError(text: string, structuredContent?: Record<string, unknown>) {
+  return {
+    ...toolText(text, structuredContent),
+    isError: true,
+  };
+}
+
+function validateExportOutputPath(outputPath: string): string | null {
+  if (!isAbsolute(outputPath)) {
+    return "outputPath must be an absolute path.";
+  }
+
+  const parent = dirname(outputPath);
+  if (!existsSync(parent)) {
+    return `Parent directory does not exist: ${parent}`;
+  }
+
+  const parentStat = statSync(parent);
+  if (!parentStat.isDirectory()) {
+    return `Parent path is not a directory: ${parent}`;
+  }
+
+  if (existsSync(outputPath) && statSync(outputPath).isDirectory()) {
+    return `outputPath points to a directory, not a file: ${outputPath}`;
+  }
+
+  return null;
+}
+
+function engineLabel(): string {
+  return hasNativeModule() ? "Rust parser + TS DB" : "TS";
 }
 
 /**
@@ -466,15 +272,11 @@ class IMessageMCPServer {
           error: error.message || String(error),
         });
         if (!isTimeout) this.recentErrorCount++;
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error: ${error.message || String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolError(`Error: ${error.message || String(error)}`, {
+          tool: name,
+          error: error.message || String(error),
+          timedOut: isTimeout,
+        });
       } finally {
         this.db.scheduleBackgroundRefresh();
       }
@@ -506,7 +308,7 @@ class IMessageMCPServer {
       case "health_check":
         return await this.handleHealthCheck();
       case "export_messages":
-        return await this.handleExportMessages(args);
+        return await this.handleExportMessages(args, signal);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -519,13 +321,17 @@ class IMessageMCPServer {
 
     if (source !== "file") {
       const memLines = getLogs(n);
-      sections.push(`## In-Memory Logs (${memLines.length} lines)\n${memLines.length === 0 ? "No log lines yet." : memLines.join("\n")}`);
+      sections.push(
+        `## In-Memory Logs (${memLines.length} lines)\n${memLines.length === 0 ? "No log lines yet." : memLines.join("\n")}`,
+      );
     }
 
     if (source === "file" || source === "all") {
       const fileLines = getFileLogLines(n);
       const logPath = getLogFilePath() ?? getLogDirectory();
-      sections.push(`## File Logs (${logPath})\n${fileLines.length === 0 ? "No file log entries." : fileLines.join("\n")}`);
+      sections.push(
+        `## File Logs (${logPath})\n${fileLines.length === 0 ? "No file log entries." : fileLines.join("\n")}`,
+      );
     }
 
     if (source !== "file" && source !== "all") {
@@ -534,20 +340,18 @@ class IMessageMCPServer {
       sections.push(`\n📁 Full NDJSON logs: ${logPath}`);
     }
 
-    return { content: [{ type: "text", text: sections.join("\n\n") }] };
+    return toolText(sections.join("\n\n"), { source: source ?? "memory", tail: n, sections });
   }
 
   private async handleGetLastSendError() {
     const err = getLastSendError();
     if (!err) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "No send failure recorded. Last send either succeeded or occurred before this server run.",
-          },
-        ],
-      };
+      return toolText(
+        "No send failure recorded. Last send either succeeded or occurred before this server run.",
+        {
+          lastSendError: null,
+        },
+      );
     }
     const text = [
       "Last send_message failure:",
@@ -559,27 +363,33 @@ class IMessageMCPServer {
     ]
       .filter(Boolean)
       .join("\n");
-    return { content: [{ type: "text", text }] };
+    return toolText(text, { lastSendError: err });
   }
 
   private async handleRunBuild(): Promise<any> {
     try {
-      const out = execSync("pnpm build", {
-        encoding: "utf-8",
+      const { stdout, stderr } = await execFileAsync("pnpm", ["build"], {
+        encoding: "utf8",
         maxBuffer: 2 * 1024 * 1024,
         cwd: process.cwd(),
       });
-      return { content: [{ type: "text", text: `Build succeeded.\n\nstdout:\n${out}` }] };
+      return toolText(
+        `Build succeeded.\n\nstdout:\n${stdout}${stderr ? `\n\nstderr:\n${stderr}` : ""}`,
+        {
+          ok: true,
+          stdout,
+          stderr,
+        },
+      );
     } catch (error: any) {
       const stderr = error.stderr?.toString?.() ?? error.message ?? "";
       const stdout = error.stdout?.toString?.() ?? "";
       appendLog("error", "run_build failed", { stderr, stdout });
-      return {
-        content: [
-          { type: "text", text: `Build failed.\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}` },
-        ],
-        isError: true,
-      };
+      return toolError(`Build failed.\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}`, {
+        ok: false,
+        stdout,
+        stderr,
+      });
     }
   }
 
@@ -587,7 +397,7 @@ class IMessageMCPServer {
     const msg =
       "Restart requested. Please restart the MCP server in your client (e.g. Cursor) to load new code.";
     setImmediate(() => shutdown(0));
-    return { content: [{ type: "text", text: msg }] };
+    return toolText(msg, { restartRequested: true });
   }
 
   /**
@@ -635,10 +445,24 @@ class IMessageMCPServer {
       "",
       `Total tool calls: ${this.toolCallCount}`,
       `Recent errors: ${this.recentErrorCount}`,
-      `Engine: ${hasNativeModule() ? "Rust+TS" : "TS"}`,
+      `Engine: ${engineLabel()}`,
     ].filter((l) => l !== null);
 
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return toolText(lines.join("\n"), {
+      status,
+      issues,
+      uptimeMs,
+      idleMs,
+      pid: process.pid,
+      node: process.version,
+      heapMb: wd.heapMb || round1(process.memoryUsage().heapUsed / 1024 / 1024),
+      rssMb: wd.rssMb || round1(process.memoryUsage().rss / 1024 / 1024),
+      eventLoopP99Ms: wd.eventLoopP99Ms,
+      eventLoopMaxMs: wd.eventLoopMaxMs,
+      toolCallCount: this.toolCallCount,
+      recentErrorCount: this.recentErrorCount,
+      engine: engineLabel(),
+    });
   }
 
   private async handleGetMessages(args: unknown) {
@@ -658,10 +482,7 @@ class IMessageMCPServer {
       if (threadSlug) {
         const slugRecord = this.db.getSlugRecord(threadSlug);
         if (!slugRecord) {
-          return {
-            content: [{ type: "text", text: `Unknown thread slug: ${threadSlug}` }],
-            isError: true,
-          };
+          return toolError(`Unknown thread slug: ${threadSlug}`, { threadSlug });
         }
         targetIdentifier = slugRecord.chatIdentifier;
       }
@@ -681,29 +502,32 @@ class IMessageMCPServer {
     const durMs = span.end({ limit, returned: messages.length });
 
     if (messages.length === 0) {
-      return {
-        content: [{ type: "text", text: `${threadHeader}No messages found.` }],
-      };
+      return toolText(`${threadHeader}No messages found.`, { messages: [], count: 0 });
     }
 
     const formatted = messages.map((m) => formatMessage(m)).join("\n");
     const oldestId = Math.min(...messages.map((m) => m.id));
     const hasMore = messages.length === limit; // heuristic — full page suggests more
-    const paginationLine = (chatIdentifier || threadSlug)
-      ? `\n_Pagination: oldestMessageId=${oldestId}, hasMore=${hasMore}${wasCapped ? ` (capped at ${HARD_PAGE_CAP} per call — use beforeMessageId or export_messages)` : ""}_`
-      : "";
+    const paginationLine =
+      chatIdentifier || threadSlug
+        ? `\n_Pagination: oldestMessageId=${oldestId}, hasMore=${hasMore}${wasCapped ? ` (capped at ${HARD_PAGE_CAP} per call — use beforeMessageId or export_messages)` : ""}_`
+        : "";
     const perfLine = `\n_Engine: TS | Query: ${durMs.toFixed(0)}ms | Messages: ${messages.length}_`;
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${paginationLine}${perfLine}`,
-        },
-      ],
-    };
+    return toolText(
+      `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${paginationLine}${perfLine}`,
+      {
+        messages: messages.map(messageToStructured),
+        count: messages.length,
+        pagination:
+          chatIdentifier || threadSlug
+            ? { oldestMessageId: oldestId, hasMore, wasCapped, hardPageCap: HARD_PAGE_CAP }
+            : undefined,
+        performance: { engine: "TS", queryMs: durMs },
+      },
+    );
   }
 
-  private async handleExportMessages(args: unknown) {
+  private async handleExportMessages(args: unknown, signal?: AbortSignal) {
     const span = perf("tool:export_messages");
     const parsed = ExportMessagesSchema.parse(args);
     const { format, outputPath, since, until, pageSize } = parsed;
@@ -713,22 +537,29 @@ class IMessageMCPServer {
     if (parsed.threadSlug) {
       const slugRecord = this.db.getSlugRecord(parsed.threadSlug);
       if (!slugRecord) {
-        return { content: [{ type: "text", text: `Unknown thread slug: ${parsed.threadSlug}` }], isError: true };
+        return toolError(`Unknown thread slug: ${parsed.threadSlug}`, {
+          threadSlug: parsed.threadSlug,
+        });
       }
       chatIdentifier = slugRecord.chatIdentifier;
     }
     if (!chatIdentifier) {
-      return { content: [{ type: "text", text: "chatIdentifier or threadSlug required" }], isError: true };
+      return toolError("chatIdentifier or threadSlug required", {});
+    }
+
+    const pathError = validateExportOutputPath(outputPath);
+    if (pathError) {
+      return toolError(pathError, { outputPath });
     }
 
     // Parse date bounds (reuse the same parser the TUI uses)
     const sinceDate = since ? parseUserDate(since) : null;
     const untilDate = until ? parseUserDate(until) : null;
     if (since && !sinceDate) {
-      return { content: [{ type: "text", text: `Could not parse 'since': ${since}` }], isError: true };
+      return toolError(`Could not parse 'since': ${since}`, { since });
     }
     if (until && !untilDate) {
-      return { content: [{ type: "text", text: `Could not parse 'until': ${until}` }], isError: true };
+      return toolError(`Could not parse 'until': ${until}`, { until });
     }
 
     const result = await streamExport({
@@ -739,23 +570,26 @@ class IMessageMCPServer {
       since: sinceDate,
       until: untilDate,
       pageSize,
+      signal,
     });
     const durMs = span.end({ format, count: result.count, sizeBytes: result.sizeBytes });
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: [
-            `Exported ${result.count} message(s) to ${result.savedTo}`,
-            `Format: ${format}`,
-            `Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
-            `Size: ${(result.sizeBytes / 1024).toFixed(1)} KB`,
-            `_Took ${durMs.toFixed(0)}ms_`,
-          ].join("\n"),
-        },
-      ],
-    };
+    return toolText(
+      [
+        `Exported ${result.count} message(s) to ${result.savedTo}`,
+        `Format: ${format}`,
+        `Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
+        `Size: ${(result.sizeBytes / 1024).toFixed(1)} KB`,
+        `_Took ${durMs.toFixed(0)}ms_`,
+      ].join("\n"),
+      {
+        ...result,
+        format,
+        oldest: result.oldest?.toISOString() ?? null,
+        newest: result.newest?.toISOString() ?? null,
+        durationMs: durMs,
+      },
+    );
   }
 
   private async handleGetUnreadMessages(args: unknown) {
@@ -763,43 +597,33 @@ class IMessageMCPServer {
     const messages = await this.db.getUnreadMessages(resolveLimit(limit, 100));
 
     if (messages.length === 0) {
-      return {
-        content: [{ type: "text", text: "No unread messages." }],
-      };
+      return toolText("No unread messages.", { messages: [], count: 0 });
     }
 
     // Add conversation context per message (slug or display name)
-    const formatted = messages.map((msg) => {
-      const slug = this.db.getSlugForChatIdentifier(msg.chatId);
-      const label = slug ?? msg.chatId;
-      return formatMessage(msg, label);
-    }).join("\n");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Found ${messages.length} unread message(s):\n\n${formatted}`,
-        },
-      ],
-    };
+    const formatted = messages
+      .map((msg) => {
+        const slug = this.db.getSlugForChatIdentifier(msg.chatId);
+        const label = slug ?? msg.chatId;
+        return formatMessage(msg, label);
+      })
+      .join("\n");
+    return toolText(`Found ${messages.length} unread message(s):\n\n${formatted}`, {
+      messages: messages.map(messageToStructured),
+      count: messages.length,
+    });
   }
 
   private async handleSendMessage(args: unknown) {
     const { recipient, threadSlug, message } = SendMessageSchema.parse(args);
 
     if (!recipient && !threadSlug) {
-      return {
-        content: [{ type: "text", text: "Either recipient or threadSlug is required." }],
-        isError: true,
-      };
+      return toolError("Either recipient or threadSlug is required.", {});
     }
 
     const available = await checkMessagesAvailable();
     if (!available) {
-      return {
-        content: [{ type: "text", text: "Messages.app is not running or accessible." }],
-        isError: true,
-      };
+      return toolError("Messages.app is not running or accessible.", { messagesAvailable: false });
     }
 
     let result: { success: boolean; error?: string; timestamp?: Date };
@@ -808,15 +632,12 @@ class IMessageMCPServer {
     if (threadSlug) {
       const slugRecord = this.db.getSlugRecord(threadSlug);
       if (!slugRecord) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Unknown thread slug: ${threadSlug}. Use list_conversations to see available slugs.`,
-            },
-          ],
-          isError: true,
-        };
+        return toolError(
+          `Unknown thread slug: ${threadSlug}. Use list_conversations to see available slugs.`,
+          {
+            threadSlug,
+          },
+        );
       }
 
       if (slugRecord.isGroup) {
@@ -844,25 +665,26 @@ class IMessageMCPServer {
         lastMessageId = lastMsg?.id;
       }
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Message sent to ${resolvedTarget} at ${result.timestamp?.toLocaleString()}${chat ? `\nThread: ${chat.threadSlug}` : ""}${lastMessageId ? `\nLast message ID: ${lastMessageId} (use with wait_for_reply)` : ""}`,
-          },
-        ],
-      };
+      return toolText(
+        `Message sent to ${resolvedTarget} at ${result.timestamp?.toLocaleString()}${chat ? `\nThread: ${chat.threadSlug}` : ""}${lastMessageId ? `\nLast message ID: ${lastMessageId} (use with wait_for_reply)` : ""}`,
+        {
+          success: true,
+          target: resolvedTarget,
+          timestamp: result.timestamp?.toISOString() ?? null,
+          threadSlug: chat?.threadSlug,
+          lastMessageId,
+        },
+      );
     } else {
       appendLog("error", "send_message failed", { recipient: resolvedTarget, error: result.error });
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to send message: ${result.error}. Use get_last_send_error for details.`,
-          },
-        ],
-        isError: true,
-      };
+      return toolError(
+        `Failed to send message: ${result.error}. Use get_last_send_error for details.`,
+        {
+          success: false,
+          target: resolvedTarget,
+          error: result.error,
+        },
+      );
     }
   }
 
@@ -871,10 +693,7 @@ class IMessageMCPServer {
       WaitForReplySchema.parse(args);
 
     if (!chatIdentifier && !threadSlug) {
-      return {
-        content: [{ type: "text", text: "Either chatIdentifier or threadSlug is required." }],
-        isError: true,
-      };
+      return toolError("Either chatIdentifier or threadSlug is required.", {});
     }
 
     const timeoutMs = timeoutSeconds * 1000;
@@ -885,25 +704,17 @@ class IMessageMCPServer {
     if (threadSlug) {
       const slugRecord = this.db.getSlugRecord(threadSlug);
       if (!slugRecord) {
-        return {
-          content: [{ type: "text", text: `Unknown thread slug: ${threadSlug}` }],
-          isError: true,
-        };
+        return toolError(`Unknown thread slug: ${threadSlug}`, { threadSlug });
       }
       chat = await this.db.findChatByHandle(slugRecord.chatIdentifier);
     } else {
       chat = await this.db.findChatByHandle(chatIdentifier!);
     }
     if (!chat) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Could not find conversation for: ${threadSlug || chatIdentifier}`,
-          },
-        ],
-        isError: true,
-      };
+      return toolError(`Could not find conversation for: ${threadSlug || chatIdentifier}`, {
+        threadSlug,
+        chatIdentifier,
+      });
     }
 
     // Get the current last message ID if not provided
@@ -916,39 +727,39 @@ class IMessageMCPServer {
     // Poll for new messages — bail out early on cancellation
     while (Date.now() - startTime < timeoutMs) {
       if (signal?.aborted) {
-        return {
-          content: [
-            { type: "text", text: `Cancelled by client after ${Math.round((Date.now() - startTime) / 1000)}s` },
-          ],
-          isError: true,
-        };
+        return toolError(
+          `Cancelled by client after ${Math.round((Date.now() - startTime) / 1000)}s`,
+          {
+            cancelled: true,
+            elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
+          },
+        );
       }
       const newMessages = await this.db.getMessagesAfter(chat.chatIdentifier, lastKnownId);
 
       if (newMessages.length > 0) {
         const formatted = newMessages.map((m) => formatMessage(m)).join("\n");
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Received ${newMessages.length} new message(s):\n\n${formatted}`,
-            },
-          ],
-        };
+        return toolText(`Received ${newMessages.length} new message(s):\n\n${formatted}`, {
+          received: true,
+          messages: newMessages.map(messageToStructured),
+          count: newMessages.length,
+        });
       }
 
       await sleep(pollIntervalMs);
     }
 
     // Timeout reached
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Timeout reached (${timeoutSeconds}s) - no new messages received in conversation with ${chatIdentifier}`,
-        },
-      ],
-    };
+    return toolText(
+      `Timeout reached (${timeoutSeconds}s) - no new messages received in conversation with ${threadSlug || chatIdentifier}`,
+      {
+        received: false,
+        timedOut: true,
+        timeoutSeconds,
+        threadSlug,
+        chatIdentifier: chat.chatIdentifier,
+      },
+    );
   }
 
   private async handleListConversations(args: unknown) {
@@ -956,9 +767,7 @@ class IMessageMCPServer {
     const limited = await this.db.listConversations(resolveLimit(limit));
 
     if (limited.length === 0) {
-      return {
-        content: [{ type: "text", text: "No conversations found." }],
-      };
+      return toolText("No conversations found.", { conversations: [], count: 0 });
     }
 
     const formatted = limited
@@ -970,7 +779,10 @@ class IMessageMCPServer {
           const resolved = this.db.resolveParticipantNames(conv.participants);
           const names = resolved.filter((n, i) => n !== conv.participants[i]);
           if (names.length > 0) {
-            name = names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")} +${names.length - 3}`;
+            name =
+              names.length <= 3
+                ? names.join(", ")
+                : `${names.slice(0, 3).join(", ")} +${names.length - 3}`;
           }
         }
         const ident =
@@ -988,14 +800,13 @@ class IMessageMCPServer {
       })
       .join("\n");
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Found ${limited.length} conversation(s):\n\n${formatted}`,
-        },
-      ],
-    };
+    return toolText(`Found ${limited.length} conversation(s):\n\n${formatted}`, {
+      conversations: limited.map((conversation) => ({
+        ...conversation,
+        lastMessageDate: conversation.lastMessageDate?.toISOString() ?? null,
+      })),
+      count: limited.length,
+    });
   }
 
   private async handleSearchMessages(args: unknown) {
@@ -1003,24 +814,21 @@ class IMessageMCPServer {
     const messages = await this.db.searchMessages(query, resolveLimit(limit));
 
     if (messages.length === 0) {
-      return {
-        content: [{ type: "text", text: `No messages found matching "${query}".` }],
-      };
+      return toolText(`No messages found matching "${query}".`, { query, messages: [], count: 0 });
     }
 
-    const formatted = messages.map((msg) => {
-      const slug = this.db.getSlugForChatIdentifier(msg.chatId);
-      const label = slug ?? msg.chatId;
-      return formatMessage(msg, label);
-    }).join("\n");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Found ${messages.length} message(s) matching "${query}":\n\n${formatted}`,
-        },
-      ],
-    };
+    const formatted = messages
+      .map((msg) => {
+        const slug = this.db.getSlugForChatIdentifier(msg.chatId);
+        const label = slug ?? msg.chatId;
+        return formatMessage(msg, label);
+      })
+      .join("\n");
+    return toolText(`Found ${messages.length} message(s) matching "${query}":\n\n${formatted}`, {
+      query,
+      messages: messages.map(messageToStructured),
+      count: messages.length,
+    });
   }
 
   async run(): Promise<void> {

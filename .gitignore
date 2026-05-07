@@ -46,3 +46,7 @@ env-data/
 *.tmp
 *.temp
 .cache/
+
+# npm pack output / semantic-release tarball staging
+*.tgz
+release/

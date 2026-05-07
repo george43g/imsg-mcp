@@ -1,11 +1,14 @@
-import React from "react";
 import { Box, Text } from "ink";
 import type { Message, Reaction } from "../../types.js";
-import { TAPBACK_EMOJI, glyphs, theme } from "../theme.js";
+import { glyphs, TAPBACK_EMOJI, theme } from "../theme.js";
 
 function relativeDate(date: Date): string {
   const now = new Date();
-  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  const time = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
   if (date.toDateString() === now.toDateString()) return time;
   const y = new Date(now);
   y.setDate(now.getDate() - 1);
@@ -59,8 +62,8 @@ interface Props {
   selected?: boolean;
   lineNum?: string;
   isFirstInGroup?: boolean; // first message from this sender in a consecutive run
-  isLastInGroup?: boolean;  // last message from this sender in a consecutive run
-  bgTint?: string;          // alternating background for sender groups
+  isLastInGroup?: boolean; // last message from this sender in a consecutive run
+  bgTint?: string; // alternating background for sender groups
   /**
    * Optional resolver for reply target text by GUID. When `m.isReply` is
    * true but `m.replyTo.replyToText` is null/undefined (the iMessage DB
@@ -104,7 +107,11 @@ export function MessageBubble({
 
   // Only show sender on first message in a group
   const sender = isFirstInGroup
-    ? (showSender && !isSent && senderName ? senderName : isSent ? "Me" : undefined)
+    ? showSender && !isSent && senderName
+      ? senderName
+      : isSent
+        ? "Me"
+        : undefined
     : undefined;
 
   // Group separator: thin line between groups
@@ -112,7 +119,10 @@ export function MessageBubble({
   const groupColor = isSent ? theme.sent.border : theme.received.border;
 
   return (
-    <Box flexDirection="column" backgroundColor={selected ? theme.sidebar.selected : inSelection ? theme.selectionBg : bgTint}>
+    <Box
+      flexDirection="column"
+      backgroundColor={selected ? theme.sidebar.selected : inSelection ? theme.selectionBg : bgTint}
+    >
       <Box>
         {/* Line number */}
         {lineNum !== undefined && (
@@ -136,9 +146,13 @@ export function MessageBubble({
         {isFirstInGroup ? (
           <>
             {isSent ? (
-              <Text color={theme.sent.bg} bold>{glyphs.sent} </Text>
+              <Text color={theme.sent.bg} bold>
+                {glyphs.sent}{" "}
+              </Text>
             ) : (
-              <Text color={theme.received.border} bold>{glyphs.received} </Text>
+              <Text color={theme.received.border} bold>
+                {glyphs.received}{" "}
+              </Text>
             )}
             {sender && (
               <Text color={isSent ? theme.sent.bg : theme.senderName} bold>
@@ -149,14 +163,14 @@ export function MessageBubble({
           </>
         ) : (
           // Continuation: indent to align with first message text
-          <Text>{"  "}{sender ? "                " : ""}</Text>
+          <Text>
+            {"  "}
+            {sender ? "                " : ""}
+          </Text>
         )}
 
         {/* Message text */}
-        <Text
-          color={isSent ? theme.sentText : theme.receivedText}
-          wrap="truncate"
-        >
+        <Text color={isSent ? theme.sentText : theme.receivedText} wrap="truncate">
           {text}
         </Text>
 
@@ -174,24 +188,26 @@ export function MessageBubble({
           replyToText is missing. iMessage sometimes leaves the text NULL
           even when the GUID link is present, so we try a runtime lookup
           and fall back to a placeholder so the user knows it IS a reply. */}
-      {m.isReply && (() => {
-        let replyText: string | null = m.replyTo?.replyToText ?? null;
-        if (!replyText && m.replyTo?.replyToGuid && lookupReplyText) {
-          replyText = lookupReplyText(m.replyTo.replyToGuid);
-        }
-        const display = replyText
-          ? replyText.slice(0, maxWidth - 12)
-          : "(replied to earlier message)";
-        return (
-          <Box>
-            {lineNum !== undefined && <Text>{"    "}</Text>}
-            <Text>{"  "}</Text>
-            <Text color={theme.replyContext} italic>
-              {"  ↩ "}{display}
-            </Text>
-          </Box>
-        );
-      })()}
+      {m.isReply &&
+        (() => {
+          let replyText: string | null = m.replyTo?.replyToText ?? null;
+          if (!replyText && m.replyTo?.replyToGuid && lookupReplyText) {
+            replyText = lookupReplyText(m.replyTo.replyToGuid);
+          }
+          const display = replyText
+            ? replyText.slice(0, maxWidth - 12)
+            : "(replied to earlier message)";
+          return (
+            <Box>
+              {lineNum !== undefined && <Text>{"    "}</Text>}
+              <Text>{"  "}</Text>
+              <Text color={theme.replyContext} italic>
+                {"  ↩ "}
+                {display}
+              </Text>
+            </Box>
+          );
+        })()}
     </Box>
   );
 }
@@ -211,8 +227,12 @@ export function PendingBubble({ text, status }: PendingBubbleProps) {
       <Text>{"    "}</Text>
       <Text color={color}>{indicator} </Text>
       <Text color={theme.timestamp}>{"now".padEnd(13)}</Text>
-      <Text color={theme.sent.bg} bold>{"▶ Me: "}</Text>
-      <Text color={theme.pending.fg} wrap="truncate">{text}</Text>
+      <Text color={theme.sent.bg} bold>
+        {"▶ Me: "}
+      </Text>
+      <Text color={theme.pending.fg} wrap="truncate">
+        {text}
+      </Text>
     </Box>
   );
 }

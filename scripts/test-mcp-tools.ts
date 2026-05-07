@@ -2,8 +2,9 @@
  * Direct MCP tool handler test — bypasses stdio transport, calls handlers
  * directly so we can iterate without restart races.
  */
+
+import type { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { Buffer } from "node:buffer";
 
 interface JsonRpcResponse {
   jsonrpc: "2.0";
@@ -24,11 +25,9 @@ class McpClient {
   private pending = new Map<number, (msg: JsonRpcResponse) => void>();
 
   constructor(envFile: string) {
-    this.proc = spawn(
-      "node",
-      [`--env-file=${envFile}`, "dist/index.js"],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    );
+    this.proc = spawn("node", [`--env-file=${envFile}`, "dist/index.js"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     this.proc.stdout!.on("data", (chunk: Buffer) => {
       this.buffer += chunk.toString("utf8");
       const lines = this.buffer.split("\n");
@@ -60,7 +59,9 @@ class McpClient {
       capabilities: {},
       clientInfo: { name: "test", version: "1" },
     });
-    this.proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`);
+    this.proc.stdin!.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`,
+    );
   }
 
   async call(method: string, params: object, timeoutMs = 30_000): Promise<unknown> {
@@ -89,7 +90,10 @@ class McpClient {
   }
 }
 
-function checkResult(result: ToolResult, expectations: { hasText?: string[]; isError?: boolean }): boolean {
+function checkResult(
+  result: ToolResult,
+  expectations: { hasText?: string[]; isError?: boolean },
+): boolean {
   if (expectations.isError !== undefined && (result.isError ?? false) !== expectations.isError) {
     return false;
   }
@@ -259,7 +263,11 @@ async function main() {
       const m = text.match(/oldestMessageId=(\d+)/);
       if (!m) return false;
       const oldestId = Number.parseInt(m[1], 10);
-      const second = await client.callTool("get_messages", { threadSlug: sampleSlug, limit: 10, beforeMessageId: oldestId });
+      const second = await client.callTool("get_messages", {
+        threadSlug: sampleSlug,
+        limit: 10,
+        beforeMessageId: oldestId,
+      });
       const secondText = second.content?.[0]?.text ?? "";
       const m2 = secondText.match(/oldestMessageId=(\d+)/);
       if (!m2) return true; // last page reached — also valid

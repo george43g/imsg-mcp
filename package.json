@@ -48,6 +48,7 @@
     "test:no-native": "IMSG_DISABLE_NATIVE=1 vitest run",
     "test:watch": "vitest",
     "test:rust": "cd native && cargo test --release",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "lint": "biome check .",
     "typecheck": "tsc --noEmit",
     "fixtures": "tsx scripts/generate-fixtures.ts",
@@ -59,7 +60,7 @@
     "native:build:debug": "cd native && napi build --platform",
     "stress": "tsx scripts/stress-mcp.ts .env.test",
     "stress:live": "tsx scripts/stress-mcp.ts .env.local",
-    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+    "prepublishOnly": "pnpm verify"
   },
   "keywords": [
     "mcp",
@@ -102,10 +103,17 @@
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
     "@napi-rs/cli": "^3.6.2",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.6",
+    "@semantic-release/npm": "^13.1.5",
+    "@semantic-release/release-notes-generator": "^14.1.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "@types/react": "^19.2.14",
     "nodemon": "^3.1.14",
+    "semantic-release": "^25.0.3",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0",
     "vite": "^7.3.1",

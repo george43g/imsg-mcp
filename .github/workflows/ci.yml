@@ -36,17 +36,23 @@ jobs:
       - name: Generate synthetic fixtures
         run: pnpm fixtures
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build
+      - name: Build (TS + native arm64)
         run: pnpm build
 
-      - name: Test (TypeScript)
+      - name: Test (TypeScript, default path with native module)
         run: pnpm test
 
-      - name: Test (Rust native)
-        run: cd native && cargo test --release
+      - name: Test (Rust native — pure unit tests, no fixtures)
+        run: pnpm test:rust
 
-      - name: Test (TS-only fallback path)
+      - name: Test (TS-only fallback path, IMSG_DISABLE_NATIVE=1)
         run: pnpm test:no-native
+
+      - name: Verify npm tarball is publishable
+        run: npm pack --dry-run

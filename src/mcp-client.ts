@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface ToolCallResult {
   content?: { type: string; text?: string }[];
@@ -15,7 +15,10 @@ function distRoot(): string {
 export class LocalMcpClient {
   private proc: ReturnType<typeof spawn>;
   private requestId = 0;
-  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private pending = new Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void }
+  >();
   private outBuf = "";
   private closed = false;
 
@@ -78,11 +81,7 @@ export class LocalMcpClient {
   }
 
   async callTool(name: string, args: object, timeoutMs = 30_000): Promise<ToolCallResult> {
-    const response = (await this.call(
-      "tools/call",
-      { name, arguments: args },
-      timeoutMs,
-    )) as {
+    const response = (await this.call("tools/call", { name, arguments: args }, timeoutMs)) as {
       result?: ToolCallResult;
       error?: { message: string };
     };

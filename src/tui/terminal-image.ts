@@ -60,9 +60,8 @@ function writeKittyImage(b64: string, cols: number, rows: number): void {
 
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1;
-    const params = i === 0
-      ? `a=T,f=100,t=d,c=${cols},r=${rows},m=${isLast ? 0 : 1}`
-      : `m=${isLast ? 0 : 1}`;
+    const params =
+      i === 0 ? `a=T,f=100,t=d,c=${cols},r=${rows},m=${isLast ? 0 : 1}` : `m=${isLast ? 0 : 1}`;
     process.stdout.write(`\x1b_G${params};${chunks[i]}\x1b\\`);
   }
 }

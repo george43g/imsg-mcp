@@ -31,9 +31,14 @@ export interface MessageRow {
   handle_id: string | null;
   cache_has_attachments: number;
 }
+
 import { extractAttributedBodyText } from "./attributed-body-text.js";
 import { ContactsDB } from "./contacts-db.js";
-import { info, perf } from "./logger.js";
+import {
+  isMetadataOnlySnippet,
+  normalizeRichMetadataText,
+  pickConversationSnippet,
+} from "./conversation-snippet.js";
 import {
   AssociatedMessageType,
   isReactionType,
@@ -42,11 +47,7 @@ import {
   parseAssociatedMessageGuid as schemaParseAssociatedMessageGuid,
   Tables,
 } from "./db-schema.js";
-import {
-  isMetadataOnlySnippet,
-  normalizeRichMetadataText,
-  pickConversationSnippet,
-} from "./conversation-snippet.js";
+import { perf } from "./logger.js";
 import { extractChatSummaryText } from "./plist-text.js";
 import { type SlugRecord, SlugStore } from "./slug-store.js";
 import { generateThreadSlug, isGroupChatIdentifier, isGroupGuid } from "./thread-slug.js";
@@ -167,6 +168,7 @@ export class IMessageDB {
   private cachedMergeKeys = new Map<string, string>();
   private cachedSnippets = new Map<number, string | null>();
   private backgroundSyncNeeded = true;
+  private backgroundRefreshScheduled = false;
 
   constructor(dbPath?: string, contactsDbPaths?: string | string[], slugStorePath?: string) {
     const span = perf("IMessageDB.constructor");
@@ -223,16 +225,13 @@ export class IMessageDB {
       resolvedContactName: resolvedName !== chat.chat_identifier ? resolvedName : null,
     });
 
-    const participants = isGroup
-      ? this.fetchChatParticipants(chat.ROWID)
-      : [chat.chat_identifier];
+    const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [chat.chat_identifier];
 
     this.slugStore.upsert({
       slug,
       chatGuid: chat.guid,
       chatIdentifier: chat.chat_identifier,
-      displayName:
-        resolvedName !== chat.chat_identifier ? resolvedName : chat.display_name || null,
+      displayName: resolvedName !== chat.chat_identifier ? resolvedName : chat.display_name || null,
       service: this.detectServiceForChat(chat),
       isGroup,
       participants: participants.join(","),
@@ -303,7 +302,9 @@ export class IMessageDB {
 
   /** Get the slug record for a chat_identifier (for attaching to output). */
   getSlugForChatIdentifier(chatIdentifier: string): string | null {
-    const matches = [...this.slugMap.entries()].filter(([, chat]) => chat.chat_identifier === chatIdentifier);
+    const matches = [...this.slugMap.entries()].filter(
+      ([, chat]) => chat.chat_identifier === chatIdentifier,
+    );
     if (matches.length === 1) return matches[0][0];
     if (matches.length > 1) return null;
     const record = this.slugStore.lookupByChatIdentifier(chatIdentifier);
@@ -394,17 +395,35 @@ export class IMessageDB {
   async getMessagesForChat(
     chatIdentifier: string,
     limit: number = 50,
-    options: { includeReactions?: boolean; includeReactionDetails?: boolean; beforeMessageId?: number; afterMessageId?: number } = {},
+    options: {
+      includeReactions?: boolean;
+      includeReactionDetails?: boolean;
+      beforeMessageId?: number;
+      afterMessageId?: number;
+    } = {},
   ): Promise<Message[]> {
     const span = perf("getMessagesForChat");
-    const { includeReactions = false, includeReactionDetails = false, beforeMessageId, afterMessageId } = options;
+    const {
+      includeReactions = false,
+      includeReactionDetails = false,
+      beforeMessageId,
+      afterMessageId,
+    } = options;
     const chats = this.resolveChatsForConversation(chatIdentifier);
-    if (chats.length === 0) { span.end({ limit, returned: 0 }); return []; }
+    if (chats.length === 0) {
+      span.end({ limit, returned: 0 });
+      return [];
+    }
 
     const perChatLimit = Math.max(limit * 2, 50);
     const result = new Map<number, Message>();
     for (const chat of chats) {
-      const rows = this.fetchMessagesForChatRowId(chat.ROWID, perChatLimit, beforeMessageId, afterMessageId);
+      const rows = this.fetchMessagesForChatRowId(
+        chat.ROWID,
+        perChatLimit,
+        beforeMessageId,
+        afterMessageId,
+      );
       const extBatch = this.fetchExtendedMessageDataBatch(rows.map((r) => r.ROWID));
 
       // Batch-fetch reactions for the entire chat instead of per-message LIKE queries
@@ -507,7 +526,7 @@ export class IMessageDB {
    * Returns incoming messages only, sorted by date ascending (chronological).
    */
   async getMessagesAfter(chatIdentifier: string, afterMessageId: number): Promise<Message[]> {
-    const messages = await this.getMessagesForChat(chatIdentifier, 100);
+    const messages = await this.getMessagesForChat(chatIdentifier, 1000, { afterMessageId });
     const filtered = messages.filter((m) => m.id > afterMessageId && !m.isFromMe);
     filtered.sort((a, b) => a.date.getTime() - b.date.getTime());
     return filtered;
@@ -524,7 +543,12 @@ export class IMessageDB {
     const unreadByChat = this.getUnreadByChat();
 
     // ── Pass 1: lightweight sort entries for ALL chats (no DB lookups) ──
-    type SortEntry = { chat: ChatRow; lastDate: number; isGroup: boolean; last?: LastConversationRow };
+    type SortEntry = {
+      chat: ChatRow;
+      lastDate: number;
+      isGroup: boolean;
+      last?: LastConversationRow;
+    };
     const sortEntries: SortEntry[] = chats.map((chat) => ({
       chat,
       lastDate: lastByChat[chat.ROWID]?.lastDate ?? 0,
@@ -581,7 +605,12 @@ export class IMessageDB {
       ...conversation,
       lastMessageSnippet: this.resolveConversationSnippet(last),
     }));
-    span.end({ chats: chats.length, candidates: candidates.length, deduped: deduped.length, returned: result.length });
+    span.end({
+      chats: chats.length,
+      candidates: candidates.length,
+      deduped: deduped.length,
+      returned: result.length,
+    });
     return result;
   }
 
@@ -660,7 +689,9 @@ export class IMessageDB {
       LIMIT ?
     `);
 
-    const textRows = textStmt.all(`%${query}%`, limit * 2) as (MessageRow & { chat_identifier: string | null })[];
+    const textRows = textStmt.all(`%${query}%`, limit * 2) as (MessageRow & {
+      chat_identifier: string | null;
+    })[];
     const seenIds = new Set<number>();
     const messages: Message[] = [];
 
@@ -695,7 +726,9 @@ export class IMessageDB {
       LIMIT ?
     `);
 
-    const blobRows = blobStmt.all(limit * 20) as (MessageRow & { chat_identifier: string | null })[];
+    const blobRows = blobStmt.all(limit * 20) as (MessageRow & {
+      chat_identifier: string | null;
+    })[];
     const queryLower = query.toLowerCase();
 
     for (const row of blobRows) {
@@ -710,7 +743,13 @@ export class IMessageDB {
       if (messages.length >= limit) break;
     }
 
-    span.end({ query, limit, textHits: textRows.length, blobScanned: blobRows.length, returned: messages.length });
+    span.end({
+      query,
+      limit,
+      textHits: textRows.length,
+      blobScanned: blobRows.length,
+      returned: messages.length,
+    });
     return messages;
   }
 
@@ -763,7 +802,8 @@ export class IMessageDB {
   }
 
   private getPreviousConversationSnippet(last: LastConversationRow): string | null {
-    const rows = this.raw.prepare(`
+    const rows = this.raw
+      .prepare(`
       SELECT m.ROWID, m.text, m.attributedBody, m.date, m.is_from_me
       FROM ${Tables.MESSAGE} m
       JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON cmj.message_id = m.ROWID
@@ -773,7 +813,8 @@ export class IMessageDB {
         AND (m.date < ? OR (m.date = ? AND m.ROWID < ?))
       ORDER BY m.date DESC, m.ROWID DESC
       LIMIT 5
-    `).all(last.chatId, last.lastDate, last.lastDate, last.lastMessageId) as Array<{
+    `)
+      .all(last.chatId, last.lastDate, last.lastDate, last.lastMessageId) as Array<{
       ROWID: number;
       text: string | null;
       attributedBody: Buffer | null;
@@ -816,10 +857,14 @@ export class IMessageDB {
     return merged;
   }
 
-  private mergeConversationEntries(left: PreparedConversationEntry, right: PreparedConversationEntry) {
+  private mergeConversationEntries(
+    left: PreparedConversationEntry,
+    right: PreparedConversationEntry,
+  ) {
     const preferred = this.pickPreferredConversationEntry(left, right);
     const other = preferred === left ? right : left;
-    const sameIdentifier = preferred.conversation.chatIdentifier === other.conversation.chatIdentifier;
+    const sameIdentifier =
+      preferred.conversation.chatIdentifier === other.conversation.chatIdentifier;
 
     return {
       mergeKey: preferred.mergeKey,
@@ -827,7 +872,9 @@ export class IMessageDB {
       conversation: {
         ...preferred.conversation,
         displayName: preferred.conversation.displayName ?? other.conversation.displayName,
-        participants: [...new Set([...preferred.conversation.participants, ...other.conversation.participants])],
+        participants: [
+          ...new Set([...preferred.conversation.participants, ...other.conversation.participants]),
+        ],
         unreadCount: sameIdentifier
           ? Math.max(preferred.conversation.unreadCount, other.conversation.unreadCount)
           : preferred.conversation.unreadCount + other.conversation.unreadCount,
@@ -848,10 +895,16 @@ export class IMessageDB {
     const preferredService = left.last?.lastService ?? right.last?.lastService ?? null;
     if (preferredService) {
       const preferredType = preferredService.toLowerCase().includes("sms") ? "SMS" : "iMessage";
-      if (left.conversation.serviceType === preferredType && right.conversation.serviceType !== preferredType) {
+      if (
+        left.conversation.serviceType === preferredType &&
+        right.conversation.serviceType !== preferredType
+      ) {
         return left;
       }
-      if (right.conversation.serviceType === preferredType && left.conversation.serviceType !== preferredType) {
+      if (
+        right.conversation.serviceType === preferredType &&
+        left.conversation.serviceType !== preferredType
+      ) {
         return right;
       }
     }
@@ -869,7 +922,11 @@ export class IMessageDB {
     return left;
   }
 
-  private getConversationMergeKey(chatIdentifier: string, chatGuid: string, isGroup: boolean): string {
+  private getConversationMergeKey(
+    chatIdentifier: string,
+    chatGuid: string,
+    isGroup: boolean,
+  ): string {
     const cacheKey = `${chatIdentifier}::${chatGuid}::${isGroup}`;
     const cached = this.cachedMergeKeys.get(cacheKey);
     if (cached) return cached;
@@ -897,14 +954,18 @@ export class IMessageDB {
         chat.chat_identifier === identifier ||
         chat.guid === identifier ||
         (chat.chat_identifier != null &&
-          (chat.chat_identifier.replace(/[\s\-()]/g, "").toLowerCase().includes(normalized) ||
+          (chat.chat_identifier
+            .replace(/[\s\-()]/g, "")
+            .toLowerCase()
+            .includes(normalized) ||
             normalized.includes(chat.chat_identifier.replace(/[\s\-()]/g, "").toLowerCase()))),
     );
 
     if (directMatches.length === 0) return [];
 
     const representative = this.pickMostRecentChat(directMatches);
-    const isGroup = isGroupGuid(representative.guid) || isGroupChatIdentifier(representative.chat_identifier);
+    const isGroup =
+      isGroupGuid(representative.guid) || isGroupChatIdentifier(representative.chat_identifier);
     if (isGroup) return [representative];
 
     const mergeKey = this.getConversationMergeKey(
@@ -991,19 +1052,31 @@ export class IMessageDB {
     `);
     const data = (
       stmt.all() as {
-        chat_id: number; last_date: number; last_message_id: number;
-        last_service: string | null; last_is_from_me: number;
-        balloon_bundle_id: string | null; snippet: string; chat_properties: Buffer | null;
+        chat_id: number;
+        last_date: number;
+        last_message_id: number;
+        last_service: string | null;
+        last_is_from_me: number;
+        balloon_bundle_id: string | null;
+        snippet: string;
+        chat_properties: Buffer | null;
       }[]
-    ).reduce((acc, row) => {
-      acc[row.chat_id] = {
-        chatId: row.chat_id, lastDate: row.last_date, lastMessageId: row.last_message_id,
-        lastService: row.last_service, lastIsFromMe: Boolean(row.last_is_from_me),
-        balloonBundleId: row.balloon_bundle_id, snippet: row.snippet || null,
-        chatProperties: row.chat_properties,
-      };
-      return acc;
-    }, {} as Record<number, LastConversationRow>);
+    ).reduce(
+      (acc, row) => {
+        acc[row.chat_id] = {
+          chatId: row.chat_id,
+          lastDate: row.last_date,
+          lastMessageId: row.last_message_id,
+          lastService: row.last_service,
+          lastIsFromMe: Boolean(row.last_is_from_me),
+          balloonBundleId: row.balloon_bundle_id,
+          snippet: row.snippet || null,
+          chatProperties: row.chat_properties,
+        };
+        return acc;
+      },
+      {} as Record<number, LastConversationRow>,
+    );
     this.cachedLastByChat = { data, ts: now };
     return data;
   }
@@ -1023,10 +1096,13 @@ export class IMessageDB {
         AND m.is_from_me = 0 AND m.is_read = 0
       GROUP BY cmj.chat_id
     `);
-    const data = (stmt.all() as { chat_id: number; unread: number }[]).reduce((acc, row) => {
-      acc[row.chat_id] = row.unread;
-      return acc;
-    }, {} as Record<number, number>);
+    const data = (stmt.all() as { chat_id: number; unread: number }[]).reduce(
+      (acc, row) => {
+        acc[row.chat_id] = row.unread;
+        return acc;
+      },
+      {} as Record<number, number>,
+    );
     this.cachedUnreadByChat = { data, ts: now };
     return data;
   }
@@ -1045,7 +1121,12 @@ export class IMessageDB {
    * Fetch message rows for a chat ROWID, ordered by date DESC.
    * Replaces the upstream IMessageDatabase.getMessagesFromChat().
    */
-  private fetchMessagesForChatRowId(chatRowId: number, limit: number, beforeMessageId?: number, afterMessageId?: number): MessageRow[] {
+  private fetchMessagesForChatRowId(
+    chatRowId: number,
+    limit: number,
+    beforeMessageId?: number,
+    afterMessageId?: number,
+  ): MessageRow[] {
     if (beforeMessageId != null && afterMessageId != null) {
       // Gap-fill: messages strictly between two boundary IDs
       const stmt = this.raw.prepare(`
@@ -1056,7 +1137,7 @@ export class IMessageDB {
         LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
         LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
         WHERE cmj.chat_id = ? AND m.ROWID > ? AND m.ROWID < ?
-        ORDER BY m.date DESC
+        ORDER BY m.date DESC, m.ROWID DESC
         LIMIT ?
       `);
       return stmt.all(chatRowId, afterMessageId, beforeMessageId, limit) as MessageRow[];
@@ -1070,10 +1151,24 @@ export class IMessageDB {
         LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
         LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
         WHERE cmj.chat_id = ? AND m.ROWID < ?
-        ORDER BY m.date DESC
+        ORDER BY m.date DESC, m.ROWID DESC
         LIMIT ?
       `);
       return stmt.all(chatRowId, beforeMessageId, limit) as MessageRow[];
+    }
+    if (afterMessageId != null) {
+      const stmt = this.raw.prepare(`
+        SELECT
+          m.ROWID, m.guid, m.text, m.attributedBody, m.date,
+          m.is_from_me, h.id as handle_id, m.cache_has_attachments
+        FROM ${Tables.MESSAGE} m
+        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+        LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+        WHERE cmj.chat_id = ? AND m.ROWID > ?
+        ORDER BY m.date DESC, m.ROWID DESC
+        LIMIT ?
+      `);
+      return stmt.all(chatRowId, afterMessageId, limit) as MessageRow[];
     }
     const stmt = this.raw.prepare(`
       SELECT
@@ -1083,7 +1178,7 @@ export class IMessageDB {
       LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
       LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
       WHERE cmj.chat_id = ?
-      ORDER BY m.date DESC
+      ORDER BY m.date DESC, m.ROWID DESC
       LIMIT ?
     `);
     return stmt.all(chatRowId, limit) as MessageRow[];
@@ -1299,15 +1394,22 @@ export class IMessageDB {
    * Call after responding to an MCP tool call or TUI refresh.
    */
   scheduleBackgroundRefresh(): void {
+    if (this.backgroundRefreshScheduled) return;
+    this.backgroundRefreshScheduled = true;
     setImmediate(() => {
-      // Invalidate caches so the next request gets fresh data
-      this.cachedAllChats = null;
-      this.cachedLastByChat = null;
-      this.cachedUnreadByChat = null;
-      // Pre-warm the cache
-      this.getAllChatsWithLastDate();
-      // Sync any new slugs
-      this.scheduleBackgroundSlugSync();
+      this.backgroundRefreshScheduled = false;
+      try {
+        // Invalidate caches so the next request gets fresh data
+        this.cachedAllChats = null;
+        this.cachedLastByChat = null;
+        this.cachedUnreadByChat = null;
+        // Pre-warm the cache
+        this.getAllChatsWithLastDate();
+        // Sync any new slugs
+        this.scheduleBackgroundSlugSync();
+      } catch {
+        // Refresh is best-effort; foreground requests will surface real DB errors.
+      }
     });
   }
 
@@ -1536,7 +1638,9 @@ export class IMessageDB {
    * Falls back to parsing attributedBody if text is null
    */
   private getMessageTextByRowId(rowId: number): string | null {
-    const row = this.raw.prepare(`SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE ROWID = ? LIMIT 1`).get(rowId) as
+    const row = this.raw
+      .prepare(`SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE ROWID = ? LIMIT 1`)
+      .get(rowId) as
       | { ROWID: number; text: string | null; attributedBody: Buffer | null }
       | undefined;
     return this.extractMessageText(row);

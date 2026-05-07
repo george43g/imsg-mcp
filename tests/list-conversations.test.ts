@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { macTimestampToDate } from "../src/db-schema.js";
 import { getContactsDbPaths, getImsgDbPath } from "../src/config.js";
+import { macTimestampToDate } from "../src/db-schema.js";
 import { IMessageDB } from "../src/imessage-db.js";
 import { isGitLfsPointer } from "./helpers.js";
 
@@ -32,10 +32,14 @@ describe("listConversations", () => {
       .all(limit) as Array<{ chat_identifier: string }>;
     raw.close();
 
-    const duplicateIdentifiers = [...recentChats.reduce((acc, row) => {
-      acc.set(row.chat_identifier, (acc.get(row.chat_identifier) ?? 0) + 1);
-      return acc;
-    }, new Map<string, number>()).entries()]
+    const duplicateIdentifiers = [
+      ...recentChats
+        .reduce((acc, row) => {
+          acc.set(row.chat_identifier, (acc.get(row.chat_identifier) ?? 0) + 1);
+          return acc;
+        }, new Map<string, number>())
+        .entries(),
+    ]
       .filter(([, count]) => count > 1)
       .map(([identifier]) => identifier);
 
@@ -53,7 +57,9 @@ describe("listConversations", () => {
       if (duplicateIdentifiers.length === 0) return;
 
       for (const identifier of duplicateIdentifiers) {
-        expect(conversations.filter((conversation) => conversation.chatIdentifier === identifier).length).toBeLessThanOrEqual(1);
+        expect(
+          conversations.filter((conversation) => conversation.chatIdentifier === identifier).length,
+        ).toBeLessThanOrEqual(1);
       }
     } finally {
       await db.close();

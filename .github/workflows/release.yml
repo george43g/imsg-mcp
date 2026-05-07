@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# semantic-release needs to push the version-bump commit + tag, comment on
+# issues/PRs, and (optionally) emit npm provenance via OIDC.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Don't try to release on the bot's own version-bump push (semantic-release
+    # tags the commit with [skip ci]; the workflow file also guards by message).
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: macos-latest
+    needs: []
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # semantic-release needs full history to inspect commits since last tag.
+          fetch-depth: 0
+          # Use the workflow's GITHUB_TOKEN so subsequent pushes (tag + version
+          # bump commit) are authenticated.
+          persist-credentials: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate synthetic fixtures
+        run: pnpm fixtures
+
+      - name: Verify (lint + typecheck + test + build)
+        run: pnpm verify
+
+      - name: Test (Rust native)
+        run: pnpm test:rust
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm exec semantic-release

@@ -1,0 +1,317 @@
+import type { Tool, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+export const UNLIMITED = Number.MAX_SAFE_INTEGER;
+export const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
+
+const nonEmptyString = (description: string) => z.string().trim().min(1).describe(description);
+
+export const GetMessagesSchema = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(0)
+    .default(20)
+    .describe(
+      "Number of messages to retrieve. 0 = unlimited (bounded by tool safety limits). Default 20.",
+    ),
+  chatIdentifier: nonEmptyString("Phone number, email, or chat ID to filter by").optional(),
+  threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
+  beforeMessageId: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Pagination cursor. Pass `oldestMessageId` from a previous response."),
+});
+
+export const ExportMessagesSchema = z.object({
+  chatIdentifier: nonEmptyString("Phone number, email, or chat ID").optional(),
+  threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
+  format: z.enum(["markdown", "csv", "json", "ndjson"]).default("markdown"),
+  outputPath: nonEmptyString(
+    "Absolute path. Parent directory must exist; file will be created/overwritten.",
+  ),
+  since: nonEmptyString("Earliest date, ISO or relative like '1 year ago'").optional(),
+  until: nonEmptyString("Latest date, ISO or relative like 'yesterday'").optional(),
+  pageSize: z.number().int().min(100).max(5000).default(1000),
+});
+
+export const GetUnreadMessagesSchema = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe("Max unread messages. 0 = unlimited. Default 100."),
+});
+
+export const SendMessageSchema = z.object({
+  recipient: nonEmptyString("Phone number or email address to send to").optional(),
+  threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
+  message: nonEmptyString("Message text to send"),
+});
+
+export const WaitForReplySchema = z.object({
+  chatIdentifier: nonEmptyString("Phone number, email, or chat ID to monitor").optional(),
+  threadSlug: nonEmptyString("Thread slug from list_conversations to monitor").optional(),
+  timeoutSeconds: z.number().min(10).max(3600).default(300),
+  pollIntervalSeconds: z.number().min(5).max(60).default(10),
+  afterMessageId: z.number().int().positive().optional(),
+});
+
+export const ListConversationsSchema = z.object({
+  limit: z.number().int().min(0).default(20),
+});
+
+export const SearchMessagesSchema = z.object({
+  query: nonEmptyString("Search query"),
+  limit: z.number().int().min(0).default(20),
+});
+
+export const GetLogsSchema = z.object({
+  tail: z.number().int().min(1).max(500).optional(),
+  source: z.enum(["memory", "file", "all"]).optional(),
+});
+
+export const RunBuildSchema = z.object({});
+export const RequestRestartSchema = z.object({});
+export const HealthCheckSchema = z.object({});
+export const GetLastSendErrorSchema = z.object({});
+
+export type ToolName = keyof typeof TOOL_SCHEMAS;
+
+export const TOOL_SCHEMAS = {
+  get_messages: GetMessagesSchema,
+  export_messages: ExportMessagesSchema,
+  get_unread_messages: GetUnreadMessagesSchema,
+  send_message: SendMessageSchema,
+  wait_for_reply: WaitForReplySchema,
+  list_conversations: ListConversationsSchema,
+  search_messages: SearchMessagesSchema,
+  get_logs: GetLogsSchema,
+  get_last_send_error: GetLastSendErrorSchema,
+  run_build: RunBuildSchema,
+  request_restart: RequestRestartSchema,
+  health_check: HealthCheckSchema,
+} as const;
+
+type JsonSchema = Tool["inputSchema"];
+
+const noArgsSchema: JsonSchema = { type: "object", properties: {} };
+
+const annotations = {
+  read: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  status: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  send: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  export: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  build: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+} satisfies Record<string, ToolAnnotations>;
+
+export const TOOL_TIMEOUTS_MS: Record<string, number> = {
+  wait_for_reply: 0,
+  run_build: 120_000,
+  search_messages: 60_000,
+  get_messages: 60_000,
+  list_conversations: 60_000,
+  get_unread_messages: 60_000,
+  send_message: 60_000,
+  health_check: 5_000,
+  export_messages: 600_000,
+  get_logs: 10_000,
+  get_last_send_error: 5_000,
+  request_restart: 5_000,
+};
+
+export function resolveLimit(limit: number | undefined, defaultValue = 20): number {
+  if (limit === undefined) return defaultValue;
+  if (limit === 0) return UNLIMITED;
+  return limit;
+}
+
+export const TOOLS: Tool[] = [
+  {
+    name: "get_messages",
+    description:
+      "Get recent iMessages. Optionally filter by conversation. Response footer includes oldestMessageId for beforeMessageId pagination; use export_messages for very large histories.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", default: 20, description: "Number of messages. 0 = unlimited." },
+        chatIdentifier: { type: "string", description: "Phone number, email, or chat ID" },
+        threadSlug: { type: "string", description: "Thread slug from list_conversations" },
+        beforeMessageId: {
+          type: "number",
+          description: "Fetch messages older than this message id",
+        },
+      },
+    },
+  },
+  {
+    name: "export_messages",
+    description:
+      "Stream-export a conversation to markdown, csv, json, or ndjson without loading all history into memory.",
+    annotations: annotations.export,
+    inputSchema: {
+      type: "object",
+      required: ["outputPath"],
+      properties: {
+        chatIdentifier: { type: "string", description: "Phone number, email, or chat ID" },
+        threadSlug: { type: "string", description: "Thread slug from list_conversations" },
+        format: {
+          type: "string",
+          enum: ["markdown", "csv", "json", "ndjson"],
+          default: "markdown",
+        },
+        outputPath: {
+          type: "string",
+          description: "Absolute output path. Existing files are overwritten.",
+        },
+        since: { type: "string", description: "Earliest date, ISO or relative" },
+        until: { type: "string", description: "Latest date, ISO or relative" },
+        pageSize: { type: "number", default: 1000, description: "Internal page size, 100-5000" },
+      },
+    },
+  },
+  {
+    name: "get_unread_messages",
+    description: "Get unread iMessages across all conversations, newest first.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max unread messages. 0 = unlimited. Default 100." },
+      },
+    },
+  },
+  {
+    name: "send_message",
+    description:
+      "Send an iMessage or SMS. Use recipient for 1-on-1 or threadSlug for existing threads, including groups.",
+    annotations: annotations.send,
+    inputSchema: {
+      type: "object",
+      required: ["message"],
+      properties: {
+        recipient: { type: "string", description: "Phone number or email" },
+        threadSlug: { type: "string", description: "Thread slug from list_conversations" },
+        message: { type: "string", description: "Message text to send" },
+      },
+    },
+  },
+  {
+    name: "wait_for_reply",
+    description:
+      "Wait for a new incoming message in a conversation until timeout or client cancellation.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      properties: {
+        chatIdentifier: { type: "string", description: "Phone number, email, or chat ID" },
+        threadSlug: { type: "string", description: "Thread slug from list_conversations" },
+        timeoutSeconds: {
+          type: "number",
+          default: 300,
+          description: "Timeout in seconds, 10-3600",
+        },
+        pollIntervalSeconds: {
+          type: "number",
+          default: 10,
+          description: "Polling interval in seconds, 5-60",
+        },
+        afterMessageId: { type: "number", description: "Only return messages after this id" },
+      },
+    },
+  },
+  {
+    name: "list_conversations",
+    description:
+      "List recent conversations with thread slugs, snippets, unread counts, participants, and service metadata.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          default: 20,
+          description: "Number of conversations. 0 = unlimited.",
+        },
+      },
+    },
+  },
+  {
+    name: "search_messages",
+    description: "Search message text across all conversations.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", description: "Search query" },
+        limit: { type: "number", default: 20, description: "Number of results. 0 = unlimited." },
+      },
+    },
+  },
+  {
+    name: "get_logs",
+    description: "Return debug logs from memory, file, or both.",
+    annotations: annotations.status,
+    inputSchema: {
+      type: "object",
+      properties: {
+        tail: { type: "number", description: "Return last N lines. Default 50." },
+        source: { type: "string", enum: ["memory", "file", "all"], description: "Log source" },
+      },
+    },
+  },
+  {
+    name: "get_last_send_error",
+    description: "Return details for the last send_message failure.",
+    annotations: annotations.status,
+    inputSchema: noArgsSchema,
+  },
+  {
+    name: "run_build",
+    description: "Run pnpm build in the project directory and return stdout/stderr.",
+    annotations: annotations.build,
+    inputSchema: noArgsSchema,
+  },
+  {
+    name: "request_restart",
+    description: "Exit the MCP server process so the client can restart it and load new code.",
+    annotations: annotations.build,
+    inputSchema: noArgsSchema,
+  },
+  {
+    name: "health_check",
+    description: "Return in-memory MCP vital signs without touching SQLite.",
+    annotations: annotations.status,
+    inputSchema: noArgsSchema,
+  },
+];

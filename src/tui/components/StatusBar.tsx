@@ -1,5 +1,5 @@
-import React from "react";
 import { Box, Text } from "ink";
+import type React from "react";
 import type { Conversation } from "../../types.js";
 import { theme } from "../theme.js";
 
@@ -16,13 +16,17 @@ export function StatusBar({ totalUnread, selected, status, loading, children }: 
     <Box backgroundColor={theme.status.bg} paddingX={1} height={1} justifyContent="space-between">
       <Box gap={2}>
         {totalUnread > 0 && (
-          <Text color={theme.status.accent} bold>● {totalUnread} unread</Text>
+          <Text color={theme.status.accent} bold>
+            ● {totalUnread} unread
+          </Text>
         )}
         {selected && (
           <Text color={theme.status.fg}>{selected.displayName ?? selected.chatIdentifier}</Text>
         )}
         {selected && (
-          <Text color={selected.serviceType === "SMS" ? theme.sms : theme.info.label}>{selected.serviceType}</Text>
+          <Text color={selected.serviceType === "SMS" ? theme.sms : theme.info.label}>
+            {selected.serviceType}
+          </Text>
         )}
       </Box>
       <Box gap={2}>

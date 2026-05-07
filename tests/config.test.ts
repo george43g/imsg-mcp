@@ -26,11 +26,16 @@ describe("getContactsDbPaths", () => {
     delete process.env.VITE_CONTACTS_DB_PATH;
     delete process.env.VITE_ADDRESS_BOOK_UUID;
 
-    expect(getContactsDbPaths()?.[0]).toContain("Library/Application Support/AddressBook/AddressBook-v22.abcddb");
+    expect(getContactsDbPaths()?.[0]).toContain(
+      "Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
   });
 
   it("discovers sibling Address Book source databases from the main DB path", () => {
-    const root = join(tmpdir(), `imsg-addressbook-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const root = join(
+      tmpdir(),
+      `imsg-addressbook-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
     const mainDb = join(root, "AddressBook-v22.abcddb");
     const sourceA = join(root, "Sources", "A-UUID", "AddressBook-v22.abcddb");
     const sourceB = join(root, "Sources", "B-UUID", "AddressBook-v22.abcddb");

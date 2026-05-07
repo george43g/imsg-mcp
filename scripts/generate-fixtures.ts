@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * Synthetic fixture generator — produces a tiny, schema-identical iMessage +
  * AddressBook database with 100% fabricated content. NO real bytes from the
@@ -21,9 +22,9 @@
  *   pnpm exec tsx scripts/generate-fixtures.ts [--out fixtures/] [--seed 42]
  */
 
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { mkdirSync, existsSync, rmSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
 
 // ── Configuration ─────────────────────────────────────────────────────────
 
@@ -31,12 +32,12 @@ interface Config {
   outDir: string;
   seed: number;
   numContacts: number;
-  numChats: number;          // total chats including groups
+  numChats: number; // total chats including groups
   numGroupChats: number;
   totalMessages: number;
-  attachmentRate: number;    // 0..1 fraction of messages with attachments
-  replyRate: number;         // 0..1 fraction of messages that are replies
-  preamble95Rate: number;    // 0..1 fraction of attributedBody using 0x95 variant
+  attachmentRate: number; // 0..1 fraction of messages with attachments
+  replyRate: number; // 0..1 fraction of messages that are replies
+  preamble95Rate: number; // 0..1 fraction of attributedBody using 0x95 variant
   groupParticipantRange: [number, number];
 }
 
@@ -85,32 +86,159 @@ class Rng {
 // ── Synthetic content pools ───────────────────────────────────────────────
 
 const FIRST_NAMES = [
-  "Alice", "Bob", "Charlie", "Dana", "Evelyn", "Felix", "Grace", "Henry",
-  "Iris", "Jack", "Kira", "Liam", "Mia", "Noah", "Olivia", "Parker",
-  "Quinn", "Riley", "Sage", "Theo", "Uma", "Vincent", "Willow", "Xander",
-  "Yara", "Zane", "Avery", "Blake", "Cameron", "Drew", "Emerson", "Finley",
-  "Harper", "Indigo", "Jordan", "Kai", "Logan", "Morgan", "Nova", "Oakley",
-  "Phoenix", "Reese", "Sawyer", "Taylor", "River", "Skylar",
+  "Alice",
+  "Bob",
+  "Charlie",
+  "Dana",
+  "Evelyn",
+  "Felix",
+  "Grace",
+  "Henry",
+  "Iris",
+  "Jack",
+  "Kira",
+  "Liam",
+  "Mia",
+  "Noah",
+  "Olivia",
+  "Parker",
+  "Quinn",
+  "Riley",
+  "Sage",
+  "Theo",
+  "Uma",
+  "Vincent",
+  "Willow",
+  "Xander",
+  "Yara",
+  "Zane",
+  "Avery",
+  "Blake",
+  "Cameron",
+  "Drew",
+  "Emerson",
+  "Finley",
+  "Harper",
+  "Indigo",
+  "Jordan",
+  "Kai",
+  "Logan",
+  "Morgan",
+  "Nova",
+  "Oakley",
+  "Phoenix",
+  "Reese",
+  "Sawyer",
+  "Taylor",
+  "River",
+  "Skylar",
 ];
 
 const LAST_NAMES = [
-  "Anderson", "Bell", "Carter", "Davis", "Evans", "Foster", "Garcia", "Harris",
-  "Irving", "Jones", "King", "Lee", "Miller", "Nguyen", "Owens", "Patel",
-  "Quinn", "Reed", "Smith", "Taylor", "Underwood", "Vargas", "Walsh",
-  "Xu", "Young", "Zhang", "Brooks", "Cole", "Doyle", "Ellis", "Fisher",
-  "Green", "Hayes", "Ingram", "Joyner", "Kelly", "Lang", "Mason", "Newton",
+  "Anderson",
+  "Bell",
+  "Carter",
+  "Davis",
+  "Evans",
+  "Foster",
+  "Garcia",
+  "Harris",
+  "Irving",
+  "Jones",
+  "King",
+  "Lee",
+  "Miller",
+  "Nguyen",
+  "Owens",
+  "Patel",
+  "Quinn",
+  "Reed",
+  "Smith",
+  "Taylor",
+  "Underwood",
+  "Vargas",
+  "Walsh",
+  "Xu",
+  "Young",
+  "Zhang",
+  "Brooks",
+  "Cole",
+  "Doyle",
+  "Ellis",
+  "Fisher",
+  "Green",
+  "Hayes",
+  "Ingram",
+  "Joyner",
+  "Kelly",
+  "Lang",
+  "Mason",
+  "Newton",
 ];
 
 const LOREM_WORDS = [
-  "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing",
-  "elit", "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore",
-  "et", "dolore", "magna", "aliqua", "enim", "ad", "minim", "veniam",
-  "quis", "nostrud", "exercitation", "ullamco", "laboris", "nisi", "aliquip",
-  "ex", "ea", "commodo", "consequat", "duis", "aute", "irure", "in",
-  "reprehenderit", "voluptate", "velit", "esse", "cillum", "fugiat",
-  "nulla", "pariatur", "excepteur", "sint", "occaecat", "cupidatat",
-  "non", "proident", "sunt", "culpa", "qui", "officia", "deserunt", "mollit",
-  "anim", "id", "est", "laborum",
+  "lorem",
+  "ipsum",
+  "dolor",
+  "sit",
+  "amet",
+  "consectetur",
+  "adipiscing",
+  "elit",
+  "sed",
+  "do",
+  "eiusmod",
+  "tempor",
+  "incididunt",
+  "ut",
+  "labore",
+  "et",
+  "dolore",
+  "magna",
+  "aliqua",
+  "enim",
+  "ad",
+  "minim",
+  "veniam",
+  "quis",
+  "nostrud",
+  "exercitation",
+  "ullamco",
+  "laboris",
+  "nisi",
+  "aliquip",
+  "ex",
+  "ea",
+  "commodo",
+  "consequat",
+  "duis",
+  "aute",
+  "irure",
+  "in",
+  "reprehenderit",
+  "voluptate",
+  "velit",
+  "esse",
+  "cillum",
+  "fugiat",
+  "nulla",
+  "pariatur",
+  "excepteur",
+  "sint",
+  "occaecat",
+  "cupidatat",
+  "non",
+  "proident",
+  "sunt",
+  "culpa",
+  "qui",
+  "officia",
+  "deserunt",
+  "mollit",
+  "anim",
+  "id",
+  "est",
+  "laborum",
 ];
 
 const SAMPLE_EMOJI = ["🎉", "👍", "❤️", "🔥", "✨", "📱", "☕", "🌙", "🍕"];
@@ -125,7 +253,7 @@ function loremSentence(rng: Rng, minWords = 3, maxWords = 20): string {
   const r = rng.float();
   text += r < 0.3 ? "?" : r < 0.6 ? "!" : ".";
   // 10% chance to append an emoji
-  if (rng.bool(0.1)) text += " " + rng.pick(SAMPLE_EMOJI);
+  if (rng.bool(0.1)) text += ` ${rng.pick(SAMPLE_EMOJI)}`;
   return text;
 }
 
@@ -144,27 +272,42 @@ function loremSentence(rng: Rng, minWords = 3, maxWords = 20): string {
  * 0x95 (DataDetector annotations) variants — exercising the parser regression
  * test we already have in tests/typedstream-parser.test.ts.
  */
-function buildAttributedBody(text: string, preambleByte2 = 0x94): Buffer {
+function _buildAttributedBody(text: string, preambleByte2 = 0x94): Buffer {
   const utf8 = Buffer.from(text, "utf8");
   const len = utf8.length;
-  const lenBytes: Buffer = len < 0x81
-    ? Buffer.from([len])
-    : Buffer.from([0x81, len & 0xff, (len >>> 8) & 0xff]);
+  const lenBytes: Buffer =
+    len < 0x81 ? Buffer.from([len]) : Buffer.from([0x81, len & 0xff, (len >>> 8) & 0xff]);
 
   // streamtyped header
   const header = Buffer.from([
-    0x04, 0x0b, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x74, 0x79, 0x70, 0x65, 0x64, // streamtyped
-    0x81, 0xe8, 0x03, 0x84, 0x01, 0x40, 0x84, 0x84, 0x84,
+    0x04,
+    0x0b,
+    0x73,
+    0x74,
+    0x72,
+    0x65,
+    0x61,
+    0x6d,
+    0x74,
+    0x79,
+    0x70,
+    0x65,
+    0x64, // streamtyped
+    0x81,
+    0xe8,
+    0x03,
+    0x84,
+    0x01,
+    0x40,
+    0x84,
+    0x84,
+    0x84,
     0x12, // length of "NSAttributedString"
   ]);
   const nsAttr = Buffer.from("NSAttributedString\x00", "ascii");
-  const nsObjPart = Buffer.from([
-    0x84, 0x84, 0x08,
-  ]);
+  const nsObjPart = Buffer.from([0x84, 0x84, 0x08]);
   const nsObj = Buffer.from("NSObject\x00", "ascii");
-  const middle = Buffer.from([
-    0x85, 0x92, 0x84, 0x84, 0x84, 0x08,
-  ]);
+  const middle = Buffer.from([0x85, 0x92, 0x84, 0x84, 0x84, 0x08]);
   const nsString = Buffer.from("NSString\x01", "ascii");
   const preamble = Buffer.from([0x94, preambleByte2, 0x84, 0x01, 0x2b]);
   // Wait — the preamble starts with 0x01 0x9X 0x84 0x01 0x2b per the parser.
@@ -174,17 +317,35 @@ function buildAttributedBody(text: string, preambleByte2 = 0x94): Buffer {
 
   // Trailer — minimal NSDictionary attribute marker
   const trailer = Buffer.from([
-    0x86, 0x84, 0x02, 0x69, 0x49, 0x01, // iI byte
+    0x86,
+    0x84,
+    0x02,
+    0x69,
+    0x49,
+    0x01, // iI byte
     len & 0xff, // attribute range length (matches text length)
-    0x92, 0x84, 0x84, 0x84,
+    0x92,
+    0x84,
+    0x84,
+    0x84,
     0x0c, // length of "NSDictionary"
   ]);
   const nsDict = Buffer.from("NSDictionary\x00", "ascii");
   const tail = Buffer.from([0x86, 0x86, 0x86]);
 
   return Buffer.concat([
-    header, nsAttr, nsObjPart, nsObj, middle, nsString,
-    preamble, lenBytes, utf8, trailer, nsDict, tail,
+    header,
+    nsAttr,
+    nsObjPart,
+    nsObj,
+    middle,
+    nsString,
+    preamble,
+    lenBytes,
+    utf8,
+    trailer,
+    nsDict,
+    tail,
   ]);
 }
 
@@ -194,15 +355,34 @@ function buildAttributedBody(text: string, preambleByte2 = 0x94): Buffer {
 function buildAttributedBodyFixed(text: string, preambleByte2 = 0x94): Buffer {
   const utf8 = Buffer.from(text, "utf8");
   const len = utf8.length;
-  const lenBytes: Buffer = len < 0x81
-    ? Buffer.from([len])
-    : Buffer.from([0x81, len & 0xff, (len >>> 8) & 0xff]);
+  const lenBytes: Buffer =
+    len < 0x81 ? Buffer.from([len]) : Buffer.from([0x81, len & 0xff, (len >>> 8) & 0xff]);
 
   // Mirror the structure from tests/typedstream-parser.test.ts buildBlobWithPreamble
   // plus enough trailing structure that extractAttributedBodyText finds the candidate.
   const header = Buffer.from([
-    0x04, 0x0b, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x74, 0x79, 0x70, 0x65, 0x64, // streamtyped
-    0x81, 0xe8, 0x03, 0x84, 0x01, 0x40, 0x84, 0x84, 0x84,
+    0x04,
+    0x0b,
+    0x73,
+    0x74,
+    0x72,
+    0x65,
+    0x61,
+    0x6d,
+    0x74,
+    0x79,
+    0x70,
+    0x65,
+    0x64, // streamtyped
+    0x81,
+    0xe8,
+    0x03,
+    0x84,
+    0x01,
+    0x40,
+    0x84,
+    0x84,
+    0x84,
     0x12, // length of "NSAttributedString"
   ]);
   const nsAttr = Buffer.from("NSAttributedString\x00", "ascii");
@@ -213,8 +393,15 @@ function buildAttributedBodyFixed(text: string, preambleByte2 = 0x94): Buffer {
   const preamble = Buffer.from([0x01, preambleByte2, 0x84, 0x01, 0x2b]);
 
   return Buffer.concat([
-    header, nsAttr, nsObjPart, nsObj, middle, nsString,
-    preamble, lenBytes, utf8,
+    header,
+    nsAttr,
+    nsObjPart,
+    nsObj,
+    middle,
+    nsString,
+    preamble,
+    lenBytes,
+    utf8,
     // Trailing structure — terminator bytes so the parser doesn't try to
     // continue reading content past our string.
     Buffer.from([0x86, 0x84, 0x02, 0x69, 0x49]), // iI marker
@@ -418,7 +605,13 @@ function generateChats(rng: Rng, contacts: Contact[], cfg: Config): ChatRow[] {
 
 // ── Database writers ──────────────────────────────────────────────────────
 
-function makeChatDb(path: string, contacts: Contact[], chats: ChatRow[], cfg: Config, rng: Rng): void {
+function makeChatDb(
+  path: string,
+  contacts: Contact[],
+  chats: ChatRow[],
+  cfg: Config,
+  rng: Rng,
+): void {
   if (existsSync(path)) rmSync(path);
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
@@ -447,7 +640,14 @@ function makeChatDb(path: string, contacts: Contact[], chats: ChatRow[], cfg: Co
     "INSERT INTO chat_handle_join (chat_id, handle_id) VALUES (?, ?)",
   );
   for (const ch of chats) {
-    insertChat.run(ch.rowid, ch.guid, ch.identifier, "iMessage", ch.displayName, ch.isGroup ? 43 : 45);
+    insertChat.run(
+      ch.rowid,
+      ch.guid,
+      ch.identifier,
+      "iMessage",
+      ch.displayName,
+      ch.isGroup ? 43 : 45,
+    );
     for (const pk of ch.participants) {
       const hid = handleIdByContact.get(pk);
       if (hid) insertChatHandle.run(ch.rowid, hid);
@@ -478,7 +678,9 @@ function makeChatDb(path: string, contacts: Contact[], chats: ChatRow[], cfg: Co
   // Distribute messages across chats — weighted so some are bigger than others
   const chatWeights = chats.map(() => rng.int(1, 20));
   const totalWeight = chatWeights.reduce((a, b) => a + b, 0);
-  const messageCounts = chatWeights.map((w) => Math.max(1, Math.floor((w / totalWeight) * cfg.totalMessages)));
+  const messageCounts = chatWeights.map((w) =>
+    Math.max(1, Math.floor((w / totalWeight) * cfg.totalMessages)),
+  );
 
   const messageGuidsByChat = new Map<number, string[]>();
 
@@ -496,7 +698,7 @@ function makeChatDb(path: string, contacts: Contact[], chats: ChatRow[], cfg: Co
         const senderPk = ch.isGroup
           ? ch.participants[rng.int(0, ch.participants.length)]
           : ch.participants[0];
-        const handleId = isFromMe ? 0 : handleIdByContact.get(senderPk) ?? 0;
+        const handleId = isFromMe ? 0 : (handleIdByContact.get(senderPk) ?? 0);
 
         // Date: distribute over the past 2 years backwards from anchor
         const ageS = rng.int(0, TWO_YEARS_S);
@@ -519,13 +721,13 @@ function makeChatDb(path: string, contacts: Contact[], chats: ChatRow[], cfg: Co
           macNs,
           isFromMe ? macNs : 0,
           isFromMe ? macNs : 0,
-          isFromMe ? 1 : (rng.bool(0.95) ? 1 : 0),
+          isFromMe ? 1 : rng.bool(0.95) ? 1 : 0,
           rng.bool(0.9) ? 1 : 0,
           1,
           hasAttachment ? 1 : 0,
           "iMessage",
           // Reply-to: occasionally point at a previously-inserted message in the SAME chat
-          (rng.bool(cfg.replyRate) && guids.length > 0) ? guids[rng.int(0, guids.length)] : null,
+          rng.bool(cfg.replyRate) && guids.length > 0 ? guids[rng.int(0, guids.length)] : null,
         );
 
         insertChatMsg.run(ch.rowid, messageRowid, macNs);
@@ -584,7 +786,7 @@ function makeVcf(path: string, contacts: Contact[]): void {
     lines.push(`EMAIL;type=INTERNET:${c.email}`);
     lines.push("END:VCARD");
   }
-  writeFileSync(path, lines.join("\n") + "\n", "utf8");
+  writeFileSync(path, `${lines.join("\n")}\n`, "utf8");
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────
@@ -621,7 +823,13 @@ function main(): void {
   makeAddressBookDb(join(outDir, "AddressBook", "AddressBook-v22.abcddb"), contacts);
   // Sources/<uuid>/ — same content as a "linked source"
   makeAddressBookDb(
-    join(outDir, "AddressBook", "Sources", "00000000-0000-4000-8000-000000000001", "AddressBook-v22.abcddb"),
+    join(
+      outDir,
+      "AddressBook",
+      "Sources",
+      "00000000-0000-4000-8000-000000000001",
+      "AddressBook-v22.abcddb",
+    ),
     contacts,
   );
 

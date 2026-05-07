@@ -89,5 +89,10 @@ function applyRelative(now: Date, n: number, unit: string): Date {
 
 /** Pretty-format a target date for status messages. */
 export function formatJumpTarget(d: Date): string {
-  return d.toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }

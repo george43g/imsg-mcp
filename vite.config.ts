@@ -34,8 +34,7 @@ export default defineConfig({
     rollupOptions: {
       external: nodeExternals,
       output: {
-        banner: (chunk) =>
-          chunk.isEntry ? "#!/usr/bin/env node" : "",
+        banner: (chunk) => (chunk.isEntry ? "#!/usr/bin/env node" : ""),
       },
     },
     outDir: "dist",

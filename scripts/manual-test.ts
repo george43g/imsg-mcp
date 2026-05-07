@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * Manual test harness — exercises the IMessageDB layer directly against
  * the env-data/ fixture (not live data). Used for bug hunting and stress
@@ -15,8 +16,8 @@
  *   stress         — fetch large message sets, look for crashes
  */
 
-import { IMessageDB } from "../src/imessage-db.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../src/config.js";
+import { IMessageDB } from "../src/imessage-db.js";
 
 function header(name: string) {
   console.log(`\n\x1b[1;36m── ${name} ──\x1b[0m`);
@@ -47,7 +48,7 @@ const SUSPICIOUS_PATTERNS: Array<{ regex: RegExp; reason: string }> = [
   { regex: /streamtyped/i, reason: "typedstream header leak" },
   // Flag suspicious binary markers — but allow text that uses *, ) for legitimate purposes
   // Only flag when followed by other typedstream-looking content (multiple symbols in a row).
-  { regex: /^[\)\*\+]{2,}/, reason: "starts with multiple binary marker chars" },
+  { regex: /^[)*+]{2,}/, reason: "starts with multiple binary marker chars" },
   { regex: /\u{1FFFD}|\\u00[0-1][0-9a-f]/iu, reason: "unrecoverable replacement char" },
 ];
 
@@ -116,7 +117,9 @@ async function testLeaks(db: IMessageDB) {
         }
       }
     } catch (e) {
-      fail(`getMessagesForChat threw on ${c.threadSlug}: ${e instanceof Error ? e.message : String(e)}`);
+      fail(
+        `getMessagesForChat threw on ${c.threadSlug}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 
@@ -174,7 +177,9 @@ async function testPerf(db: IMessageDB) {
     listTimes.push(performance.now() - t0);
   }
   const avgList = listTimes.reduce((a, b) => a + b) / runs;
-  pass(`listConversations(200) avg ${avgList.toFixed(0)}ms (${listTimes.map((t) => t.toFixed(0)).join(", ")}ms)`);
+  pass(
+    `listConversations(200) avg ${avgList.toFixed(0)}ms (${listTimes.map((t) => t.toFixed(0)).join(", ")}ms)`,
+  );
 
   const convs = await db.listConversations(5);
   if (convs.length > 0) {
@@ -185,7 +190,9 @@ async function testPerf(db: IMessageDB) {
       msgTimes.push(performance.now() - t0);
     }
     const avgMsg = msgTimes.reduce((a, b) => a + b) / runs;
-    pass(`getMessagesForChat(200) avg ${avgMsg.toFixed(0)}ms (${msgTimes.map((t) => t.toFixed(0)).join(", ")}ms)`);
+    pass(
+      `getMessagesForChat(200) avg ${avgMsg.toFixed(0)}ms (${msgTimes.map((t) => t.toFixed(0)).join(", ")}ms)`,
+    );
   }
 }
 
@@ -204,13 +211,17 @@ async function testStress(db: IMessageDB) {
     }
   }
   const elapsed = performance.now() - start;
-  pass(`Fetched ${total} total messages in ${elapsed.toFixed(0)}ms (${(total / (elapsed / 1000)).toFixed(0)} msg/s)`);
+  pass(
+    `Fetched ${total} total messages in ${elapsed.toFixed(0)}ms (${(total / (elapsed / 1000)).toFixed(0)} msg/s)`,
+  );
 }
 
 async function main() {
   const test = process.argv[2] ?? "all";
   console.log(`\x1b[1mManual test harness\x1b[0m`);
-  console.log(`Engine: ${process.env.IMSG_DISABLE_NATIVE === "1" ? "TS (forced)" : "auto (native if available)"}`);
+  console.log(
+    `Engine: ${process.env.IMSG_DISABLE_NATIVE === "1" ? "TS (forced)" : "auto (native if available)"}`,
+  );
   console.log(`Test mode: ${test}`);
 
   const db = new IMessageDB(getImsgDbPath(), getContactsDbPaths(), getSlugsDbPath());

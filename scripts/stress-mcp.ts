@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import type { Buffer } from "node:buffer";
 /**
  * Stress / robustness harness for the new MCP features (export, pagination,
  * selection, watchdog). Run before publishing. Exits non-zero on any failure.
@@ -16,8 +17,7 @@
  *   7. Unknown threadSlug returns isError, server stays healthy
  *   8. boundMessagesIfNeeded eviction shape (pure, runs in-process)
  */
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { Buffer } from "node:buffer";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,11 +38,9 @@ class McpClient {
   private pending = new Map<number, (msg: JsonRpcResponse) => void>();
 
   constructor(envFile: string) {
-    this.proc = spawn(
-      "node",
-      [`--env-file=${envFile}`, "dist/index.js"],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    ) as ChildProcessWithoutNullStreams;
+    this.proc = spawn("node", [`--env-file=${envFile}`, "dist/index.js"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    }) as ChildProcessWithoutNullStreams;
     this.proc.stdout.on("data", (chunk: Buffer) => {
       this.buffer += chunk.toString("utf8");
       const lines = this.buffer.split("\n");
@@ -63,7 +61,9 @@ class McpClient {
         }
       }
     });
-    this.proc.stderr.on("data", () => { /* ignore */ });
+    this.proc.stderr.on("data", () => {
+      /* ignore */
+    });
   }
 
   pid(): number | undefined {
@@ -76,7 +76,9 @@ class McpClient {
       capabilities: {},
       clientInfo: { name: "stress", version: "1" },
     });
-    this.proc.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`);
+    this.proc.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`,
+    );
   }
 
   async call(method: string, params: object, timeoutMs = 120_000): Promise<JsonRpcResponse> {
@@ -94,13 +96,21 @@ class McpClient {
     });
   }
 
-  async callTool(name: string, args: object, timeoutMs = 120_000): Promise<{ content?: Array<{ type: string; text?: string }>; isError?: boolean }> {
+  async callTool(
+    name: string,
+    args: object,
+    timeoutMs = 120_000,
+  ): Promise<{ content?: Array<{ type: string; text?: string }>; isError?: boolean }> {
     const r = await this.call("tools/call", { name, arguments: args }, timeoutMs);
     return r.result ?? {};
   }
 
   close(): void {
-    try { this.proc.stdin.end(); } catch { /* */ }
+    try {
+      this.proc.stdin.end();
+    } catch {
+      /* */
+    }
     this.proc.kill();
   }
 }
@@ -127,10 +137,18 @@ function fakeMsgs(n: number): Message[] {
   }));
 }
 
-function header(s: string) { console.log(`\n\x1b[1;36m── ${s} ──\x1b[0m`); }
-function pass(msg: string) { console.log(`  \x1b[32m✓\x1b[0m ${msg}`); }
-function fail(msg: string) { console.log(`  \x1b[31m✗\x1b[0m ${msg}`); }
-function info(msg: string) { console.log(`  \x1b[2m· ${msg}\x1b[0m`); }
+function header(s: string) {
+  console.log(`\n\x1b[1;36m── ${s} ──\x1b[0m`);
+}
+function pass(msg: string) {
+  console.log(`  \x1b[32m✓\x1b[0m ${msg}`);
+}
+function fail(msg: string) {
+  console.log(`  \x1b[31m✗\x1b[0m ${msg}`);
+}
+function info(msg: string) {
+  console.log(`  \x1b[2m· ${msg}\x1b[0m`);
+}
 
 let failures = 0;
 async function check(name: string, fn: () => Promise<boolean | string>): Promise<void> {
@@ -221,7 +239,9 @@ async function main() {
       return size > 0 && lines.length > 0
         ? `${lines.length} lines, ${(size / 1024).toFixed(1)}KB, ${exportMs}ms`
         : false;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   });
 
   // ── 5b#2: health_check fast during heavy export ──────────────
@@ -242,9 +262,8 @@ async function main() {
   }
   await exportPromise;
   const maxHealth = Math.max(...healthTimes);
-  await check(
-    "all health_checks under 1500ms",
-    async () => maxHealth < 1500
+  await check("all health_checks under 1500ms", async () =>
+    maxHealth < 1500
       ? `max ${maxHealth}ms, avg ${Math.round(healthTimes.reduce((a, b) => a + b) / healthTimes.length)}ms`
       : false,
   );
@@ -255,7 +274,10 @@ async function main() {
   let cursor: number | undefined;
   let pages = 0;
   while (pages < 50) {
-    const args: { threadSlug: string; limit: number; beforeMessageId?: number } = { threadSlug: slug, limit: 50 };
+    const args: { threadSlug: string; limit: number; beforeMessageId?: number } = {
+      threadSlug: slug,
+      limit: 50,
+    };
     if (cursor != null) args.beforeMessageId = cursor;
     const r = await client.callTool("get_messages", args);
     const text = r.content?.[0]?.text ?? "";
@@ -271,7 +293,9 @@ async function main() {
     pages++;
     if (text.includes("hasMore=false")) break;
   }
-  await check("pagination terminates in <50 iterations", async () => pages < 50 ? `${pages} pages` : false);
+  await check("pagination terminates in <50 iterations", async () =>
+    pages < 50 ? `${pages} pages` : false,
+  );
   await check("no duplicate cursor IDs", async () => seenIds.size === pages);
 
   // ── 5b#4: limit > available ──────────────────────────────────
@@ -285,7 +309,9 @@ async function main() {
   const cr = await client.callTool("get_messages", { threadSlug: slug, limit: 0 });
   const ctext = cr.content?.[0]?.text ?? "";
   // It's only "capped" if there were actually 5000+ messages. Either is OK.
-  await check("response is well-formed (has pagination footer)", async () => ctext.includes("Pagination:"));
+  await check("response is well-formed (has pagination footer)", async () =>
+    ctext.includes("Pagination:"),
+  );
 
   // ── 5b#6: malformed since ────────────────────────────────────
   header("5b#6. export_messages with malformed since='qwerty'");
@@ -313,10 +339,16 @@ async function main() {
   client.close();
   // Best-effort temp-file cleanup
   for (const p of [exportPath, concurrentPath]) {
-    try { unlinkSync(p); } catch { /* */ }
+    try {
+      unlinkSync(p);
+    } catch {
+      /* */
+    }
   }
 
-  console.log(`\n\x1b[1mResult:\x1b[0m ${failures === 0 ? "\x1b[32mall passed\x1b[0m" : `\x1b[31m${failures} failures\x1b[0m`}`);
+  console.log(
+    `\n\x1b[1mResult:\x1b[0m ${failures === 0 ? "\x1b[32mall passed\x1b[0m" : `\x1b[31m${failures} failures\x1b[0m`}`,
+  );
   process.exit(failures === 0 ? 0 : 1);
 }
 

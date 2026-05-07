@@ -3,7 +3,7 @@ import { hasNativeModule } from "../../native-bridge.js";
 import { readWatchdogState } from "../../watchdog.js";
 
 export interface DevStatsData {
-  engine: "Rust" | "TS";
+  engine: "Rust parser + TS DB" | "TS";
   cpuPercent: number;
   memMB: number;
   pid: number;
@@ -29,9 +29,13 @@ function formatAgo(ms: number): string {
   return `${Math.floor(sec / 3600)}h`;
 }
 
+function engineLabel(): DevStatsData["engine"] {
+  return hasNativeModule() ? "Rust parser + TS DB" : "TS";
+}
+
 export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: number) => void } {
   const [stats, setStats] = useState<DevStatsData>({
-    engine: hasNativeModule() ? "Rust" : "TS",
+    engine: engineLabel(),
     cpuPercent: 0,
     memMB: 0,
     pid: process.pid,
@@ -64,7 +68,7 @@ export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: numb
 
       const wd = readWatchdogState();
       setStats({
-        engine: hasNativeModule() ? "Rust" : "TS",
+        engine: engineLabel(),
         cpuPercent: Math.round(cpuPercent * 10) / 10,
         memMB,
         pid: process.pid,

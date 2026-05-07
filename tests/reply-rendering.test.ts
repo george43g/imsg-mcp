@@ -26,9 +26,7 @@ function computeReplyDisplay(
   if (!replyText && m.replyTo?.replyToGuid && lookupReplyText) {
     replyText = lookupReplyText(m.replyTo.replyToGuid);
   }
-  return replyText
-    ? replyText.slice(0, maxWidth - 12)
-    : "(replied to earlier message)";
+  return replyText ? replyText.slice(0, maxWidth - 12) : "(replied to earlier message)";
 }
 
 function fakeMessage(overrides: Partial<Message> = {}): Message {

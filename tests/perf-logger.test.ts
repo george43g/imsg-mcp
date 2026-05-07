@@ -1,11 +1,20 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getContactsDbPaths, getImsgDbPath } from "../src/config.js";
 import { IMessageDB } from "../src/imessage-db.js";
 import type { LogEntry } from "../src/logger.js";
-import { getLogDirectory, getLogFilePath, getLogs, perf, info, warn, error, clearLogs } from "../src/logger.js";
+import {
+  clearLogs,
+  error,
+  getLogDirectory,
+  getLogFilePath,
+  getLogs,
+  info,
+  perf,
+  warn,
+} from "../src/logger.js";
 import { isGitLfsPointer } from "./helpers.js";
 
 describe("logger", () => {

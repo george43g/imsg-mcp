@@ -5,21 +5,21 @@ export const theme = {
   pending: { bg: "#3C3C41", fg: "#B4B4B9", border: "#505055" },
 
   // Compact message colors
-  sentText: "#8CB8FF",    // light blue for sent message text
+  sentText: "#8CB8FF", // light blue for sent message text
   receivedText: "#D2D2D7", // light gray for received message text
-  senderName: "#5AC8C8",   // teal for other people's names
-  replyContext: "#9090A0",  // muted but readable on dark group bgs
-  attachment: "#FFB347",   // orange for attachment indicator
-  lineNum: "#646470",      // visible on group backgrounds without screaming
+  senderName: "#5AC8C8", // teal for other people's names
+  replyContext: "#9090A0", // muted but readable on dark group bgs
+  attachment: "#FFB347", // orange for attachment indicator
+  lineNum: "#646470", // visible on group backgrounds without screaming
 
   // Alternating group backgrounds for sender contrast
   groupBg: {
-    sent: "#14213D",       // dark navy tint for sent groups
-    received: "#1A1A2E",   // dark purple-gray tint for received groups
+    sent: "#14213D", // dark navy tint for sent groups
+    received: "#1A1A2E", // dark purple-gray tint for received groups
   },
 
   // Background tint for messages in an active visual selection (V mode)
-  selectionBg: "#3C3814",  // muted yellow — visible against dark group bgs but not screaming
+  selectionBg: "#3C3814", // muted yellow — visible against dark group bgs but not screaming
 
   sidebar: {
     selected: "#1E3C6E",
@@ -53,14 +53,14 @@ export const theme = {
 /** Nerd Font / Powerline glyphs and Unicode symbols. */
 export const glyphs = {
   /** Powerline arrow separators */
-  arrowRight: "\uE0B0",      //
-  arrowRightThin: "\uE0B1",  //
-  arrowLeft: "\uE0B2",       //
-  arrowLeftThin: "\uE0B3",   //
+  arrowRight: "\uE0B0", //
+  arrowRightThin: "\uE0B1", //
+  arrowLeft: "\uE0B2", //
+  arrowLeftThin: "\uE0B3", //
 
   /** Direction indicators for messages */
-  sent: "\uE0B0",            //  (powerline arrow right = sent)
-  received: "\uE0B2",        //  (powerline arrow left = received)
+  sent: "\uE0B0", //  (powerline arrow right = sent)
+  received: "\uE0B2", //  (powerline arrow left = received)
 
   /** Status indicators */
   unreadDot: "●",

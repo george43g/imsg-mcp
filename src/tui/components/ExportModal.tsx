@@ -1,6 +1,5 @@
-import React from "react";
-import { Box, Text } from "ink";
 import { TextInput } from "@inkjs/ui";
+import { Box, Text } from "ink";
 import { theme } from "../theme.js";
 
 interface Props {
@@ -18,14 +17,11 @@ interface Props {
  */
 export function ExportModal({ format, path, rangeSummary, onChangePath, onSubmit }: Props) {
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor={theme.status.accent}
-      paddingX={1}
-    >
+    <Box flexDirection="column" borderStyle="double" borderColor={theme.status.accent} paddingX={1}>
       <Box>
-        <Text color={theme.status.accent} bold>Export messages</Text>
+        <Text color={theme.status.accent} bold>
+          Export messages
+        </Text>
       </Box>
       <Box>
         <Text color={theme.info.label}>Range: </Text>
@@ -33,18 +29,27 @@ export function ExportModal({ format, path, rangeSummary, onChangePath, onSubmit
       </Box>
       <Box>
         <Text color={theme.info.label}>Format: </Text>
-        <Text color={format === "markdown" ? theme.status.accent : theme.info.value} bold={format === "markdown"}>
+        <Text
+          color={format === "markdown" ? theme.status.accent : theme.info.value}
+          bold={format === "markdown"}
+        >
           [Markdown]
         </Text>
         <Text> </Text>
-        <Text color={format === "csv" ? theme.status.accent : theme.info.value} bold={format === "csv"}>
+        <Text
+          color={format === "csv" ? theme.status.accent : theme.info.value}
+          bold={format === "csv"}
+        >
           [CSV]
         </Text>
         <Text> </Text>
-        <Text color={format === "json" ? theme.status.accent : theme.info.value} bold={format === "json"}>
+        <Text
+          color={format === "json" ? theme.status.accent : theme.info.value}
+          bold={format === "json"}
+        >
           [JSON]
         </Text>
-        <Text color={theme.help.desc}>  (Tab cycles)</Text>
+        <Text color={theme.help.desc}> (Tab cycles)</Text>
       </Box>
       <Box>
         <Text color={theme.info.label}>Path: </Text>
@@ -56,7 +61,7 @@ export function ExportModal({ format, path, rangeSummary, onChangePath, onSubmit
         />
       </Box>
       <Box>
-        <Text color={theme.help.desc}>Enter: save  Esc: cancel  Tab: cycle format</Text>
+        <Text color={theme.help.desc}>Enter: save Esc: cancel Tab: cycle format</Text>
       </Box>
     </Box>
   );

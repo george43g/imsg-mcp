@@ -1,4 +1,4 @@
-import { openSync, readSync, closeSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 
 /**
  * Check if a file is a Git LFS pointer by reading only the first 80 bytes.

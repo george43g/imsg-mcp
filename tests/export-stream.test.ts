@@ -2,27 +2,35 @@
  * End-to-end test of the streaming exporter against the env-data fixture.
  * Skips gracefully if the LFS fixture isn't present.
  */
-import { describe, expect, it, afterEach } from "vitest";
+
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { IMessageDB } from "../src/imessage-db.js";
+import { afterEach, describe, expect, it } from "vitest";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../src/config.js";
 import { streamExport } from "../src/exportStream.js";
+import { IMessageDB } from "../src/imessage-db.js";
 
 const dbPath = getImsgDbPath();
 const haveFixture = existsSync(dbPath);
 
 const tmpFiles: string[] = [];
 function tmpFile(ext: string): string {
-  const p = join(tmpdir(), `imsg-export-test-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
+  const p = join(
+    tmpdir(),
+    `imsg-export-test-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`,
+  );
   tmpFiles.push(p);
   return p;
 }
 
 afterEach(() => {
   for (const f of tmpFiles.splice(0)) {
-    try { unlinkSync(f); } catch { /* ignore */ }
+    try {
+      unlinkSync(f);
+    } catch {
+      /* ignore */
+    }
   }
 });
 
@@ -34,7 +42,10 @@ describe.skipIf(!haveFixture)("streamExport", () => {
       let target: string | null = null;
       for (const c of convs) {
         const msgs = await db.getMessagesForChat(c.chatIdentifier, 100);
-        if (msgs.length >= 50) { target = c.chatIdentifier; break; }
+        if (msgs.length >= 50) {
+          target = c.chatIdentifier;
+          break;
+        }
       }
       if (!target) return;
 
@@ -73,7 +84,10 @@ describe.skipIf(!haveFixture)("streamExport", () => {
       let target: string | null = null;
       for (const c of convs) {
         const msgs = await db.getMessagesForChat(c.chatIdentifier, 100);
-        if (msgs.length >= 30) { target = c.chatIdentifier; break; }
+        if (msgs.length >= 30) {
+          target = c.chatIdentifier;
+          break;
+        }
       }
       if (!target) return;
 
@@ -105,7 +119,10 @@ describe.skipIf(!haveFixture)("streamExport", () => {
       let target: string | null = null;
       for (const c of convs) {
         const msgs = await db.getMessagesForChat(c.chatIdentifier, 100);
-        if (msgs.length >= 10) { target = c.chatIdentifier; break; }
+        if (msgs.length >= 10) {
+          target = c.chatIdentifier;
+          break;
+        }
       }
       if (!target) return;
 
@@ -135,7 +152,10 @@ describe.skipIf(!haveFixture)("streamExport", () => {
       let target: string | null = null;
       for (const c of convs) {
         const msgs = await db.getMessagesForChat(c.chatIdentifier, 100);
-        if (msgs.length >= 30) { target = c.chatIdentifier; break; }
+        if (msgs.length >= 30) {
+          target = c.chatIdentifier;
+          break;
+        }
       }
       if (!target) return;
 
@@ -151,7 +171,9 @@ describe.skipIf(!haveFixture)("streamExport", () => {
       });
 
       const lines = readFileSync(path, "utf8").trim().split("\n");
-      expect(lines[0]).toBe("id,date,sender,handle,is_from_me,is_read,is_reply,reply_to_text,text,has_attachments");
+      expect(lines[0]).toBe(
+        "id,date,sender,handle,is_from_me,is_read,is_reply,reply_to_text,text,has_attachments",
+      );
       // Header must appear only once even across multiple pages
       const headerCount = lines.filter((l) => l.startsWith("id,date,sender,")).length;
       expect(headerCount).toBe(1);

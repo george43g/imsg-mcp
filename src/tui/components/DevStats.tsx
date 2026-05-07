@@ -1,7 +1,6 @@
-import React from "react";
 import { Box, Text } from "ink";
-import { theme } from "../theme.js";
 import type { DevStatsData } from "../hooks/useDevStats.js";
+import { theme } from "../theme.js";
 
 interface Props {
   stats: DevStatsData;
@@ -9,8 +8,9 @@ interface Props {
 }
 
 export function DevStats({ stats, width }: Props) {
-  const engineColor = stats.engine === "Rust" ? "#FF6B35" : theme.status.accent;
-  const cpuColor = stats.cpuPercent > 50 ? "#FF4444" : stats.cpuPercent > 20 ? theme.edited : theme.info.value;
+  const engineColor = stats.engine.startsWith("Rust") ? "#FF6B35" : theme.status.accent;
+  const cpuColor =
+    stats.cpuPercent > 50 ? "#FF4444" : stats.cpuPercent > 20 ? theme.edited : theme.info.value;
 
   return (
     <Box
@@ -21,12 +21,16 @@ export function DevStats({ stats, width }: Props) {
       overflow="hidden"
     >
       <Box paddingX={1} backgroundColor={theme.header.dim.bg}>
-        <Text color={theme.header.dim.fg} bold>Stats</Text>
+        <Text color={theme.header.dim.fg} bold>
+          Stats
+        </Text>
       </Box>
       <Box flexDirection="column" paddingX={1}>
         <Box justifyContent="space-between">
           <Text color={theme.info.label}>Engine</Text>
-          <Text color={engineColor} bold>{stats.engine}</Text>
+          <Text color={engineColor} bold>
+            {stats.engine}
+          </Text>
         </Box>
         <Box justifyContent="space-between">
           <Text color={theme.info.label}>CPU</Text>
@@ -47,16 +51,24 @@ export function DevStats({ stats, width }: Props) {
         {stats.lastQueryMs !== null && (
           <Box justifyContent="space-between">
             <Text color={theme.info.label}>Query</Text>
-            <Text color={stats.lastQueryMs > 500 ? theme.edited : theme.sms}>{stats.lastQueryMs}ms</Text>
+            <Text color={stats.lastQueryMs > 500 ? theme.edited : theme.sms}>
+              {stats.lastQueryMs}ms
+            </Text>
           </Box>
         )}
         <Box justifyContent="space-between">
           <Text color={theme.info.label}>Lag</Text>
-          <Text color={
-            stats.eventLoopP99Ms > 500 ? "#FF4444" :
-            stats.eventLoopP99Ms > 100 ? theme.edited :
-            theme.info.value
-          }>{stats.eventLoopP99Ms}ms</Text>
+          <Text
+            color={
+              stats.eventLoopP99Ms > 500
+                ? "#FF4444"
+                : stats.eventLoopP99Ms > 100
+                  ? theme.edited
+                  : theme.info.value
+            }
+          >
+            {stats.eventLoopP99Ms}ms
+          </Text>
         </Box>
         <Box justifyContent="space-between">
           <Text color={theme.info.label}>Active</Text>
@@ -69,7 +81,7 @@ export function DevStats({ stats, width }: Props) {
 
 /** Compact inline stats for the status bar (when full panel is hidden) */
 export function CompactStats({ stats }: { stats: DevStatsData }) {
-  const engineColor = stats.engine === "Rust" ? "#FF6B35" : theme.status.accent;
+  const engineColor = stats.engine.startsWith("Rust") ? "#FF6B35" : theme.status.accent;
   return (
     <Box gap={1}>
       <Text color={engineColor}>{stats.engine}</Text>

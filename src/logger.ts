@@ -76,7 +76,7 @@ function writeToFile(json: string): void {
   const path = ensureLogFile();
   if (!path) return;
   try {
-    const line = json + "\n";
+    const line = `${json}\n`;
     appendFileSync(path, line);
     logFileBytes += line.length;
   } catch {
@@ -164,7 +164,12 @@ export function appendLog(level: string, message: string, data?: unknown): void 
     level: level as LogLevel,
     msg: message,
     mem_mb: heapMB(),
-    data: data != null ? (typeof data === "object" ? (data as Record<string, unknown>) : { value: data }) : undefined,
+    data:
+      data != null
+        ? typeof data === "object"
+          ? (data as Record<string, unknown>)
+          : { value: data }
+        : undefined,
   };
   emit(entry);
 }

@@ -2,24 +2,24 @@ import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import React, { useCallback, useEffect, useReducer, useRef } from "react";
-import { Box, useApp, useInput } from "ink";
-import { registerCleanup } from "../shutdown.js";
 import { useScreenSize } from "fullscreen-ink";
-import { extensionFor, toCSV, toJSON, toMarkdown } from "./exportFormats.js";
-import { useImsg } from "./hooks/useImsg.js";
-import { useMouse } from "./hooks/useMouse.js";
-import { initialState, reducer } from "./types.js";
+import { Box, useApp, useInput } from "ink";
+import { useCallback, useEffect, useReducer, useRef } from "react";
+import { registerCleanup } from "../shutdown.js";
+import { DateJumpModal } from "./components/DateJumpModal.js";
 import { CompactStats, DevStats } from "./components/DevStats.js";
+import { ExportModal } from "./components/ExportModal.js";
 import { HelpBar } from "./components/HelpBar.js";
 import { MessageDrawer } from "./components/MessageDrawer.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { StatusBar } from "./components/StatusBar.js";
-import { DateJumpModal } from "./components/DateJumpModal.js";
-import { ExportModal } from "./components/ExportModal.js";
-import { ThreadPane, nextGroupBoundary, prevGroupBoundary } from "./components/ThreadPane.js";
+import { nextGroupBoundary, prevGroupBoundary, ThreadPane } from "./components/ThreadPane.js";
 import { formatJumpTarget, parseUserDate } from "./dateParse.js";
+import { extensionFor, toCSV, toJSON, toMarkdown } from "./exportFormats.js";
 import { useDevStats } from "./hooks/useDevStats.js";
+import { useImsg } from "./hooks/useImsg.js";
+import { useMouse } from "./hooks/useMouse.js";
+import { initialState, reducer } from "./types.js";
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -55,16 +55,23 @@ export function App() {
 
   // ── Data loading ───────────────────────────────────────────────────
 
-  const loadMessages = useCallback(async (idx: number) => {
-    const conv = state.conversations[idx];
-    if (!conv) return;
-    dispatch({ type: "SET_LOADING", loading: true, status: `Loading ${conv.displayName ?? conv.chatIdentifier}...` });
-    const t0 = performance.now();
-    const msgs = await imsg.loadMessages(conv.chatIdentifier);
-    recordQueryTime(performance.now() - t0);
-    dispatch({ type: "SET_MESSAGES", data: msgs });
-    dispatch({ type: "SET_LOADING", loading: false, status: "" });
-  }, [state.conversations, imsg, recordQueryTime]);
+  const loadMessages = useCallback(
+    async (idx: number) => {
+      const conv = state.conversations[idx];
+      if (!conv) return;
+      dispatch({
+        type: "SET_LOADING",
+        loading: true,
+        status: `Loading ${conv.displayName ?? conv.chatIdentifier}...`,
+      });
+      const t0 = performance.now();
+      const msgs = await imsg.loadMessages(conv.chatIdentifier);
+      recordQueryTime(performance.now() - t0);
+      dispatch({ type: "SET_MESSAGES", data: msgs });
+      dispatch({ type: "SET_LOADING", loading: false, status: "" });
+    },
+    [state.conversations, imsg, recordQueryTime],
+  );
 
   const refreshAll = useCallback(async () => {
     dispatch({ type: "SET_LOADING", loading: true, status: "Refreshing..." });
@@ -80,7 +87,7 @@ export function App() {
     }
     imsg.refresh();
     dispatch({ type: "SET_LOADING", loading: false, status: "" });
-  }, [imsg, loadMessages, selected?.threadSlug, state.selectedIdx]);
+  }, [imsg, loadMessages, selected?.threadSlug, state.selectedIdx, sidebarVisibleCount]);
 
   // ── Lazy-load more conversations when user nears the end ──────────────
   const NEAR_END_THRESHOLD = 20;
@@ -97,7 +104,7 @@ export function App() {
 
   // ── Lazy-load older messages when cursor nears the top ────────────────
   const NEAR_TOP_THRESHOLD = 10;
-  const MSG_BATCH_SIZE = 100;
+  const _MSG_BATCH_SIZE = 100;
 
   const loadOlderMessages = useCallback(async () => {
     if (!selected) return;
@@ -142,8 +149,7 @@ export function App() {
   useEffect(() => {
     if (state.loading || state.conversationLoadingMore) return;
     if (state.conversations.length === 0) return;
-    const cursorNearEnd =
-      state.selectedIdx >= state.conversations.length - NEAR_END_THRESHOLD;
+    const cursorNearEnd = state.selectedIdx >= state.conversations.length - NEAR_END_THRESHOLD;
     const scrollNearEnd =
       state.sidebarScroll + sidebarVisibleCount >= state.conversations.length - NEAR_END_THRESHOLD;
     if (cursorNearEnd || scrollNearEnd) {
@@ -167,7 +173,7 @@ export function App() {
   useEffect(() => {
     registerCleanup(() => imsg.close());
     refreshAll();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imsg.close, refreshAll]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Send logic ─────────────────────────────────────────────────────
 
@@ -303,7 +309,10 @@ export function App() {
         ];
         const text = state.messages
           .slice(lo, hi + 1)
-          .map((m) => `[${m.date.toISOString()}] ${m.isFromMe ? "Me" : (m.displayName ?? m.handle)}: ${m.text ?? "(no text)"}`)
+          .map(
+            (m) =>
+              `[${m.date.toISOString()}] ${m.isFromMe ? "Me" : (m.displayName ?? m.handle)}: ${m.text ?? "(no text)"}`,
+          )
           .join("\n");
         try {
           execSync("pbcopy", { input: text });
@@ -318,7 +327,10 @@ export function App() {
     }
 
     // Browse mode
-    if (input === "d" && state.mode === "browse") { dispatch({ type: "TOGGLE_DEV_STATS" }); return; }
+    if (input === "d" && state.mode === "browse") {
+      dispatch({ type: "TOGGLE_DEV_STATS" });
+      return;
+    }
     if (input === "V" && state.focus === "thread" && state.selectedMsgIdx >= 0) {
       dispatch({ type: "ENTER_SELECT_MODE" });
       return;
@@ -327,8 +339,15 @@ export function App() {
       dispatch({ type: "ENTER_DATE_JUMP" });
       return;
     }
-    if (input === "q") { await imsg.close(); exit(); return; }
-    if (input === "r") { await refreshAll(); return; }
+    if (input === "q") {
+      await imsg.close();
+      exit();
+      return;
+    }
+    if (input === "r") {
+      await refreshAll();
+      return;
+    }
     if (input === "c" || (key.return && state.focus === "thread" && state.mode === "browse")) {
       if (state.focus === "thread" && key.return && state.selectedMsgIdx >= 0) {
         // Enter on a message opens drawer
@@ -338,7 +357,10 @@ export function App() {
       dispatch({ type: "ENTER_COMPOSE" });
       return;
     }
-    if (input === "/" && state.mode === "browse") { dispatch({ type: "ENTER_FILTER" }); return; }
+    if (input === "/" && state.mode === "browse") {
+      dispatch({ type: "ENTER_FILTER" });
+      return;
+    }
     if (key.tab) {
       dispatch({ type: "FOCUS", pane: state.focus === "sidebar" ? "thread" : "sidebar" });
       return;
@@ -393,25 +415,33 @@ export function App() {
           next = 0;
         } else {
           ggPendingRef.current = true;
-          ggTimerRef.current = setTimeout(() => { ggPendingRef.current = false; }, 500);
+          ggTimerRef.current = setTimeout(() => {
+            ggPendingRef.current = false;
+          }, 500);
           return;
         }
       } else if (key.ctrl && input === "d") {
         // Half page down
-        next = Math.min(state.selectedIdx + Math.floor(bodyHeight / 2), state.conversations.length - 1);
+        next = Math.min(
+          state.selectedIdx + Math.floor(bodyHeight / 2),
+          state.conversations.length - 1,
+        );
       } else if (key.ctrl && input === "u") {
         // Half page up
         next = Math.max(state.selectedIdx - Math.floor(bodyHeight / 2), 0);
-      } else if (key.ctrl && input === "f" || key.pageDown) {
+      } else if ((key.ctrl && input === "f") || key.pageDown) {
         next = Math.min(state.selectedIdx + bodyHeight, state.conversations.length - 1);
-      } else if (key.ctrl && input === "b" || key.pageUp) {
+      } else if ((key.ctrl && input === "b") || key.pageUp) {
         next = Math.max(state.selectedIdx - bodyHeight, 0);
       } else if (input === "H") {
         // High - first visible
         next = state.sidebarScroll;
       } else if (input === "M") {
         // Middle
-        next = Math.min(state.sidebarScroll + Math.floor(bodyHeight / 2), state.conversations.length - 1);
+        next = Math.min(
+          state.sidebarScroll + Math.floor(bodyHeight / 2),
+          state.conversations.length - 1,
+        );
       } else if (input === "L") {
         // Low - last visible
         next = Math.min(state.sidebarScroll + bodyHeight - 1, state.conversations.length - 1);
@@ -444,22 +474,27 @@ export function App() {
           dispatch({ type: "SELECT_MSG", index: 0 });
         } else {
           ggPendingRef.current = true;
-          ggTimerRef.current = setTimeout(() => { ggPendingRef.current = false; }, 500);
+          ggTimerRef.current = setTimeout(() => {
+            ggPendingRef.current = false;
+          }, 500);
         }
       } else if (key.ctrl && input === "d") {
         dispatch({ type: "MOVE_MSG", delta: Math.floor(bodyHeight / 2) });
       } else if (key.ctrl && input === "u") {
         dispatch({ type: "MOVE_MSG", delta: -Math.floor(bodyHeight / 2) });
-      } else if (key.ctrl && input === "f" || key.pageDown) {
+      } else if ((key.ctrl && input === "f") || key.pageDown) {
         dispatch({ type: "MOVE_MSG", delta: bodyHeight });
-      } else if (key.ctrl && input === "b" || key.pageUp) {
+      } else if ((key.ctrl && input === "b") || key.pageUp) {
         dispatch({ type: "MOVE_MSG", delta: -bodyHeight });
       } else if (input === "H") {
         // Jump to top of visible area (approximate)
         const visibleTop = Math.max(0, state.selectedMsgIdx - Math.floor(bodyHeight * 0.7));
         dispatch({ type: "SELECT_MSG", index: visibleTop });
       } else if (input === "L") {
-        const visibleBottom = Math.min(state.messages.length - 1, state.selectedMsgIdx + Math.floor(bodyHeight * 0.3));
+        const visibleBottom = Math.min(
+          state.messages.length - 1,
+          state.selectedMsgIdx + Math.floor(bodyHeight * 0.3),
+        );
         dispatch({ type: "SELECT_MSG", index: visibleBottom });
       } else if (input === "M") {
         // Stay at current (middle)
@@ -482,55 +517,65 @@ export function App() {
 
   const MAX_JUMP_BATCHES = 100; // bounded loop: 100 × 100 = 10,000 messages
 
-  const doDateJump = useCallback(async (input: string) => {
-    const target = parseUserDate(input);
-    if (!target) {
-      dispatch({ type: "SET_DATE_JUMP_ERROR", error: `Could not parse "${input}". Try YYYY-MM-DD or "1 week ago".` });
-      return;
-    }
-    if (!selected) {
+  const doDateJump = useCallback(
+    async (input: string) => {
+      const target = parseUserDate(input);
+      if (!target) {
+        dispatch({
+          type: "SET_DATE_JUMP_ERROR",
+          error: `Could not parse "${input}". Try YYYY-MM-DD or "1 week ago".`,
+        });
+        return;
+      }
+      if (!selected) {
+        dispatch({ type: "EXIT_DATE_JUMP" });
+        return;
+      }
+      let batches = 0;
+      // Loop: load older messages until oldest <= target, or exhausted
+      while (batches < MAX_JUMP_BATCHES) {
+        const oldest = state.messages.length > 0 ? state.messages[0].date : new Date();
+        if (oldest <= target) break;
+        if (state.messageOldestLoadedId == null || state.messageOldestLoadedId === -1) break;
+        const older = await imsg.loadOlderMessages(
+          selected.chatIdentifier,
+          state.messageOldestLoadedId,
+        );
+        if (older.length === 0) break;
+        const newOldestId = Math.min(...older.map((m) => m.id));
+        dispatch({ type: "PREPEND_MESSAGES", data: older, oldestId: newOldestId });
+        batches++;
+        // Yield to render between batches
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      // Find first message at or after target
+      const idx = state.messages.findIndex((m) => m.date >= target);
+      if (idx >= 0) {
+        dispatch({ type: "SELECT_MSG", index: idx });
+      }
       dispatch({ type: "EXIT_DATE_JUMP" });
-      return;
-    }
-    let batches = 0;
-    // Loop: load older messages until oldest <= target, or exhausted
-    while (batches < MAX_JUMP_BATCHES) {
-      const oldest = state.messages.length > 0 ? state.messages[0].date : new Date();
-      if (oldest <= target) break;
-      if (state.messageOldestLoadedId == null || state.messageOldestLoadedId === -1) break;
-      const older = await imsg.loadOlderMessages(selected.chatIdentifier, state.messageOldestLoadedId);
-      if (older.length === 0) break;
-      const newOldestId = Math.min(...older.map((m) => m.id));
-      dispatch({ type: "PREPEND_MESSAGES", data: older, oldestId: newOldestId });
-      batches++;
-      // Yield to render between batches
-      await new Promise((r) => setTimeout(r, 10));
-    }
-    // Find first message at or after target
-    const idx = state.messages.findIndex((m) => m.date >= target);
-    if (idx >= 0) {
-      dispatch({ type: "SELECT_MSG", index: idx });
-    }
-    dispatch({ type: "EXIT_DATE_JUMP" });
-    dispatch({
-      type: "SET_STATUS",
-      status:
-        batches >= MAX_JUMP_BATCHES
-          ? `Jumped (capped) — load more manually for older history`
-          : `Jumped to ${formatJumpTarget(target)}`,
-    });
-    setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 4000);
-  }, [imsg, selected, state.messages, state.messageOldestLoadedId]);
+      dispatch({
+        type: "SET_STATUS",
+        status:
+          batches >= MAX_JUMP_BATCHES
+            ? `Jumped (capped) — load more manually for older history`
+            : `Jumped to ${formatJumpTarget(target)}`,
+      });
+      setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 4000);
+    },
+    [imsg, selected, state.messages, state.messageOldestLoadedId],
+  );
 
   // ── Export action ──────────────────────────────────────────────────
 
   const doExport = useCallback(() => {
-    const messagesToExport = state.selectionAnchor != null
-      ? state.messages.slice(
-          Math.min(state.selectionAnchor, state.selectedMsgIdx),
-          Math.max(state.selectionAnchor, state.selectedMsgIdx) + 1,
-        )
-      : state.messages;
+    const messagesToExport =
+      state.selectionAnchor != null
+        ? state.messages.slice(
+            Math.min(state.selectionAnchor, state.selectedMsgIdx),
+            Math.max(state.selectionAnchor, state.selectedMsgIdx) + 1,
+          )
+        : state.messages;
     if (messagesToExport.length === 0) {
       dispatch({ type: "SET_STATUS", status: "Nothing to export" });
       return;
@@ -557,12 +602,25 @@ export function App() {
       writeFileSync(expandedPath, content, "utf8");
       dispatch({ type: "EXIT_EXPORT_MODE" });
       dispatch({ type: "EXIT_SELECT_MODE" });
-      dispatch({ type: "SET_STATUS", status: `Exported ${messagesToExport.length} msgs to ${expandedPath}` });
+      dispatch({
+        type: "SET_STATUS",
+        status: `Exported ${messagesToExport.length} msgs to ${expandedPath}`,
+      });
       setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 4000);
     } catch (err) {
-      dispatch({ type: "SET_STATUS", status: `Export failed: ${err instanceof Error ? err.message : String(err)}` });
+      dispatch({
+        type: "SET_STATUS",
+        status: `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
-  }, [state.exportFormat, state.exportPath, state.messages, state.selectedMsgIdx, state.selectionAnchor, selected]);
+  }, [
+    state.exportFormat,
+    state.exportPath,
+    state.messages,
+    state.selectedMsgIdx,
+    state.selectionAnchor,
+    selected,
+  ]);
 
   // ── Open attachment ────────────────────────────────────────────────
 
@@ -589,35 +647,44 @@ export function App() {
 
   // ── Mouse ──────────────────────────────────────────────────────────
 
-  const handleMouse = useCallback((event: { type: string; x: number; y: number }) => {
-    if (event.type === "click") {
-      if (event.x <= sidebarWidth) {
-        dispatch({ type: "FOCUS", pane: "sidebar" });
-        const convIdx = Math.floor((event.y - 2 + state.sidebarScroll * 3) / 3);
-        if (convIdx >= 0 && convIdx < state.conversations.length) {
-          dispatch({ type: "SELECT", index: convIdx, visibleCount: sidebarVisibleCount });
-          loadMessages(convIdx);
+  const handleMouse = useCallback(
+    (event: { type: string; x: number; y: number }) => {
+      if (event.type === "click") {
+        if (event.x <= sidebarWidth) {
+          dispatch({ type: "FOCUS", pane: "sidebar" });
+          const convIdx = Math.floor((event.y - 2 + state.sidebarScroll * 3) / 3);
+          if (convIdx >= 0 && convIdx < state.conversations.length) {
+            dispatch({ type: "SELECT", index: convIdx, visibleCount: sidebarVisibleCount });
+            loadMessages(convIdx);
+          }
+        } else {
+          dispatch({ type: "FOCUS", pane: "thread" });
         }
-      } else {
-        dispatch({ type: "FOCUS", pane: "thread" });
+      } else if (event.type === "scroll-up") {
+        // Wheel delta: 1 line per event for fine-grained control. macOS / iTerm
+        // typically batch 2-3 wheel events per touchpad swipe so this still feels
+        // responsive in practice.
+        if (event.x <= sidebarWidth) {
+          dispatch({ type: "SCROLL_SIDEBAR", delta: -1 });
+        } else {
+          dispatch({ type: "MOVE_MSG", delta: -1 });
+        }
+      } else if (event.type === "scroll-down") {
+        if (event.x <= sidebarWidth) {
+          dispatch({ type: "SCROLL_SIDEBAR", delta: 1 });
+        } else {
+          dispatch({ type: "MOVE_MSG", delta: 1 });
+        }
       }
-    } else if (event.type === "scroll-up") {
-      // Wheel delta: 1 line per event for fine-grained control. macOS / iTerm
-      // typically batch 2-3 wheel events per touchpad swipe so this still feels
-      // responsive in practice.
-      if (event.x <= sidebarWidth) {
-        dispatch({ type: "SCROLL_SIDEBAR", delta: -1 });
-      } else {
-        dispatch({ type: "MOVE_MSG", delta: -1 });
-      }
-    } else if (event.type === "scroll-down") {
-      if (event.x <= sidebarWidth) {
-        dispatch({ type: "SCROLL_SIDEBAR", delta: 1 });
-      } else {
-        dispatch({ type: "MOVE_MSG", delta: 1 });
-      }
-    }
-  }, [sidebarWidth, state.sidebarScroll, state.conversations.length, loadMessages]);
+    },
+    [
+      sidebarWidth,
+      state.sidebarScroll,
+      state.conversations.length,
+      loadMessages,
+      sidebarVisibleCount,
+    ],
+  );
 
   useMouse(handleMouse);
 
@@ -663,15 +730,9 @@ export function App() {
           onSubmitCompose={(text) => text.trim() && dispatch({ type: "CONFIRM_SEND" })}
         />
         {state.mode === "drawer" && selectedMsg && (
-          <MessageDrawer
-            message={selectedMsg}
-            width={drawerWidth}
-            height={bodyHeight}
-          />
+          <MessageDrawer message={selectedMsg} width={drawerWidth} height={bodyHeight} />
         )}
-        {state.showDevStats && (
-          <DevStats stats={devStats} width={devStatsWidth} />
-        )}
+        {state.showDevStats && <DevStats stats={devStats} width={devStatsWidth} />}
       </Box>
 
       {/* Date-jump modal */}
@@ -703,7 +764,12 @@ export function App() {
       )}
 
       {/* Status + Help */}
-      <StatusBar totalUnread={totalUnread} selected={selected} status={state.status} loading={state.loading}>
+      <StatusBar
+        totalUnread={totalUnread}
+        selected={selected}
+        status={state.status}
+        loading={state.loading}
+      >
         {!state.showDevStats && <CompactStats stats={devStats} />}
       </StatusBar>
       <HelpBar mode={state.mode} focus={state.focus} />

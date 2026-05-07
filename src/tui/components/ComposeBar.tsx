@@ -1,6 +1,5 @@
-import React from "react";
-import { Box, Text } from "ink";
 import { TextInput } from "@inkjs/ui";
+import { Box, Text } from "ink";
 import { theme } from "../theme.js";
 import type { Mode } from "../types.js";
 
@@ -15,8 +14,10 @@ export function ComposeBar({ mode, recipientName, onChangeText, onSubmit }: Prop
   if (mode === "confirm") {
     return (
       <Box backgroundColor={theme.compose.bg} paddingX={1} height={1}>
-        <Text color={theme.status.accent} bold>Send to {recipientName}? </Text>
-        <Text color={theme.compose.fg}>Enter: send  Esc: cancel</Text>
+        <Text color={theme.status.accent} bold>
+          Send to {recipientName}?{" "}
+        </Text>
+        <Text color={theme.compose.fg}>Enter: send Esc: cancel</Text>
       </Box>
     );
   }
@@ -25,11 +26,7 @@ export function ComposeBar({ mode, recipientName, onChangeText, onSubmit }: Prop
     return (
       <Box backgroundColor={theme.compose.bg} paddingX={1} height={1}>
         <Text color={theme.compose.fg}>&gt; </Text>
-        <TextInput
-          onChange={onChangeText}
-          onSubmit={onSubmit}
-          placeholder="Type a message..."
-        />
+        <TextInput onChange={onChangeText} onSubmit={onSubmit} placeholder="Type a message..." />
       </Box>
     );
   }

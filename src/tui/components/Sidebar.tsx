@@ -1,5 +1,5 @@
-import React, { useMemo } from "react";
 import { Box, Text } from "ink";
+import { useMemo } from "react";
 import type { Conversation } from "../../types.js";
 import { theme } from "../theme.js";
 import { ConversationItem } from "./ConversationItem.js";
@@ -14,7 +14,15 @@ interface Props {
   height: number;
 }
 
-export function Sidebar({ conversations, selectedIdx, scrollOffset, filterQuery, focused, width, height }: Props) {
+export function Sidebar({
+  conversations,
+  selectedIdx,
+  scrollOffset,
+  filterQuery,
+  focused,
+  width,
+  height,
+}: Props) {
   const filtered = useMemo(() => {
     if (!filterQuery) return conversations;
     const q = filterQuery.toLowerCase();
@@ -57,13 +65,14 @@ export function Sidebar({ conversations, selectedIdx, scrollOffset, filterQuery,
 
       <Box flexDirection="column" flexGrow={1} overflow="hidden">
         {visible.length === 0 ? (
-          <Box paddingX={1}><Text color={theme.sidebar.snippet}>No conversations</Text></Box>
+          <Box paddingX={1}>
+            <Text color={theme.sidebar.snippet}>No conversations</Text>
+          </Box>
         ) : (
           visible.map((conv, i) => {
             const realIdx = scrollOffset + i;
-            const relNum = realIdx === selectedIdx
-              ? `${realIdx}`
-              : `${Math.abs(realIdx - selectedIdx)}`;
+            const relNum =
+              realIdx === selectedIdx ? `${realIdx}` : `${Math.abs(realIdx - selectedIdx)}`;
 
             return (
               <ConversationItem

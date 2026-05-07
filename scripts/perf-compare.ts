@@ -5,8 +5,9 @@
  * Usage:
  *   pnpm exec tsx scripts/perf-compare.ts [.env.test|.env.local]
  */
+
+import type { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { Buffer } from "node:buffer";
 
 interface JsonRpcResponse {
   jsonrpc: "2.0";
@@ -28,11 +29,10 @@ class McpClient {
   constructor(envFile: string, disableNative: boolean) {
     const env = { ...process.env };
     if (disableNative) env.IMSG_DISABLE_NATIVE = "1";
-    this.proc = spawn(
-      "node",
-      [`--env-file=${envFile}`, "dist/index.js"],
-      { stdio: ["pipe", "pipe", "pipe"], env },
-    );
+    this.proc = spawn("node", [`--env-file=${envFile}`, "dist/index.js"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+    });
     this.proc.stdout!.on("data", (chunk: Buffer) => {
       this.buffer += chunk.toString("utf8");
       const lines = this.buffer.split("\n");
@@ -48,10 +48,14 @@ class McpClient {
               cb(msg);
             }
           }
-        } catch {/* ignore */}
+        } catch {
+          /* ignore */
+        }
       }
     });
-    this.proc.stderr!.on("data", () => { /* ignore */ });
+    this.proc.stderr!.on("data", () => {
+      /* ignore */
+    });
   }
 
   async init(): Promise<void> {
@@ -60,7 +64,9 @@ class McpClient {
       capabilities: {},
       clientInfo: { name: "perf-compare", version: "1" },
     });
-    this.proc.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`);
+    this.proc.stdin!.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} })}\n`,
+    );
   }
 
   async call(method: string, params: object): Promise<unknown> {
@@ -89,7 +95,7 @@ class McpClient {
   }
 }
 
-async function timeIt(label: string, fn: () => Promise<unknown>): Promise<number> {
+async function timeIt(_label: string, fn: () => Promise<unknown>): Promise<number> {
   const t0 = performance.now();
   await fn();
   const ms = performance.now() - t0;
@@ -103,7 +109,9 @@ async function bench(client: McpClient, label: string): Promise<void> {
   const runs = 5;
   const listTimes: number[] = [];
   for (let i = 0; i < runs; i++) {
-    listTimes.push(await timeIt("list", () => client.callTool("list_conversations", { limit: 200 })));
+    listTimes.push(
+      await timeIt("list", () => client.callTool("list_conversations", { limit: 200 })),
+    );
   }
   const listAvg = listTimes.reduce((a, b) => a + b) / runs;
 
@@ -117,13 +125,17 @@ async function bench(client: McpClient, label: string): Promise<void> {
   if (chatIdentifier) {
     const msgTimes: number[] = [];
     for (let i = 0; i < runs; i++) {
-      msgTimes.push(await timeIt("msgs", () => client.callTool("get_messages", { chatIdentifier, limit: 200 })));
+      msgTimes.push(
+        await timeIt("msgs", () => client.callTool("get_messages", { chatIdentifier, limit: 200 })),
+      );
     }
     msgAvg = msgTimes.reduce((a, b) => a + b) / runs;
   }
 
   console.log(`  ${label}:`);
-  console.log(`    list_conversations(200) avg: ${listAvg.toFixed(1)}ms (${listTimes.map((t) => t.toFixed(0)).join(", ")})`);
+  console.log(
+    `    list_conversations(200) avg: ${listAvg.toFixed(1)}ms (${listTimes.map((t) => t.toFixed(0)).join(", ")})`,
+  );
   if (chatIdentifier) {
     console.log(`    get_messages(${chatIdentifier}, 200) avg: ${msgAvg.toFixed(1)}ms`);
   }

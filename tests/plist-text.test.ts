@@ -18,9 +18,7 @@ const STAGE_CHAT_SUMMARY = Buffer.from(
 describe("extractNullPaddedAsciiText", () => {
   it("extracts chat summary text from null-padded plist bytes", () => {
     const snippet = "Stage 17 Sanctuary Precinct selling; land in Pakenham East from $355k.";
-    const nullPadded = Buffer.from(
-      [...snippet].flatMap((char) => [0, char.charCodeAt(0)]),
-    );
+    const nullPadded = Buffer.from([...snippet].flatMap((char) => [0, char.charCodeAt(0)]));
     const blob = Buffer.concat([
       Buffer.from("bplist00chatSummaryDictionary", "utf8"),
       Buffer.from([0x10, 0x48]),

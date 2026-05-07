@@ -117,7 +117,9 @@ function spawnChild(): void {
   child.on("exit", (code, signal) => {
     if (isShuttingDown) return;
     childReady = false;
-    console.error(`[dev-proxy] Child exited (code: ${code}, signal: ${signal}), restarting in ${RESTART_DELAY_MS}ms...`);
+    console.error(
+      `[dev-proxy] Child exited (code: ${code}, signal: ${signal}), restarting in ${RESTART_DELAY_MS}ms...`,
+    );
     setTimeout(spawnChild, RESTART_DELAY_MS);
   });
 

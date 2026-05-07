@@ -15,20 +15,28 @@ export function useImsg() {
     return dbRef.current;
   }, []);
 
-  const loadConversations = useCallback(async (limit = 200): Promise<Conversation[]> => {
-    return getDb().listConversations(limit);
-  }, [getDb]);
+  const loadConversations = useCallback(
+    async (limit = 200): Promise<Conversation[]> => {
+      return getDb().listConversations(limit);
+    },
+    [getDb],
+  );
 
-  const loadMessages = useCallback(async (chatIdentifier: string): Promise<Message[]> => {
-    // Read-through cache: return fresh entries directly without hitting the DB.
-    const cached = getCached(chatIdentifier);
-    if (cached && isFresh(cached)) return cached.messages;
+  const loadMessages = useCallback(
+    async (chatIdentifier: string): Promise<Message[]> => {
+      // Read-through cache: return fresh entries directly without hitting the DB.
+      const cached = getCached(chatIdentifier);
+      if (cached && isFresh(cached)) return cached.messages;
 
-    const messages = await getDb().getMessagesForChat(chatIdentifier, 200, { includeReactionDetails: true });
-    const oldestId = messages.length > 0 ? Math.min(...messages.map((m) => m.id)) : 0;
-    setCached(chatIdentifier, messages, oldestId);
-    return messages;
-  }, [getDb]);
+      const messages = await getDb().getMessagesForChat(chatIdentifier, 200, {
+        includeReactionDetails: true,
+      });
+      const oldestId = messages.length > 0 ? Math.min(...messages.map((m) => m.id)) : 0;
+      setCached(chatIdentifier, messages, oldestId);
+      return messages;
+    },
+    [getDb],
+  );
 
   const loadOlderMessages = useCallback(
     async (chatIdentifier: string, beforeMessageId: number): Promise<Message[]> => {
@@ -43,22 +51,28 @@ export function useImsg() {
     [getDb],
   );
 
-  const resolveNames = useCallback((handles: string[]): string[] => {
-    return getDb().resolveParticipantNames(handles);
-  }, [getDb]);
+  const resolveNames = useCallback(
+    (handles: string[]): string[] => {
+      return getDb().resolveParticipantNames(handles);
+    },
+    [getDb],
+  );
 
-  const send = useCallback(async (threadSlug: string, text: string): Promise<{ success: boolean; error?: string }> => {
-    const db = getDb();
-    const slugRecord = db.getSlugRecord(threadSlug);
-    if (!slugRecord) return { success: false, error: `Unknown slug: ${threadSlug}` };
+  const send = useCallback(
+    async (threadSlug: string, text: string): Promise<{ success: boolean; error?: string }> => {
+      const db = getDb();
+      const slugRecord = db.getSlugRecord(threadSlug);
+      if (!slugRecord) return { success: false, error: `Unknown slug: ${threadSlug}` };
 
-    if (slugRecord.isGroup) {
-      return slugRecord.displayName && !slugRecord.displayName.startsWith("chat")
-        ? sendToChat(slugRecord.displayName, text)
-        : sendToChatId(slugRecord.chatGuid, text);
-    }
-    return sendMessageAlt(slugRecord.chatIdentifier, text);
-  }, [getDb]);
+      if (slugRecord.isGroup) {
+        return slugRecord.displayName && !slugRecord.displayName.startsWith("chat")
+          ? sendToChat(slugRecord.displayName, text)
+          : sendToChatId(slugRecord.chatGuid, text);
+      }
+      return sendMessageAlt(slugRecord.chatIdentifier, text);
+    },
+    [getDb],
+  );
 
   const refresh = useCallback(() => {
     getDb().scheduleBackgroundRefresh();

@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import { theme } from "../theme.js";
 import type { FocusPane, Mode } from "../types.js";
@@ -61,9 +60,7 @@ const COMPOSE_KEYS = [
   ["Esc", "cancel"],
 ];
 
-const FILTER_KEYS = [
-  ["Enter/Esc", "exit filter"],
-];
+const FILTER_KEYS = [["Enter/Esc", "exit filter"]];
 
 const DRAWER_KEYS = [
   ["Esc/q", "close"],

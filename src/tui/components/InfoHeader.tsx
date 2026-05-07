@@ -1,4 +1,3 @@
-import React from "react";
 import { Box, Text } from "ink";
 import type { Conversation } from "../../types.js";
 import { theme } from "../theme.js";
@@ -20,15 +19,29 @@ export function InfoHeader({ conversation: c, resolvedNames }: Props) {
   }
 
   return (
-    <Box flexDirection="column" paddingX={1} borderStyle="single" borderColor={theme.border} borderBottom={false} borderLeft={false} borderRight={false}>
+    <Box
+      flexDirection="column"
+      paddingX={1}
+      borderStyle="single"
+      borderColor={theme.border}
+      borderBottom={false}
+      borderLeft={false}
+      borderRight={false}
+    >
       <Box gap={2}>
-        <Text bold color={theme.info.value}>{name}</Text>
+        <Text bold color={theme.info.value}>
+          {name}
+        </Text>
         {c.displayName && <Text color={theme.info.label}>({c.rawIdentifier})</Text>}
         <Text color={c.serviceType === "SMS" ? theme.sms : theme.info.label}>{c.serviceType}</Text>
         {c.isGroupChat && <Text color={theme.info.label}>Group</Text>}
       </Box>
-      <Text color={theme.info.label}>Members: <Text color={theme.info.value}>{members.join(", ")}</Text></Text>
-      <Text color={theme.sidebar.slug} italic>~{c.threadSlug}</Text>
+      <Text color={theme.info.label}>
+        Members: <Text color={theme.info.value}>{members.join(", ")}</Text>
+      </Text>
+      <Text color={theme.sidebar.slug} italic>
+        ~{c.threadSlug}
+      </Text>
     </Box>
   );
 }

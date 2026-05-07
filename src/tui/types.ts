@@ -1,7 +1,15 @@
 import type { Conversation, Message } from "../types.js";
 
 export type FocusPane = "sidebar" | "thread";
-export type Mode = "browse" | "compose" | "confirm" | "filter" | "drawer" | "select" | "export" | "date-jump";
+export type Mode =
+  | "browse"
+  | "compose"
+  | "confirm"
+  | "filter"
+  | "drawer"
+  | "select"
+  | "export"
+  | "date-jump";
 
 export interface PendingMessage {
   text: string;
@@ -27,21 +35,21 @@ export interface AppState {
   showDevStats: boolean;
 
   // Lazy-loading bookkeeping
-  conversationLoadedCount: number;     // how many we've requested from the DB so far
-  conversationLoadingMore: boolean;     // true while a "load more" fetch is in-flight
+  conversationLoadedCount: number; // how many we've requested from the DB so far
+  conversationLoadingMore: boolean; // true while a "load more" fetch is in-flight
   messageOldestLoadedId: number | null; // oldest message ROWID currently in `messages` (for "load older")
-  messageLoadingOlder: boolean;         // true while a "load older" fetch is in-flight
+  messageLoadingOlder: boolean; // true while a "load older" fetch is in-flight
 
   // Bounded message window — gaps appear when middle of history is evicted
   gapMarkers: Array<{ atIdx: number; oldestId: number; newestId: number; count: number }>;
 
   // Visual selection (vim V)
-  selectionAnchor: number | null;       // where the user pressed V — selection extends from anchor to selectedMsgIdx
+  selectionAnchor: number | null; // where the user pressed V — selection extends from anchor to selectedMsgIdx
 
   // Export modal state
   exportFormat: "markdown" | "csv" | "json";
   exportPath: string;
-  exportStatus: string;                 // last export status message (e.g. "Exported 247 msgs")
+  exportStatus: string; // last export status message (e.g. "Exported 247 msgs")
 
   // Date-jump modal state
   dateJumpInput: string;
@@ -134,10 +142,7 @@ function clampMsg(state: AppState, idx: number): Partial<AppState> {
 // The evicted block becomes a gap marker so the renderer can show "N more
 // messages — scroll to load" and the user can refill on demand.
 
-const MESSAGES_HARD_CAP = Number.parseInt(
-  process.env.IMSG_TUI_MSG_HARD_CAP ?? "5000",
-  10,
-);
+const MESSAGES_HARD_CAP = Number.parseInt(process.env.IMSG_TUI_MSG_HARD_CAP ?? "5000", 10);
 const ANCHOR_KEEP = 200;
 const WINDOW_BUFFER = 300;
 
@@ -304,9 +309,12 @@ export function reducer(state: AppState, action: Action): AppState {
       // same logical message by shifting selectedMsgIdx by the count added.
       const existingIds = new Set(state.messages.map((m) => m.id));
       const fresh = action.data.filter((m) => !existingIds.has(m.id));
-      const merged = [...fresh, ...state.messages].sort((a, b) => a.date.getTime() - b.date.getTime());
+      const merged = [...fresh, ...state.messages].sort(
+        (a, b) => a.date.getTime() - b.date.getTime(),
+      );
       const shift = fresh.length;
-      const shiftedCursor = state.selectedMsgIdx >= 0 ? state.selectedMsgIdx + shift : state.selectedMsgIdx;
+      const shiftedCursor =
+        state.selectedMsgIdx >= 0 ? state.selectedMsgIdx + shift : state.selectedMsgIdx;
 
       // Apply bounded-window eviction if we've grown past the cap
       const bounded = boundMessagesIfNeeded(merged, shiftedCursor, state.gapMarkers);
@@ -347,7 +355,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case "SELECT": {
       const idx = Math.max(0, Math.min(action.index, Math.max(0, state.conversations.length - 1)));
       const sidebarScroll = action.visibleCount
-        ? ensureVisibleScroll(idx, state.sidebarScroll, action.visibleCount, state.conversations.length)
+        ? ensureVisibleScroll(
+            idx,
+            state.sidebarScroll,
+            action.visibleCount,
+            state.conversations.length,
+          )
         : state.sidebarScroll;
       return { ...state, selectedIdx: idx, sidebarScroll };
     }
@@ -382,7 +395,9 @@ export function reducer(state: AppState, action: Action): AppState {
     case "FAIL_PENDING":
       return {
         ...state,
-        pending: state.pending.map((p) => (p.text === action.text ? { ...p, status: "failed" as const } : p)),
+        pending: state.pending.map((p) =>
+          p.text === action.text ? { ...p, status: "failed" as const } : p,
+        ),
       };
     case "SET_LOADING":
       return { ...state, loading: action.loading, status: action.status ?? state.status };

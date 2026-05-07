@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import { Command } from "commander";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { LocalMcpClient } from "./mcp-client.js";
-import { APP_NAME, APP_VERSION } from "./meta.js";
+import { APP_VERSION } from "./meta.js";
 import { installShutdownHandlers, registerCleanup } from "./shutdown.js";
 
 // ── Colour helpers ─────────────────────────────────────────────────────
@@ -17,7 +17,13 @@ const color = {
 
 function log(message: string, style: "dim" | "ok" | "warn" | "err" = "dim") {
   const fn =
-    style === "ok" ? color.green : style === "warn" ? color.yellow : style === "err" ? color.red : color.dim;
+    style === "ok"
+      ? color.green
+      : style === "warn"
+        ? color.yellow
+        : style === "err"
+          ? color.red
+          : color.dim;
   console.log(fn(message));
 }
 
@@ -37,7 +43,12 @@ async function withClient<T>(run: (client: LocalMcpClient) => Promise<T>): Promi
   }
 }
 
-async function printToolResult(client: LocalMcpClient, name: string, args: object, timeoutMs?: number) {
+async function printToolResult(
+  client: LocalMcpClient,
+  name: string,
+  args: object,
+  timeoutMs?: number,
+) {
   const result = await client.callTool(name, args, timeoutMs);
   const text = result.content?.[0]?.text ?? JSON.stringify(result, null, 2);
   if (result.isError) throw new Error(text);
@@ -52,10 +63,19 @@ function parseConsoleInput(line: string): { cmd: string; args: string[] } {
   let quote: string | null = null;
 
   for (const char of line) {
-    if ((char === '"' || char === "'") && quote == null) { quote = char; continue; }
-    if (char === quote) { quote = null; continue; }
+    if ((char === '"' || char === "'") && quote == null) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
     if (char === " " && quote == null) {
-      if (current) { parts.push(current); current = ""; }
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
       continue;
     }
     current += char;
@@ -64,7 +84,11 @@ function parseConsoleInput(line: string): { cmd: string; args: string[] } {
   return { cmd: parts[0]?.toLowerCase() ?? "", args: parts.slice(1) };
 }
 
-async function runConsoleCommand(cmd: string, args: string[], client: LocalMcpClient): Promise<void> {
+async function runConsoleCommand(
+  cmd: string,
+  args: string[],
+  client: LocalMcpClient,
+): Promise<void> {
   switch (cmd) {
     case "conversations":
     case "list":
@@ -78,18 +102,27 @@ async function runConsoleCommand(cmd: string, args: string[], client: LocalMcpCl
       const limit = Number(firstIsLimit ? first : (args[1] ?? 20));
       await printToolResult(client, "get_messages", {
         ...(chatIdentifier
-          ? looksLikeThreadSlug(chatIdentifier) ? { threadSlug: chatIdentifier } : { chatIdentifier }
+          ? looksLikeThreadSlug(chatIdentifier)
+            ? { threadSlug: chatIdentifier }
+            : { chatIdentifier }
           : {}),
         limit,
       });
       return;
     }
     case "unread":
-      await printToolResult(client, "get_unread_messages", args[0] ? { limit: Number(args[0]) } : {});
+      await printToolResult(
+        client,
+        "get_unread_messages",
+        args[0] ? { limit: Number(args[0]) } : {},
+      );
       return;
     case "search":
       if (!args[0]) throw new Error("Usage: search <query> [limit]");
-      await printToolResult(client, "search_messages", { query: args[0], limit: Number(args[1] ?? 20) });
+      await printToolResult(client, "search_messages", {
+        query: args[0],
+        limit: Number(args[1] ?? 20),
+      });
       return;
     case "wait":
       if (!args[0]) throw new Error("Usage: wait <chat> [timeoutSeconds]");
@@ -127,7 +160,8 @@ async function runConsoleCommand(cmd: string, args: string[], client: LocalMcpCl
       if (!args[0]) throw new Error("Usage: raw '<json>'");
       {
         const parsed = JSON.parse(args.join(" ")) as { name?: string; arguments?: object };
-        if (!parsed.name) throw new Error('Expected JSON like {"name":"tool_name","arguments":{...}}.');
+        if (!parsed.name)
+          throw new Error('Expected JSON like {"name":"tool_name","arguments":{...}}.');
         await printToolResult(client, parsed.name, parsed.arguments ?? {});
       }
       return;
@@ -143,6 +177,7 @@ async function runConsoleCommand(cmd: string, args: string[], client: LocalMcpCl
     case "quit":
     case "exit":
       process.exit(0);
+      return;
     default:
       throw new Error(`Unknown command: ${cmd}. Type "help" for available commands.`);
   }
@@ -176,7 +211,10 @@ async function runInteractiveConsole(): Promise<void> {
   const prompt = () =>
     rl.question(color.cyan("imsg> "), async (line) => {
       const trimmed = line.trim();
-      if (!trimmed) { prompt(); return; }
+      if (!trimmed) {
+        prompt();
+        return;
+      }
 
       const { cmd, args } = parseConsoleInput(trimmed);
       try {
@@ -200,11 +238,14 @@ const program = new Command()
   .name("imsg-cli")
   .version(APP_VERSION, "-v, --version")
   .description("CLI for the imsg-mcp iMessage MCP server")
-  .addHelpText("after", `
+  .addHelpText(
+    "after",
+    `
 Notes:
   Use "imsg-mcp --doctor" or "imsg-cli doctor" on a new machine.
   The MCP stdio server is the separate "imsg-mcp" binary.
-  The read-only TUI is also available as "imsg".`);
+  The read-only TUI is also available as "imsg".`,
+  );
 
 program
   .command("console", { isDefault: true })
@@ -242,7 +283,9 @@ program
     await withClient((c) =>
       printToolResult(c, "get_messages", {
         ...(chatIdentifier
-          ? looksLikeThreadSlug(chatIdentifier) ? { threadSlug: chatIdentifier } : { chatIdentifier }
+          ? looksLikeThreadSlug(chatIdentifier)
+            ? { threadSlug: chatIdentifier }
+            : { chatIdentifier }
           : {}),
         limit: finalLimit,
       }),
@@ -346,10 +389,12 @@ program
 
 // Handle --tui as a global flag for backwards compat
 if (process.argv.includes("--tui")) {
-  import("./tui/index.js").then(({ runTui }) => runTui()).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  import("./tui/index.js")
+    .then(({ runTui }) => runTui())
+    .catch((error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
 } else {
   program.parseAsync(process.argv).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));

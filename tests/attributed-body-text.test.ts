@@ -17,21 +17,19 @@ import { extractAttributedBodyText } from "../src/attributed-body-text.js";
  * synthetic blobs, so changes to the parser are caught at multiple layers.
  */
 
-const PREAMBLE_LEN = 5; // 0x01 0x9X 0x84 0x01 0x2b
+const _PREAMBLE_LEN = 5; // 0x01 0x9X 0x84 0x01 0x2b
 
 /** Build a typedstream attributedBody blob with chosen preamble byte 2. */
 function buildBlob(text: string, preambleByte2 = 0x94): Buffer {
   const utf8 = Buffer.from(text, "utf8");
   const len = utf8.length;
-  const lenBytes = len < 0x81
-    ? Buffer.from([len])
-    : Buffer.from([0x81, len & 0xff, (len >>> 8) & 0xff]);
+  const lenBytes =
+    len < 0x81 ? Buffer.from([len]) : Buffer.from([0x81, len & 0xff, (len >>> 8) & 0xff]);
 
   const header = Buffer.from([
     // streamtyped magic
-    0x04, 0x0b, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x74, 0x79, 0x70, 0x65, 0x64,
-    0x81, 0xe8, 0x03, 0x84, 0x01, 0x40, 0x84, 0x84, 0x84,
-    0x12,
+    0x04, 0x0b, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x74, 0x79, 0x70, 0x65, 0x64, 0x81, 0xe8, 0x03,
+    0x84, 0x01, 0x40, 0x84, 0x84, 0x84, 0x12,
   ]);
   const nsAttr = Buffer.from("NSAttributedString\x00", "ascii");
   const nsObjPart = Buffer.from([0x84, 0x84, 0x08]);
@@ -41,7 +39,18 @@ function buildBlob(text: string, preambleByte2 = 0x94): Buffer {
   const preamble = Buffer.from([0x01, preambleByte2, 0x84, 0x01, 0x2b]);
   const trailer = Buffer.from([0x86, 0x84, 0x02, 0x69, 0x49]); // iI terminator
 
-  return Buffer.concat([header, nsAttr, nsObjPart, nsObj, middle, nsString, preamble, lenBytes, utf8, trailer]);
+  return Buffer.concat([
+    header,
+    nsAttr,
+    nsObjPart,
+    nsObj,
+    middle,
+    nsString,
+    preamble,
+    lenBytes,
+    utf8,
+    trailer,
+  ]);
 }
 
 const SHORT_TEXT = "Lorem ipsum dolor sit amet, consectetur.";
@@ -50,7 +59,8 @@ const LONG_TEXT =
 // Pick a text whose length matches the first character byte so we exercise
 // the doubled-letter prefix bug. Length 72 → byte 0x48 → 'H'. Use a sentence
 // that starts with 'H' and is exactly 72 UTF-8 bytes.
-const DOUBLED_LETTER_TEXT = "Here is the question text we use as a regression case for length byte H!!"; // length tuned below
+const DOUBLED_LETTER_TEXT =
+  "Here is the question text we use as a regression case for length byte H!!"; // length tuned below
 // Note: the actual bytes-vs-letter alignment doesn't have to be perfect for
 // the test to be meaningful — the regression is "if the byte happens to be a
 // printable letter that matches the first content char, the parser must not
@@ -64,24 +74,67 @@ const EMOJI_BODY = buildBlob("🎉🌙✨🍕🔥", 0x94);
 // Doubled-letter scenario: build a blob where length byte is 0x48 ('H') and
 // content also starts with 'H' so the byte-scan parser would naïvely produce
 // "HHere is..." absent our prefix-strip fix.
-const _DOUBLED_PROBE_TEXT = "Here is the doubled-letter regression case for our typedstream parser."; // 70 chars
+const _DOUBLED_PROBE_TEXT =
+  "Here is the doubled-letter regression case for our typedstream parser."; // 70 chars
 // Pad the text to exactly 72 chars (0x48) so the length byte == 'H' (0x48).
-const DOUBLED_LETTER_TEXT_72 = "Here is the doubled-letter regression case for typedstream parsers.....".slice(0, 72);
+const DOUBLED_LETTER_TEXT_72 =
+  "Here is the doubled-letter regression case for typedstream parsers.....".slice(0, 72);
 const DOUBLED_PREFIX_BODY = buildBlob(DOUBLED_LETTER_TEXT_72, 0x94);
 
 // Attachment-only fixture: contains only Apple-internal attribute markers,
 // no user text. Should return undefined.
 const ATTACHMENT_ONLY_BODY = Buffer.from([
-  0x04, 0x0b, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x74, 0x79, 0x70, 0x65, 0x64,
-  0x81, 0xe8, 0x03, 0x84, 0x01, 0x40, 0x84, 0x84, 0x84, 0x12,
+  0x04,
+  0x0b,
+  0x73,
+  0x74,
+  0x72,
+  0x65,
+  0x61,
+  0x6d,
+  0x74,
+  0x79,
+  0x70,
+  0x65,
+  0x64,
+  0x81,
+  0xe8,
+  0x03,
+  0x84,
+  0x01,
+  0x40,
+  0x84,
+  0x84,
+  0x84,
+  0x12,
   ...Buffer.from("NSAttributedString\x00", "ascii"),
-  0x84, 0x84, 0x08,
+  0x84,
+  0x84,
+  0x08,
   ...Buffer.from("NSObject\x00", "ascii"),
-  0x85, 0x92, 0x84, 0x84, 0x84, 0x08,
+  0x85,
+  0x92,
+  0x84,
+  0x84,
+  0x84,
+  0x08,
   ...Buffer.from("NSString\x01", "ascii"),
-  0x01, 0x94, 0x84, 0x01, 0x2b,
-  0x03, 0xef, 0xbf, 0xbc, // length 3 + UTF-8 object replacement char (U+FFFC)
-  0x86, 0x84, 0x02, 0x69, 0x49, 0x01, 0x01,
+  0x01,
+  0x94,
+  0x84,
+  0x01,
+  0x2b,
+  0x03,
+  0xef,
+  0xbf,
+  0xbc, // length 3 + UTF-8 object replacement char (U+FFFC)
+  0x86,
+  0x84,
+  0x02,
+  0x69,
+  0x49,
+  0x01,
+  0x01,
   // Then __kIMFileTransferGUIDAttributeName + at_0_<GUID>
   ...Buffer.from("\x00\x84\x16__kIMFileTransferGUIDAttributeName\x00", "binary"),
   ...Buffer.from("\x00\x84\x29at_0_00000000-0000-4000-8000-000000000000\x00", "binary"),
@@ -129,10 +182,7 @@ describe("extractAttributedBodyText", () => {
 
   // Defensive: the parser must not hang on synthetic / malformed blobs
   it("does not hang on a malformed blob (only header magic, no NSString)", () => {
-    const malformed = Buffer.concat([
-      Buffer.from("streamtyped"),
-      Buffer.alloc(2048, 0xff),
-    ]);
+    const malformed = Buffer.concat([Buffer.from("streamtyped"), Buffer.alloc(2048, 0xff)]);
     const start = Date.now();
     const result = extractAttributedBodyText(malformed);
     const elapsed = Date.now() - start;

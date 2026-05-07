@@ -1,10 +1,17 @@
-import React, { useMemo } from "react";
 import { Box, Text } from "ink";
+import React, { useMemo } from "react";
 import type { Conversation, Message } from "../../types.js";
 import { theme } from "../theme.js";
 import type { Mode, PendingMessage } from "../types.js";
 import { ComposeBar } from "./ComposeBar.js";
-import { MessageBubble, PendingBubble, dateSeparator, isDifferentDay, isGroupStart, isGroupEnd } from "./MessageBubble.js";
+import {
+  dateSeparator,
+  isDifferentDay,
+  isGroupEnd,
+  isGroupStart,
+  MessageBubble,
+  PendingBubble,
+} from "./MessageBubble.js";
 
 interface Props {
   conversation: Conversation | undefined;
@@ -29,8 +36,8 @@ export function ThreadPane({
   conversation,
   messages,
   pending,
-  resolvedNames,
-  scrollOffset,
+  resolvedNames: _resolvedNames,
+  scrollOffset: _scrollOffset,
   selectedMsgIdx,
   selectionAnchor,
   gapMarkers,
@@ -89,7 +96,7 @@ export function ThreadPane({
     }
 
     return { visibleStart: start, visibleEnd: end + 1 };
-  }, [messages.length, pending.length, selectedMsgIdx, msgAreaHeight]);
+  }, [messages.length, pending.length, selectedMsgIdx, msgAreaHeight, messages]);
 
   const visibleMessages = messages.slice(visibleStart, Math.min(visibleEnd, messages.length));
 
@@ -122,19 +129,25 @@ export function ThreadPane({
       overflow="hidden"
     >
       {/* Header */}
-      <Box paddingX={1} backgroundColor={focused ? theme.header.focused.bg : theme.header.dim.bg} justifyContent="space-between">
+      <Box
+        paddingX={1}
+        backgroundColor={focused ? theme.header.focused.bg : theme.header.dim.bg}
+        justifyContent="space-between"
+      >
         <Box>
           <Text color={focused ? theme.header.focused.fg : theme.header.dim.fg} bold={focused}>
             {conversation?.displayName ?? conversation?.chatIdentifier ?? "Thread"}
           </Text>
-          {conversation && (
-            <Text color={theme.info.label}> ({messages.length} msgs)</Text>
-          )}
+          {conversation && <Text color={theme.info.label}> ({messages.length} msgs)</Text>}
         </Box>
         {conversation && (
           <Box gap={1}>
-            {conversation.displayName && <Text color={theme.info.label}>{conversation.rawIdentifier}</Text>}
-            <Text color={conversation.serviceType === "SMS" ? theme.sms : theme.info.label}>{conversation.serviceType}</Text>
+            {conversation.displayName && (
+              <Text color={theme.info.label}>{conversation.rawIdentifier}</Text>
+            )}
+            <Text color={conversation.serviceType === "SMS" ? theme.sms : theme.info.label}>
+              {conversation.serviceType}
+            </Text>
             {conversation.isGroupChat && <Text color={theme.info.label}>Group</Text>}
           </Box>
         )}
@@ -143,7 +156,9 @@ export function ThreadPane({
       {/* Messages — compact rows with sender grouping */}
       <Box flexDirection="column" flexGrow={1} overflow="hidden">
         {messages.length === 0 && pending.length === 0 ? (
-          <Box paddingX={1}><Text color={theme.sidebar.snippet}>No messages</Text></Box>
+          <Box paddingX={1}>
+            <Text color={theme.sidebar.snippet}>No messages</Text>
+          </Box>
         ) : (
           <>
             {/* Scroll indicator top */}
@@ -165,9 +180,12 @@ export function ThreadPane({
               const bgTint = msg.isFromMe ? theme.groupBg.sent : theme.groupBg.received;
 
               // Relative line number: distance from cursor
-              const relNum = selectedMsgIdx >= 0
-                ? (realIdx === selectedMsgIdx ? `${realIdx}` : `${Math.abs(realIdx - selectedMsgIdx)}`)
-                : `${realIdx}`;
+              const relNum =
+                selectedMsgIdx >= 0
+                  ? realIdx === selectedMsgIdx
+                    ? `${realIdx}`
+                    : `${Math.abs(realIdx - selectedMsgIdx)}`
+                  : `${realIdx}`;
 
               return (
                 <React.Fragment key={msg.id}>
@@ -179,7 +197,8 @@ export function ThreadPane({
                     return (
                       <Box justifyContent="center" marginTop={1} marginBottom={1}>
                         <Text color={theme.edited}>
-                          ─── {gap.count.toLocaleString()} older messages evicted (scroll back to reload) ───
+                          ─── {gap.count.toLocaleString()} older messages evicted (scroll back to
+                          reload) ───
                         </Text>
                       </Box>
                     );
@@ -204,7 +223,9 @@ export function ThreadPane({
                     isLastInGroup={lastInGroup}
                     bgTint={bgTint}
                     lookupReplyText={lookupReplyText}
-                    inSelection={selRange != null && realIdx >= selRange[0] && realIdx <= selRange[1]}
+                    inSelection={
+                      selRange != null && realIdx >= selRange[0] && realIdx <= selRange[1]
+                    }
                   />
                   {/* Group separator line between different senders */}
                   {lastInGroup && nextMsg && !isDifferentDay(msg.date, nextMsg.date) && (
@@ -216,7 +237,12 @@ export function ThreadPane({
 
             {/* Pending messages */}
             {pending.map((pm) => (
-              <PendingBubble key={pm.text} text={pm.text} status={pm.status} maxWidth={maxBubbleW} />
+              <PendingBubble
+                key={pm.text}
+                text={pm.text}
+                status={pm.status}
+                maxWidth={maxBubbleW}
+              />
             ))}
 
             {/* Scroll indicator bottom */}
