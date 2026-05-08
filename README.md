@@ -14,8 +14,8 @@ MCP server, CLI, and terminal UI for iMessage on macOS.
 
 |   |   |
 | - | - |
-| ![TUI overview](docs/screenshots/tui-overview.png) | ![imsg-cli setup](docs/screenshots/cli-setup.png) |
-| ![safe theme + blue accent](docs/screenshots/theme-safe-blue.png) | ![powerline theme + magenta accent](docs/screenshots/theme-powerline-magenta.png) |
+| ![TUI overview — default safe theme + iMessage blue](docs/screenshots/tui-overview.png) | ![safe theme + warm orange accent](docs/screenshots/theme-safe-orange.png) |
+| ![safe theme + iMessage blue accent](docs/screenshots/theme-safe-blue.png) | ![powerline theme + magenta accent](docs/screenshots/theme-powerline-magenta.png) |
 
 ## What ships in this package
 

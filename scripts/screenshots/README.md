@@ -31,6 +31,16 @@ pnpm screenshots:check  # regenerate, then `git diff --exit-code docs/screenshot
 Fails if any committed screenshot doesn't match what `vhs` produces today —
 indicating the UI changed and the docs need a refresh.
 
+## Why CLI screenshots aren't included
+
+Earlier `cli-doctor.tape` / `cli-setup.tape` scenes were dropped because
+the rendered output included absolute paths under `/Users/<your-name>/`
+even when pointed at the synthetic fixture (resolved via `process.cwd()`).
+We can't ship a public README image that leaks a contributor's home dir.
+Re-introducing those scenes is a v1.x follow-up — the fix is to either
+elide the cwd in `doctor`/`setup` output or run vhs from a `/tmp/demo`
+working directory.
+
 ## Why VHS
 
 VHS is the only tool we found in 2026 that produces both static PNGs (via
