@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { DevStatsData } from "../hooks/useDevStats.js";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 interface Props {
   stats: DevStatsData;
@@ -8,9 +8,10 @@ interface Props {
 }
 
 export function DevStats({ stats, width }: Props) {
-  const engineColor = stats.engine.startsWith("Rust") ? "#FF6B35" : theme.status.accent;
+  const theme = useTheme();
+  const engineColor = stats.engine.startsWith("Rust") ? theme.rustEngine : theme.status.accent;
   const cpuColor =
-    stats.cpuPercent > 50 ? "#FF4444" : stats.cpuPercent > 20 ? theme.edited : theme.info.value;
+    stats.cpuPercent > 50 ? theme.cpuHigh : stats.cpuPercent > 20 ? theme.edited : theme.info.value;
 
   return (
     <Box
@@ -61,7 +62,7 @@ export function DevStats({ stats, width }: Props) {
           <Text
             color={
               stats.eventLoopP99Ms > 500
-                ? "#FF4444"
+                ? theme.cpuHigh
                 : stats.eventLoopP99Ms > 100
                   ? theme.edited
                   : theme.info.value
@@ -81,7 +82,8 @@ export function DevStats({ stats, width }: Props) {
 
 /** Compact inline stats for the status bar (when full panel is hidden) */
 export function CompactStats({ stats }: { stats: DevStatsData }) {
-  const engineColor = stats.engine.startsWith("Rust") ? "#FF6B35" : theme.status.accent;
+  const theme = useTheme();
+  const engineColor = stats.engine.startsWith("Rust") ? theme.rustEngine : theme.status.accent;
   return (
     <Box gap={1}>
       <Text color={engineColor}>{stats.engine}</Text>

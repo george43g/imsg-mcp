@@ -1,6 +1,6 @@
 import { TextInput } from "@inkjs/ui";
 import { Box, Text } from "ink";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 import type { Mode } from "../types.js";
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
 }
 
 export function ComposeBar({ mode, recipientName, onChangeText, onSubmit }: Props) {
+  const theme = useTheme();
   if (mode === "confirm") {
     return (
       <Box backgroundColor={theme.compose.bg} paddingX={1} height={1}>

@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 import type { FocusPane, Mode } from "../types.js";
 
 interface Props {
@@ -68,6 +68,7 @@ const DRAWER_KEYS = [
 ];
 
 export function HelpBar({ mode, focus }: Props) {
+  const theme = useTheme();
   let keys: string[][];
   if (mode === "compose" || mode === "confirm") keys = COMPOSE_KEYS;
   else if (mode === "filter") keys = FILTER_KEYS;

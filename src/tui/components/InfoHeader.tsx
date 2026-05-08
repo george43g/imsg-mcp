@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { Conversation } from "../../types.js";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 interface Props {
   conversation: Conversation | undefined;
@@ -8,6 +8,7 @@ interface Props {
 }
 
 export function InfoHeader({ conversation: c, resolvedNames }: Props) {
+  const theme = useTheme();
   if (!c) return <Text color={theme.info.label}>No conversation selected</Text>;
 
   const name = c.displayName ?? c.chatIdentifier;

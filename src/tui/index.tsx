@@ -1,3 +1,4 @@
+import { parseArgs } from "node:util";
 import { withFullScreen } from "fullscreen-ink";
 import { checkLocalAccess, formatAccessReport } from "../access-check.js";
 import {
@@ -6,9 +7,34 @@ import {
   registerCleanup,
   shutdown,
 } from "../shutdown.js";
+import { resolveTuiConfig } from "../tui-config.js";
 import { installWatchdog } from "../watchdog.js";
 import { App } from "./App.js";
 import { clearCache, installCacheSweepers, stopCacheSweepers } from "./messageCache.js";
+import { makeTheme } from "./theme.js";
+import { ThemeProvider } from "./themes/ThemeContext.js";
+
+/** Parse `--theme` and `--accent` from the TUI command line. Unknown
+ *  flags don't raise — the TUI accepts no other options today. */
+function parseTuiCliArgs(): { theme?: string; accent?: string } {
+  try {
+    const { values } = parseArgs({
+      args: process.argv.slice(2),
+      options: {
+        theme: { type: "string" },
+        accent: { type: "string" },
+      },
+      strict: false,
+      allowPositionals: true,
+    });
+    return {
+      theme: typeof values.theme === "string" ? values.theme : undefined,
+      accent: typeof values.accent === "string" ? values.accent : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
 
 export async function runTui(): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -21,6 +47,12 @@ export async function runTui(): Promise<void> {
     process.exit(1);
   }
 
+  // Resolve theme / accent: CLI > env > ~/.config/imsg-mcp/config.json > defaults.
+  const cli = parseTuiCliArgs();
+  const cfg = resolveTuiConfig({ cliTheme: cli.theme, cliAccent: cli.accent });
+  for (const w of cfg.warnings) console.error(`warn: ${w}`);
+  const theme = makeTheme({ preset: cfg.theme, accent: cfg.accentColor });
+
   // Install shutdown handlers + watchdog before starting TUI
   installShutdownHandlers();
   enableOrphanWatchdog();
@@ -32,7 +64,11 @@ export async function runTui(): Promise<void> {
     clearCache();
   });
 
-  const screen = withFullScreen(<App />);
+  const screen = withFullScreen(
+    <ThemeProvider value={theme}>
+      <App />
+    </ThemeProvider>,
+  );
 
   // Register screen cleanup so terminal is restored on any exit
   registerCleanup(() => {

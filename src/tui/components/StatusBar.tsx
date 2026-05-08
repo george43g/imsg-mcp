@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type React from "react";
 import type { Conversation } from "../../types.js";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 interface Props {
   totalUnread: number;
@@ -12,6 +12,7 @@ interface Props {
 }
 
 export function StatusBar({ totalUnread, selected, status, loading, children }: Props) {
+  const theme = useTheme();
   return (
     <Box backgroundColor={theme.status.bg} paddingX={1} height={1} justifyContent="space-between">
       <Box gap={2}>

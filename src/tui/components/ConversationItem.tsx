@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { Conversation } from "../../types.js";
-import { glyphs, theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 function relativeDate(date: Date | null): string {
   if (!date) return "";
@@ -64,11 +64,12 @@ export function ConversationItem({
   focused,
   isLast,
 }: Props) {
+  const theme = useTheme();
   const hasUnread = c.unreadCount > 0;
   const name = c.displayName ?? c.chatIdentifier;
   const time = relativeDate(c.lastMessageDate);
   const snippet = c.lastMessageSnippet ?? "";
-  const serviceIcon = c.serviceType === "SMS" ? glyphs.sms : glyphs.iMessage;
+  const serviceIcon = c.serviceType === "SMS" ? theme.glyphs.sms : theme.glyphs.iMessage;
 
   const nameW = nameBudget(width, hasUnread, c.unreadCount, c.isGroupChat);
   const truncatedName = name.length > nameW ? `${name.slice(0, Math.max(nameW - 1, 1))}…` : name;
@@ -94,8 +95,8 @@ export function ConversationItem({
             <Text color={selected && focused ? theme.sent.bg : undefined}>
               {selected && focused ? "▸" : " "}
             </Text>
-            {hasUnread && <Text color={theme.dot}>{glyphs.envelope} </Text>}
-            {c.isGroupChat && <Text color={theme.info.label}>{glyphs.group} </Text>}
+            {hasUnread && <Text color={theme.dot}>{theme.glyphs.envelope} </Text>}
+            {c.isGroupChat && <Text color={theme.info.label}>{theme.glyphs.group} </Text>}
             <Text
               color={
                 selected
@@ -146,7 +147,7 @@ export function ConversationItem({
       {!isLast && (
         <Box paddingX={1}>
           <Text color={theme.sidebar.separator} dimColor>
-            {glyphs.separator.repeat(Math.max(width - 4, 1))}
+            {theme.glyphs.separator.repeat(Math.max(width - 4, 1))}
           </Text>
         </Box>
       )}

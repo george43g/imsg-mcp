@@ -1,6 +1,6 @@
 import { TextInput } from "@inkjs/ui";
 import { Box, Text } from "ink";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 interface Props {
   value: string;
@@ -10,6 +10,7 @@ interface Props {
 }
 
 export function DateJumpModal({ value, error, onChange, onSubmit }: Props) {
+  const theme = useTheme();
   return (
     <Box flexDirection="column" borderStyle="double" borderColor={theme.status.accent} paddingX={1}>
       <Text color={theme.status.accent} bold>

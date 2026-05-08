@@ -1,7 +1,8 @@
 import { Box, Text } from "ink";
 import type { Message } from "../../types.js";
 import { detectImageProtocol, isDisplayableImage, isVideo } from "../terminal-image.js";
-import { TAPBACK_EMOJI, theme } from "../theme.js";
+import { TAPBACK_EMOJI } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 interface Props {
   message: Message;
@@ -23,10 +24,12 @@ function formatFullDate(date: Date): string {
 }
 
 function Label({ children }: { children: string }) {
+  const theme = useTheme();
   return <Text color={theme.drawer.label}>{children}: </Text>;
 }
 
 export function MessageDrawer({ message: m, width, height }: Props) {
+  const theme = useTheme();
   const hasAttachments = m.attachments && m.attachments.length > 0;
 
   return (

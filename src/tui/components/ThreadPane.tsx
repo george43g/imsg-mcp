@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import React, { useMemo } from "react";
 import type { Conversation, Message } from "../../types.js";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 import type { Mode, PendingMessage } from "../types.js";
 import { ComposeBar } from "./ComposeBar.js";
 import {
@@ -48,6 +48,7 @@ export function ThreadPane({
   onChangeCompose,
   onSubmitCompose,
 }: Props) {
+  const theme = useTheme();
   const isGroup = conversation?.isGroupChat ?? false;
   const maxBubbleW = Math.max(width - 8, 20);
   const composing = mode === "compose" || mode === "confirm";

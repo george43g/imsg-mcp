@@ -1,6 +1,6 @@
 import { TextInput } from "@inkjs/ui";
 import { Box, Text } from "ink";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 interface Props {
   format: "markdown" | "csv" | "json";
@@ -16,6 +16,7 @@ interface Props {
  * before rendering this). The path is the only inline-editable field here.
  */
 export function ExportModal({ format, path, rangeSummary, onChangePath, onSubmit }: Props) {
+  const theme = useTheme();
   return (
     <Box flexDirection="column" borderStyle="double" borderColor={theme.status.accent} paddingX={1}>
       <Box>

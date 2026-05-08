@@ -387,6 +387,106 @@ program
     await runTui();
   });
 
+// ── Setup ────────────────────────────────────────────────────────────────
+
+program
+  .command("setup")
+  .description("Autodetect DB paths and emit an MCP host config snippet")
+  .option("-w, --write <host>", 'Write into a host config: "claude" or "cursor"')
+  .option("-r, --runtime <runtime>", 'Runtime command: "npx" (default), "bunx", or "global"')
+  .option("--print-only", "Just print the snippet (default behaviour)")
+  .action(async (opts: { write?: string; runtime?: string; printOnly?: boolean }) => {
+    const { probeMachine, buildMcpSnippet, writeHostConfig } = await import("./setup.js");
+    const report = probeMachine();
+
+    if (!report.imsgDb.readable) {
+      log(`✗ Messages DB is not readable: ${report.imsgDb.path}`, "err");
+      log(`  ${report.imsgDb.error ?? ""}`, "err");
+      log(
+        "  Grant Full Disk Access to the running app: System Settings → Privacy & Security → Full Disk Access",
+        "warn",
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    log(`✓ Messages DB readable: ${report.imsgDb.path}`, "ok");
+    log(
+      `✓ Address Book: ${report.contactsDbs.length} source(s), ${report.contactsDbs.filter((p) => p.readable).length} readable`,
+      "ok",
+    );
+    log(
+      `  slugs.db: ${report.slugsDb.path} ${report.slugsDb.exists ? "(exists)" : "(will be created on first run)"}`,
+    );
+
+    const runtime = opts.runtime === "bunx" || opts.runtime === "global" ? opts.runtime : "npx";
+    const snippet = buildMcpSnippet(report, { runtime });
+
+    if (opts.write) {
+      if (opts.write !== "claude" && opts.write !== "cursor") {
+        log(`✗ unknown host: ${opts.write} (expected "claude" or "cursor")`, "err");
+        process.exitCode = 1;
+        return;
+      }
+      const result = writeHostConfig(opts.write, report, { runtime });
+      log(
+        `✓ wrote ${opts.write} config to ${result.path}${result.replaced ? " (replaced existing imessage entry)" : ""}`,
+        "ok",
+      );
+      log(`  backup of any prior file at ${result.path}.bak`);
+      return;
+    }
+
+    log("--- snippet ---", "dim");
+    process.stdout.write(snippet);
+  });
+
+// ── Config ───────────────────────────────────────────────────────────────
+
+const configCmd = program
+  .command("config")
+  .description("Manage TUI settings (theme, accent color)");
+
+configCmd
+  .command("show")
+  .description("Print resolved TUI settings and where each value came from")
+  .action(async () => {
+    const { resolveTuiConfig, defaultTuiConfigPath } = await import("./tui-config.js");
+    const cfg = resolveTuiConfig();
+    log(
+      `config file : ${cfg.configPath ?? `(none — defaults; would write to ${defaultTuiConfigPath()})`}`,
+    );
+    log(`theme       : ${cfg.theme}  (from ${cfg.origin.theme})`);
+    log(`accentColor : ${cfg.accentColor}  (from ${cfg.origin.accentColor})`);
+    if (cfg.theme === "powerline") {
+      log("  — powerline theme requires a Nerd Font (https://www.nerdfonts.com)", "warn");
+    }
+    for (const w of cfg.warnings) log(w, "warn");
+  });
+
+configCmd
+  .command("edit")
+  .description("Open the TUI config file in $EDITOR (creates it if missing)")
+  .action(async () => {
+    const { defaultTuiConfigPath, findTuiConfigPath, writeTuiConfig, DEFAULT_TUI_CONFIG } =
+      await import("./tui-config.js");
+    const path = findTuiConfigPath() ?? defaultTuiConfigPath();
+    const { existsSync } = await import("node:fs");
+    if (!existsSync(path)) {
+      writeTuiConfig(DEFAULT_TUI_CONFIG, path);
+      log(`created ${path}`, "ok");
+    }
+    const editor = process.env.EDITOR ?? "vi";
+    const { spawn } = await import("node:child_process");
+    const child = spawn(editor, [path], { stdio: "inherit" });
+    await new Promise<void>((resolve, reject) => {
+      child.on("exit", (code) =>
+        code === 0 ? resolve() : reject(new Error(`editor exited ${code}`)),
+      );
+      child.on("error", reject);
+    });
+  });
+
 // Handle --tui as a global flag for backwards compat
 if (process.argv.includes("--tui")) {
   import("./tui/index.js")

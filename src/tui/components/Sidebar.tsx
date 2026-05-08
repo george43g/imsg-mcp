@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { useMemo } from "react";
 import type { Conversation } from "../../types.js";
-import { theme } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 import { ConversationItem } from "./ConversationItem.js";
 
 interface Props {
@@ -23,6 +23,7 @@ export function Sidebar({
   width,
   height,
 }: Props) {
+  const theme = useTheme();
   const filtered = useMemo(() => {
     if (!filterQuery) return conversations;
     const q = filterQuery.toLowerCase();

@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { Message, Reaction } from "../../types.js";
-import { glyphs, TAPBACK_EMOJI, theme } from "../theme.js";
+import { TAPBACK_EMOJI } from "../theme.js";
+import { useTheme } from "../themes/ThemeContext.js";
 
 function relativeDate(date: Date): string {
   const now = new Date();
@@ -95,6 +96,7 @@ export function MessageBubble({
   lookupReplyText,
   inSelection,
 }: Props) {
+  const theme = useTheme();
   const isSent = m.isFromMe;
   const text = m.text ?? "(attachment)";
   const timestamp = relativeDate(m.date);
@@ -147,11 +149,11 @@ export function MessageBubble({
           <>
             {isSent ? (
               <Text color={theme.sent.bg} bold>
-                {glyphs.sent}{" "}
+                {theme.glyphs.sent}{" "}
               </Text>
             ) : (
               <Text color={theme.received.border} bold>
-                {glyphs.received}{" "}
+                {theme.glyphs.received}{" "}
               </Text>
             )}
             {sender && (
@@ -219,6 +221,7 @@ interface PendingBubbleProps {
 }
 
 export function PendingBubble({ text, status }: PendingBubbleProps) {
+  const theme = useTheme();
   const indicator = status === "sending" ? "⏳" : status === "failed" ? "⚠" : "✓";
   const color = status === "failed" ? theme.edited : theme.pending.fg;
 
@@ -228,7 +231,7 @@ export function PendingBubble({ text, status }: PendingBubbleProps) {
       <Text color={color}>{indicator} </Text>
       <Text color={theme.timestamp}>{"now".padEnd(13)}</Text>
       <Text color={theme.sent.bg} bold>
-        {"▶ Me: "}
+        {`${theme.glyphs.sent} Me: `}
       </Text>
       <Text color={theme.pending.fg} wrap="truncate">
         {text}
