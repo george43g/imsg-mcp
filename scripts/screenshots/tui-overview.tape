@@ -11,7 +11,7 @@ Set Padding 5
 Set TypingSpeed 50ms
 
 Hide
-Type "node --env-file=.env.test dist/tui.js"
+Type "node --env-file=.env.test dist/cli.js tui"
 Enter
 Sleep 2s
 Show

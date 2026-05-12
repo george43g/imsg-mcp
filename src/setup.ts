@@ -98,8 +98,13 @@ export function buildMcpServerEntry(
   opts: SnippetOptions = {},
 ): { command: string; args: string[]; env?: Record<string, string> } {
   const runtime = opts.runtime ?? "npx";
-  const command = runtime === "global" ? "imsg-mcp" : runtime === "bunx" ? "bunx" : "npx";
-  const args = runtime === "global" ? [] : runtime === "bunx" ? ["imsg-mcp"] : ["-y", "imsg-mcp"];
+  const command = runtime === "global" ? "imsg" : runtime === "bunx" ? "bunx" : "npx";
+  const args =
+    runtime === "global"
+      ? ["mcp"]
+      : runtime === "bunx"
+        ? ["imsg-mcp", "mcp"]
+        : ["-y", "imsg-mcp", "mcp"];
 
   // Only emit env entries when the user's resolved path differs from the
   // built-in default. The probe already used those defaults, so we just

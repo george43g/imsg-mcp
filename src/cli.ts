@@ -248,8 +248,17 @@ Notes:
   );
 
 program
-  .command("console", { isDefault: true })
-  .description("Launch interactive console (default when no command given)")
+  .command("mcp")
+  .description("Run the MCP stdio server")
+  .action(async () => {
+    const { runMcpServer } = await import("./index.js");
+    await runMcpServer();
+  });
+
+program
+  .command("cli")
+  .alias("console")
+  .description("Launch interactive console")
   .action(runInteractiveConsole);
 
 program
@@ -487,17 +496,11 @@ configCmd
     });
   });
 
-// Handle --tui as a global flag for backwards compat
-if (process.argv.includes("--tui")) {
-  import("./tui/index.js")
-    .then(({ runTui }) => runTui())
-    .catch((error) => {
-      console.error(error instanceof Error ? error.message : String(error));
-      process.exit(1);
-    });
-} else {
-  program.parseAsync(process.argv).catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
-}
+program.action(() => {
+  program.outputHelp();
+});
+
+program.parseAsync(process.argv).catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

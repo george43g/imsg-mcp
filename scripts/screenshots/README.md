@@ -15,7 +15,7 @@ brew install vhs
 
 ```bash
 pnpm fixtures           # synthetic data — vhs runs the TUI against this
-pnpm build              # vhs runs the built dist/tui.js, not the TS source
+pnpm build              # vhs runs the built dist/cli.js, not the TS source
 pnpm screenshots        # writes docs/screenshots/*.png
 ```
 

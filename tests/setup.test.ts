@@ -34,20 +34,20 @@ describe("buildMcpServerEntry", () => {
 
   it("npx default → no env block when no env overrides are set", () => {
     const entry = buildMcpServerEntry(cleanReport);
-    expect(entry).toEqual({ command: "npx", args: ["-y", "imsg-mcp"] });
+    expect(entry).toEqual({ command: "npx", args: ["-y", "imsg-mcp", "mcp"] });
     expect(entry.env).toBeUndefined();
   });
 
   it("bunx runtime", () => {
     const entry = buildMcpServerEntry(cleanReport, { runtime: "bunx" });
     expect(entry.command).toBe("bunx");
-    expect(entry.args).toEqual(["imsg-mcp"]);
+    expect(entry.args).toEqual(["imsg-mcp", "mcp"]);
   });
 
   it("global runtime — bare command, no args", () => {
     const entry = buildMcpServerEntry(cleanReport, { runtime: "global" });
-    expect(entry.command).toBe("imsg-mcp");
-    expect(entry.args).toEqual([]);
+    expect(entry.command).toBe("imsg");
+    expect(entry.args).toEqual(["mcp"]);
   });
 
   it("forwards explicit env overrides into the env block", () => {

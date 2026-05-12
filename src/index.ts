@@ -886,32 +886,7 @@ export class IMessageMCPServer {
   }
 }
 
-function printServerHelp(): void {
-  console.error(`${APP_NAME} ${APP_VERSION}`);
-  console.error("");
-  console.error("Usage:");
-  console.error(`  ${APP_NAME}           Run the MCP stdio server`);
-  console.error(`  ${APP_NAME} --doctor  Check local permissions and database access`);
-  console.error(`  ${APP_NAME} --help    Show this help`);
-  console.error(`  ${APP_NAME} --version Show the version`);
-}
-
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  if (args.includes("--help") || args.includes("-h")) {
-    printServerHelp();
-    return;
-  }
-  if (args.includes("--version") || args.includes("-v")) {
-    console.log(APP_VERSION);
-    return;
-  }
-  if (args.includes("--doctor")) {
-    const report = await checkLocalAccess();
-    console.log(formatAccessReport(report));
-    process.exit(report.ok ? 0 : 1);
-  }
-
+export async function runMcpServer(): Promise<void> {
   try {
     const server = new IMessageMCPServer();
     await server.run();
@@ -923,8 +898,3 @@ async function main(): Promise<void> {
     await shutdown(1);
   }
 }
-
-main().catch(async (error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  await shutdown(1);
-});

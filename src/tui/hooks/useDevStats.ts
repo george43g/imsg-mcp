@@ -33,7 +33,10 @@ function engineLabel(): DevStatsData["engine"] {
   return hasNativeModule() ? "Rust parser + TS DB" : "TS";
 }
 
-export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: number) => void } {
+export function useDevStats(visible: boolean): {
+  stats: DevStatsData;
+  recordQueryTime: (ms: number) => void;
+} {
   const [stats, setStats] = useState<DevStatsData>({
     engine: engineLabel(),
     cpuPercent: 0,
@@ -50,6 +53,7 @@ export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: numb
   const lastQueryMsRef = useRef<number | null>(null);
 
   useEffect(() => {
+    if (!visible) return;
     const timer = setInterval(() => {
       const now = Date.now();
       const elapsed = now - lastTimeRef.current;
@@ -81,7 +85,7 @@ export function useDevStats(): { stats: DevStatsData; recordQueryTime: (ms: numb
     timer.unref();
 
     return () => clearInterval(timer);
-  }, []);
+  }, [visible]);
 
   const recordQueryTime = useCallback((ms: number) => {
     lastQueryMsRef.current = Math.round(ms * 10) / 10;

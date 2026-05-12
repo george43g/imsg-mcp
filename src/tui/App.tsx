@@ -26,7 +26,7 @@ export function App() {
   const { exit } = useApp();
   const { width: columns, height: rows } = useScreenSize();
   const imsg = useImsg();
-  const { stats: devStats, recordQueryTime } = useDevStats();
+  const { stats: devStats, recordQueryTime } = useDevStats(state.showDevStats);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const moveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ggPendingRef = useRef(false); // tracks if 'g' was pressed, waiting for second 'g'
@@ -170,10 +170,11 @@ export function App() {
   ]);
 
   // Initial load + register cleanup
+  // biome-ignore lint/correctness/useExhaustiveDependencies: we intentionally run this only on mount to prevent a render-loop
   useEffect(() => {
     registerCleanup(() => imsg.close());
     refreshAll();
-  }, [imsg.close, refreshAll]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [imsg.close]);
 
   // ── Send logic ─────────────────────────────────────────────────────
 
@@ -190,6 +191,8 @@ export function App() {
 
     let attempt = 0;
     const poll = async () => {
+      // Check if we are still polling for this request (unmounted or cancelled)
+      if (!pollTimerRef.current) return;
       attempt++;
       const msgs = await imsg.loadMessages(selected.chatIdentifier);
       const found = msgs.some((m) => m.isFromMe && m.text?.includes(text));
@@ -200,6 +203,7 @@ export function App() {
         pollTimerRef.current = setTimeout(poll, 1500);
       }
     };
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     pollTimerRef.current = setTimeout(poll, 1500);
   }, [selected, state.composeText, imsg]);
 

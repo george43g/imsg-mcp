@@ -52,7 +52,7 @@ The minimum config — every default works for ~90% of users. Drop this into `cl
   "mcpServers": {
     "imessage": {
       "command": "npx",
-      "args": ["-y", "imsg-mcp"]
+      "args": ["-y", "imsg-mcp", "mcp"]
     }
   }
 }
@@ -116,7 +116,7 @@ Example with overrides:
   "mcpServers": {
     "imessage": {
       "command": "npx",
-      "args": ["-y", "imsg-mcp"],
+      "args": ["-y", "imsg-mcp", "mcp"],
       "env": {
         "IMSG_TUI_ACCENT": "#FF6B35",
         "IMSG_MAX_RSS_MB": "512"

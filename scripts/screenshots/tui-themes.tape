@@ -11,7 +11,7 @@ Set TypingSpeed 50ms
 # ── 1. default safe theme + iMessage blue accent ─────────────────────────
 Output docs/screenshots/theme-safe-blue.png
 Hide
-Type "node --env-file=.env.test dist/tui.js"
+Type "node --env-file=.env.test dist/cli.js tui"
 Enter
 Sleep 2s
 Show

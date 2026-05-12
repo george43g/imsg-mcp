@@ -45,7 +45,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "tests/**/*.test.ts", "tests/**/*.test.tsx", "src/**/*.test.tsx"],
     coverage: {
       reporter: ["text", "json", "html"],
     },
