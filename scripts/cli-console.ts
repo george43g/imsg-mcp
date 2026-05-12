@@ -68,12 +68,12 @@ class DebugConsole {
   private outBuf = "";
 
   constructor() {
-    const distIndex = join(root, "dist", "index.js");
-    if (!existsSync(distIndex)) {
-      console.error("Run pnpm build first. dist/index.js not found.");
+    const distCli = join(root, "dist", "cli.js");
+    if (!existsSync(distCli)) {
+      console.error("Run pnpm build first. dist/cli.js not found.");
       process.exit(1);
     }
-    const cmd = ["node", distIndex];
+    const cmd = ["node", distCli, "mcp"];
 
     this.proc = spawn(cmd[0], cmd.slice(1), { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
 

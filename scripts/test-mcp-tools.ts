@@ -25,7 +25,7 @@ class McpClient {
   private pending = new Map<number, (msg: JsonRpcResponse) => void>();
 
   constructor(envFile: string) {
-    this.proc = spawn("node", [`--env-file=${envFile}`, "dist/index.js"], {
+    this.proc = spawn("node", [`--env-file=${envFile}`, "dist/cli.js", "mcp"], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.proc.stdout!.on("data", (chunk: Buffer) => {

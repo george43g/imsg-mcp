@@ -99,7 +99,7 @@ export function loadTuiConfig(): LoadedTuiConfig {
   }
 }
 
-// ── Writer (used by `imsg-cli config edit` to seed a file if missing) ────
+// ── Writer (used by `imsg config edit` to seed a file if missing) ────────
 
 export function writeTuiConfig(config: TuiConfig, path = defaultTuiConfigPath()): string {
   // Validate before writing so we never persist garbage.
@@ -119,7 +119,7 @@ export interface TuiConfigOverrides {
 }
 
 export interface ResolvedTuiConfig extends TuiConfig {
-  /** Where each value came from, useful for `imsg-cli config show`. */
+  /** Where each value came from, useful for `imsg config show`. */
   origin: {
     theme: "cli" | "env" | "config" | "default";
     accentColor: "cli" | "env" | "config" | "default";

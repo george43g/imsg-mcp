@@ -26,7 +26,7 @@ Large DB files (`*.db`, `*.abcddb`) are tracked with Git LFS. In cloud or fresh 
 | `pnpm typecheck` | Type check               |
 | `pnpm lint`    | Lint                       |
 
-Run the server: `node dist/index.js` (stdio MCP).
+Run the server: `node dist/cli.js mcp` (stdio MCP).
 
 ## Env layout (Vite precedence)
 
@@ -194,7 +194,7 @@ Tool responses include performance metadata: engine (TS/Rust), query time, resul
 - **Node version**: Requires Node >=24. The update script handles `nvm install 24` and corepack/pnpm activation.
 - **Environment mode**: On Linux/cloud, `VITE_ENV=ai` (e.g. `.env.ai` for `pnpm mcp:ai`) uses mock sending and bundled `env-data/` SQLite. **`pnpm test`** uses committed **`.env.test`** (same idea) via Vitest’s default **`test`** mode.
 - **Running tests**: **`pnpm test`** = `vitest run` (mode **`test`**, `.env.test` wins over `.env` / `.env.local` for `VITE_*`). **`pnpm test:native`** = `--mode development` so **`.env.test` is not loaded** and Mac paths from **`.env.local`** apply. **Vitest always mocks `AppleScript` sends** (`VITEST=true`).
-- **Running the MCP server** (stdio): `node --env-file=.env --env-file-if-exists=.env.local dist/index.js` (or `.env.ai` in cloud). See **README.md**.
+- **Running the MCP server** (stdio): `node --env-file=.env --env-file-if-exists=.env.local dist/cli.js mcp` (or `.env.ai` in cloud). See **README.md**.
 - **Build**: `pnpm build` (Vite library mode → `dist/index.js`). The `prepare` script auto-builds on `pnpm install`.
 - **Lint**: `pnpm lint` (Biome). **Typecheck**: `pnpm typecheck` (tsc --noEmit).
 - **Git LFS**: The update script runs `git lfs pull`. If LFS files are still pointer stubs, tests and the server will fail with SQLite errors.

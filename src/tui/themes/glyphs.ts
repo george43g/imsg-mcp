@@ -10,7 +10,7 @@
  * - "powerline": Powerline arrows + Nerd Font icons. Looks better but
  *   requires the user's terminal font to be a Nerd-Font-patched build
  *   (FiraCode Nerd Font, JetBrainsMono Nerd Font, etc.). The README
- *   warns about this. `imsg-cli config show` flags it too.
+ *   warns about this. `imsg config show` flags it too.
  *
  * Categories — the consumer (theme.ts → makeTheme) just spreads one of
  * these into the produced Theme object.

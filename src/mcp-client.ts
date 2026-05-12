@@ -23,12 +23,12 @@ export class LocalMcpClient {
   private closed = false;
 
   constructor(private readonly onStderr?: (line: string) => void) {
-    const entry = join(distRoot(), "index.js");
+    const entry = join(distRoot(), "cli.js");
     if (!existsSync(entry)) {
-      throw new Error("dist/index.js not found. Run `pnpm build` first.");
+      throw new Error("dist/cli.js not found. Run `pnpm build` first.");
     }
 
-    this.proc = spawn(process.execPath, [entry], {
+    this.proc = spawn(process.execPath, [entry, "mcp"], {
       cwd: process.cwd(),
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -70,7 +70,7 @@ export class LocalMcpClient {
     const response = (await this.call("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "imsg-cli", version: "1.0.0" },
+      clientInfo: { name: "imsg", version: "1.0.0" },
     })) as { result?: unknown };
 
     if (response.result) {

@@ -15,14 +15,15 @@ MCP server, CLI, and terminal UI for iMessage on macOS.
 |   |   |
 | - | - |
 | ![TUI overview — default safe theme + iMessage blue](docs/screenshots/tui-overview.png) | ![safe theme + warm orange accent](docs/screenshots/theme-safe-orange.png) |
-| ![safe theme + iMessage blue accent](docs/screenshots/theme-safe-blue.png) | ![powerline theme + magenta accent](docs/screenshots/theme-powerline-magenta.png) |
+| ![safe theme + iMessage blue accent](docs/screenshots/theme-safe-blue.png) | ![safe theme + magenta accent](docs/screenshots/theme-safe-magenta.png) |
 
 ## What ships in this package
 
-- `imsg-mcp` - MCP stdio server for Claude Desktop, Cursor, Warp, and other MCP clients
-- `imsg-cli` - interactive debug console plus one-off CLI commands
-- `imsg` - read-only terminal UI for browsing conversations and messages
-- `imsg-cli doctor` / `imsg-mcp --doctor` - local permission and setup checks for new machines
+- `imsg` - one binary with subcommands for the MCP server, interactive console, TUI, setup, and diagnostics
+- `imsg mcp` - MCP stdio server for Claude Desktop, Cursor, Warp, and other MCP clients
+- `imsg cli` - interactive debug console plus one-off CLI commands
+- `imsg tui` - read-only terminal UI for browsing conversations and messages
+- `imsg doctor` - local permission and setup checks for new machines
 
 ## Features
 
@@ -73,7 +74,7 @@ This probes `~/Library/Messages/chat.db`, scans every Address Book source, verif
 ### Verify it works
 
 ```bash
-npx -y imsg-mcp --doctor
+npx -y imsg-mcp doctor
 ```
 
 Checks: macOS, `chat.db` readable, Address Book readable, Messages.app reachable.
@@ -82,15 +83,15 @@ Checks: macOS, `chat.db` readable, Address Book readable, Messages.app reachable
 
 ```bash
 npm install -g imsg-mcp
-imsg-cli setup        # autodetect → snippet
-imsg                  # TUI
-imsg-cli              # interactive console
-imsg-mcp              # stdio MCP (used by hosts above)
+imsg setup            # autodetect -> snippet
+imsg tui              # TUI
+imsg cli              # interactive console
+imsg mcp              # stdio MCP (used by hosts above)
 ```
 
 ### Optional environment variables
 
-**All of these are optional with sane defaults — most users will never touch them.** Run `imsg-cli setup` to autodetect every path on your machine.
+**All of these are optional with sane defaults — most users will never touch them.** Run `imsg setup` to autodetect every path on your machine.
 
 | Var | Default | Override when |
 | --- | --- | --- |
@@ -155,7 +156,7 @@ On the first send, macOS will usually prompt you to allow the terminal or IDE to
 ### Interactive console
 
 ```bash
-imsg-cli
+imsg cli
 ```
 
 This starts the debug console and talks to the local MCP server under the hood.
@@ -163,32 +164,26 @@ This starts the debug console and talks to the local MCP server under the hood.
 ### One-off commands
 
 ```bash
-imsg-cli setup                      # autodetect paths + emit MCP config snippet
-imsg-cli setup --write claude       # …or write directly into Claude Desktop's config
-imsg-cli doctor                     # verify Full Disk Access + DB readability
-imsg-cli config show                # show TUI theme + accent + config-file path
-imsg-cli config edit                # open the TUI config in $EDITOR
-imsg-cli conversations 20
-imsg-cli messages "+15555550100" 20
-imsg-cli unread 100
-imsg-cli search "meeting" 20
-imsg-cli wait "+15555550100" 120
-imsg-cli send "+15555550100" "Hello"
-imsg-cli tools
+imsg setup                      # autodetect paths + emit MCP config snippet
+imsg setup --write claude       # or write directly into Claude Desktop's config
+imsg doctor                     # verify Full Disk Access + DB readability
+imsg config show                # show TUI theme + accent + config-file path
+imsg config edit                # open the TUI config in $EDITOR
+imsg conversations 20
+imsg messages "+15555550100" 20
+imsg unread 100
+imsg search "meeting" 20
+imsg wait "+15555550100" 120
+imsg send "+15555550100" "Hello"
+imsg tools
 ```
 
 ## Terminal UI
 
-Launch the read-only TUI with either command:
+Launch the read-only TUI:
 
 ```bash
-imsg
-```
-
-or:
-
-```bash
-imsg-cli --tui
+imsg tui
 ```
 
 Vim-style keybindings:
@@ -234,7 +229,7 @@ Two glyph presets and a single accent color:
 Or override per-launch via CLI:
 
 ```bash
-imsg --theme=powerline --accent=#FF6B35
+imsg tui --theme=powerline --accent=#FF6B35
 ```
 
 Resolution order: `--cli-flag` > `IMSG_TUI_*` env var > config file > defaults.
@@ -242,8 +237,8 @@ Resolution order: `--cli-flag` > `IMSG_TUI_*` env var > config file > defaults.
 Inspect what's loaded:
 
 ```bash
-imsg-cli config show     # prints theme / accent / source path
-imsg-cli config edit     # opens the config in $EDITOR
+imsg config show     # prints theme / accent / source path
+imsg config edit     # opens the config in $EDITOR
 ```
 
 ## MCP server usage
@@ -251,7 +246,7 @@ imsg-cli config edit     # opens the config in $EDITOR
 Run the stdio server directly:
 
 ```bash
-imsg-mcp
+imsg mcp
 ```
 
 ### Claude Desktop example
@@ -262,7 +257,8 @@ Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "imessage": {
-      "command": "imsg-mcp"
+      "command": "imsg",
+      "args": ["mcp"]
     }
   }
 }
@@ -271,7 +267,7 @@ Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ### Manual stdio run
 
 ```bash
-imsg-mcp
+imsg mcp
 ```
 
 The server logs to stderr and speaks MCP over stdio on stdout.
@@ -365,7 +361,7 @@ This server reads only your local `~/Library/Messages/chat.db`. Nothing is uploa
 Run:
 
 ```bash
-imsg-cli doctor
+imsg doctor
 ```
 
 Then grant Full Disk Access and restart the app running the command.
@@ -376,7 +372,7 @@ Open Messages.app. Reading still works without it, but sending does not.
 
 ### Contact names are missing
 
-Grant Full Disk Access to the running app. `imsg-mcp` auto-discovers iCloud Address Book source databases when it can read the Address Book root.
+Grant Full Disk Access to the running app. The server auto-discovers iCloud Address Book source databases when it can read the Address Book root.
 
 ### Native module mismatch
 
@@ -388,10 +384,8 @@ pnpm rebuild better-sqlite3
 
 ## Publishing notes
 
-This package is ready to publish as a multi-bin package. Global installs expose:
+This package is ready to publish as a single-bin package. Global installs expose:
 
-- `imsg-mcp`
-- `imsg-cli`
 - `imsg`
 
 ## License

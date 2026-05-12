@@ -141,8 +141,11 @@ export const SendMessageSchema = z.object({
 
 export const SendMessageOutputSchema = z.object({
   success: z.boolean(),
+  target: z.string().optional(),
   error: z.string().optional(),
-  timestamp: z.string().optional(),
+  timestamp: z.string().nullable().optional(),
+  threadSlug: z.string().optional(),
+  lastMessageId: z.number().int().optional(),
 });
 
 export const WaitForReplySchema = z.object({
@@ -182,6 +185,7 @@ export const SearchMessagesSchema = z.object({
 });
 
 export const SearchMessagesOutputSchema = z.object({
+  query: z.string().optional(),
   messages: z.array(MessageSchema),
   count: z.number().int(),
   hasMore: z.boolean(),

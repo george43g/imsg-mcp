@@ -24,7 +24,7 @@ labels: bug
 
 ## Environment
 
-- imsg-mcp version: <!-- output of `imsg-mcp --version` -->
+- imsg-mcp version: <!-- output of `imsg --version` -->
 - macOS version:
 - Node.js version: <!-- `node --version` -->
 - MCP host (Claude / Cursor / Warp / other):

@@ -235,16 +235,16 @@ async function runInteractiveConsole(): Promise<void> {
 // ── CLI program (Commander) ────────────────────────────────────────────
 
 const program = new Command()
-  .name("imsg-cli")
+  .name("imsg")
   .version(APP_VERSION, "-v, --version")
   .description("CLI for the imsg-mcp iMessage MCP server")
   .addHelpText(
     "after",
     `
 Notes:
-  Use "imsg-mcp --doctor" or "imsg-cli doctor" on a new machine.
-  The MCP stdio server is the separate "imsg-mcp" binary.
-  The read-only TUI is also available as "imsg".`,
+  Use "imsg doctor" on a new machine.
+  Run the MCP stdio server with "imsg mcp".
+  Launch the read-only TUI with "imsg tui".`,
   );
 
 program
@@ -391,6 +391,8 @@ program
 program
   .command("tui")
   .description("Launch the read-only terminal UI")
+  .option("--theme <theme>", 'TUI theme: "safe" or "powerline"')
+  .option("--accent <hex>", "TUI accent color as #RRGGBB")
   .action(async () => {
     const { runTui } = await import("./tui/index.js");
     await runTui();

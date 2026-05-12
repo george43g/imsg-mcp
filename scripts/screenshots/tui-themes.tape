@@ -1,5 +1,5 @@
-# Theme variants — same scene rendered with each theme + accent combo so
-# the README can show side-by-side. Each frame writes its own PNG.
+# Safe theme variants — same scene rendered with different accents so the
+# README screenshots never require Nerd Fonts or Powerline glyph support.
 
 Set FontSize 13
 Set FontFamily "JetBrains Mono"
@@ -11,7 +11,7 @@ Set TypingSpeed 50ms
 # ── 1. default safe theme + iMessage blue accent ─────────────────────────
 Output docs/screenshots/theme-safe-blue.png
 Hide
-Type "node --env-file=.env.test dist/cli.js tui"
+Type "IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
 Enter
 Sleep 2s
 Show
@@ -26,7 +26,7 @@ Sleep 500ms
 # ── 2. safe theme + warm orange accent ──────────────────────────────────
 Output docs/screenshots/theme-safe-orange.png
 Hide
-Type 'IMSG_TUI_ACCENT="#FF6B35" node --env-file=.env.test dist/tui.js'
+Type 'IMSG_TUI_THEME=safe IMSG_TUI_ACCENT="#FF6B35" node --env-file=.env.test dist/cli.js tui'
 Enter
 Sleep 2s
 Show
@@ -38,10 +38,10 @@ Screenshot docs/screenshots/theme-safe-orange.png
 Type "q"
 Sleep 500ms
 
-# ── 3. powerline theme + iMessage blue ──────────────────────────────────
-Output docs/screenshots/theme-powerline-blue.png
+# ── 3. safe theme + green accent ────────────────────────────────────────
+Output docs/screenshots/theme-safe-green.png
 Hide
-Type 'IMSG_TUI_THEME=powerline node --env-file=.env.test dist/tui.js'
+Type 'IMSG_TUI_THEME=safe IMSG_TUI_ACCENT="#34C759" node --env-file=.env.test dist/cli.js tui'
 Enter
 Sleep 2s
 Show
@@ -49,14 +49,14 @@ Type "j"
 Sleep 200ms
 Tab
 Sleep 1s
-Screenshot docs/screenshots/theme-powerline-blue.png
+Screenshot docs/screenshots/theme-safe-green.png
 Type "q"
 Sleep 500ms
 
-# ── 4. powerline theme + magenta accent ─────────────────────────────────
-Output docs/screenshots/theme-powerline-magenta.png
+# ── 4. safe theme + magenta accent ──────────────────────────────────────
+Output docs/screenshots/theme-safe-magenta.png
 Hide
-Type 'IMSG_TUI_THEME=powerline IMSG_TUI_ACCENT="#FF00FF" node --env-file=.env.test dist/tui.js'
+Type 'IMSG_TUI_THEME=safe IMSG_TUI_ACCENT="#FF00FF" node --env-file=.env.test dist/cli.js tui'
 Enter
 Sleep 2s
 Show
@@ -64,6 +64,6 @@ Type "j"
 Sleep 200ms
 Tab
 Sleep 1s
-Screenshot docs/screenshots/theme-powerline-magenta.png
+Screenshot docs/screenshots/theme-safe-magenta.png
 Type "q"
 Sleep 500ms

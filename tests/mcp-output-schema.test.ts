@@ -85,4 +85,20 @@ describe("MCP Output Schema Validation", () => {
       }
     });
   }
+
+  it("validates search_messages empty result output", async () => {
+    const res = await callHandler("search_messages", {
+      query: "zzzz_imsg_mcp_schema_no_match",
+      limit: 5,
+    });
+    expect(() => OUTPUT_SCHEMAS.search_messages.parse(res.structuredContent)).not.toThrow();
+  });
+
+  it("validates get_messages empty chat output", async () => {
+    const res = await callHandler("get_messages", {
+      chatIdentifier: "definitely-no-such-chat-identifier",
+      limit: 5,
+    });
+    expect(() => OUTPUT_SCHEMAS.get_messages.parse(res.structuredContent)).not.toThrow();
+  });
 });

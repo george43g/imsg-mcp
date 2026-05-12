@@ -145,7 +145,7 @@ export function formatAccessReport(report: AccessReport): string {
   lines.push(
     report.ok
       ? "Environment looks ready for local message reads."
-      : "Fix the ERR items above, then rerun `imsg-cli doctor` or `imsg-mcp --doctor`.",
+      : "Fix the ERR items above, then rerun `imsg doctor`.",
   );
   return lines.join("\n");
 }

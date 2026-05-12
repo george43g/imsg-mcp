@@ -186,9 +186,9 @@ function toolText(text: string, structuredContent?: Record<string, unknown>) {
   };
 }
 
-function toolError(text: string, structuredContent?: Record<string, unknown>) {
+function toolError(text: string, _structuredContent?: Record<string, unknown>) {
   return {
-    ...toolText(text, structuredContent),
+    ...toolText(text),
     isError: true,
   };
 }
@@ -505,7 +505,11 @@ export class IMessageMCPServer {
     const durMs = span.end({ limit, returned: messages.length });
 
     if (messages.length === 0) {
-      return toolText(`${threadHeader}No messages found.`, { messages: [], count: 0 });
+      return toolText(`${threadHeader}No messages found.`, {
+        messages: [],
+        count: 0,
+        hasMore: false,
+      });
     }
 
     const formatted = messages.map((m) => formatMessage(m)).join("\n");

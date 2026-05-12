@@ -11,12 +11,12 @@
  * 2. Then flushes any buffered subsequent requests.
  *
  * Usage:
- *   MCP_DEV_CMD="tsx src/index.ts" tsx scripts/mcp-dev-proxy.ts
+ *   MCP_DEV_CMD="tsx src/cli.ts mcp" tsx scripts/mcp-dev-proxy.ts
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
 
-const MCP_DEV_CMD = process.env.MCP_DEV_CMD || "tsx src/index.ts";
+const MCP_DEV_CMD = process.env.MCP_DEV_CMD || "tsx src/cli.ts mcp";
 const RESTART_DELAY_MS = 100;
 const RESPAWN_TIMEOUT_MS = 10_000;
 

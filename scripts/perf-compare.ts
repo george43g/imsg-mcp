@@ -29,7 +29,7 @@ class McpClient {
   constructor(envFile: string, disableNative: boolean) {
     const env = { ...process.env };
     if (disableNative) env.IMSG_DISABLE_NATIVE = "1";
-    this.proc = spawn("node", [`--env-file=${envFile}`, "dist/index.js"], {
+    this.proc = spawn("node", [`--env-file=${envFile}`, "dist/cli.js", "mcp"], {
       stdio: ["pipe", "pipe", "pipe"],
       env,
     });

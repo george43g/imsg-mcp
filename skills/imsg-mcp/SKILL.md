@@ -11,7 +11,7 @@ Companion skill for agents using or developing the `imsg-mcp` iMessage MCP serve
 
 ## Quick start
 
-1. Run `imsg-cli doctor` on a new machine to check permissions.
+1. Run `imsg doctor` on a new machine to check permissions.
 2. Use `list_conversations` to identify the correct thread (returns `threadSlug`).
 3. Use `send_message` with `threadSlug` for existing threads, especially groups.
 4. Use `wait_for_reply` after sending when the workflow depends on a human answer.
@@ -45,9 +45,9 @@ Stable, human-readable IDs for conversations: `{name}~{service}~{4-hex}` (e.g. `
 
 | Binary | Purpose |
 |--------|---------|
-| `imsg-mcp` | MCP stdio server (used by AI hosts like Claude, Cursor) |
-| `imsg-cli` | Interactive CLI with REPL |
-| `imsg` | Full-screen TUI (Ink/React) |
+| `imsg mcp` | MCP stdio server (used by AI hosts like Claude, Cursor) |
+| `imsg cli` | Interactive CLI with REPL |
+| `imsg tui` | Full-screen TUI (Ink/React) |
 
 ## TUI (`imsg`)
 

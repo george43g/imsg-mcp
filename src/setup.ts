@@ -1,5 +1,5 @@
 /**
- * `imsg-cli setup` engine — autodetects DB paths on this machine and
+ * `imsg setup` engine — autodetects DB paths on this machine and
  * emits a ready-to-paste MCP server configuration snippet.
  *
  * Behaviour:
