@@ -1,10 +1,73 @@
 import type { Tool, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 export const UNLIMITED = Number.MAX_SAFE_INTEGER;
 export const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 
 const nonEmptyString = (description: string) => z.string().trim().min(1).describe(description);
+
+export const ReactionSchema = z.object({
+  type: z.string(),
+  emoji: z.string().optional(),
+  fromHandle: z.string(),
+  isRemoval: z.boolean(),
+  targetMessageGuid: z.string(),
+  targetMessagePart: z.number().int(),
+});
+
+export const ReplyContextSchema = z.object({
+  replyToGuid: z.string(),
+  replyToText: z.string().nullable().optional(),
+});
+
+export const AttachmentSchema = z.object({
+  filename: z.string(),
+  mimeType: z.string().nullable(),
+  transferName: z.string().nullable(),
+  totalBytes: z.number().int(),
+});
+
+export const MessageSchema = z.object({
+  id: z.number().int(),
+  guid: z.string(),
+  text: z.string().nullable(),
+  handle: z.string(),
+  displayName: z.string().optional(),
+  isFromMe: z.boolean(),
+  date: z.string(),
+  dateRead: z.string().nullable(),
+  dateDelivered: z.string().nullable(),
+  isRead: z.boolean(),
+  isDelivered: z.boolean(),
+  chatId: z.string(),
+  service: z.enum(["iMessage", "SMS"]),
+  isReaction: z.boolean(),
+  reaction: ReactionSchema.optional(),
+  isReply: z.boolean(),
+  replyTo: ReplyContextSchema.optional(),
+  reactions: z.array(ReactionSchema).optional(),
+  richContentType: z.string().optional(),
+  richContentSummary: z.string().optional(),
+  isEdited: z.boolean(),
+  isRetracted: z.boolean(),
+  hasAttachments: z.boolean(),
+  attachments: z.array(AttachmentSchema).optional(),
+});
+
+export const ConversationSchema = z.object({
+  chatId: z.string(),
+  chatIdentifier: z.string(),
+  displayName: z.string().nullable(),
+  rawIdentifier: z.string(),
+  participants: z.array(z.string()),
+  lastMessageDate: z.string().nullable(),
+  lastMessageSnippet: z.string().nullable(),
+  unreadCount: z.number().int(),
+  threadSlug: z.string(),
+  isGroupChat: z.boolean(),
+  serviceType: z.enum(["iMessage", "SMS"]),
+});
 
 export const GetMessagesSchema = z.object({
   limit: z
@@ -25,6 +88,13 @@ export const GetMessagesSchema = z.object({
     .describe("Pagination cursor. Pass `oldestMessageId` from a previous response."),
 });
 
+export const GetMessagesOutputSchema = z.object({
+  messages: z.array(MessageSchema),
+  count: z.number().int(),
+  hasMore: z.boolean(),
+  oldestMessageId: z.number().int().optional(),
+});
+
 export const ExportMessagesSchema = z.object({
   chatIdentifier: nonEmptyString("Phone number, email, or chat ID").optional(),
   threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
@@ -37,6 +107,16 @@ export const ExportMessagesSchema = z.object({
   pageSize: z.number().int().min(100).max(5000).default(1000),
 });
 
+export const ExportMessagesOutputSchema = z.object({
+  count: z.number().int(),
+  sizeBytes: z.number().int(),
+  savedTo: z.string(),
+  format: z.string(),
+  oldest: z.string().nullable(),
+  newest: z.string().nullable(),
+  durationMs: z.number(),
+});
+
 export const GetUnreadMessagesSchema = z.object({
   limit: z
     .number()
@@ -46,10 +126,23 @@ export const GetUnreadMessagesSchema = z.object({
     .describe("Max unread messages. 0 = unlimited. Default 100."),
 });
 
+export const GetUnreadMessagesOutputSchema = z.object({
+  messages: z.array(MessageSchema),
+  count: z.number().int(),
+  hasMore: z.boolean(),
+  nextOffset: z.number().int().nullable(),
+});
+
 export const SendMessageSchema = z.object({
   recipient: nonEmptyString("Phone number or email address to send to").optional(),
   threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
   message: nonEmptyString("Message text to send"),
+});
+
+export const SendMessageOutputSchema = z.object({
+  success: z.boolean(),
+  error: z.string().optional(),
+  timestamp: z.string().optional(),
 });
 
 export const WaitForReplySchema = z.object({
@@ -60,8 +153,27 @@ export const WaitForReplySchema = z.object({
   afterMessageId: z.number().int().positive().optional(),
 });
 
+export const WaitForReplyOutputSchema = z.object({
+  received: z.boolean().optional(),
+  messages: z.array(MessageSchema).optional(),
+  count: z.number().int().optional(),
+  timedOut: z.boolean().optional(),
+  timeoutSeconds: z.number().optional(),
+  threadSlug: z.string().optional(),
+  chatIdentifier: z.string().optional(),
+  cancelled: z.boolean().optional(),
+  elapsedSeconds: z.number().optional(),
+});
+
 export const ListConversationsSchema = z.object({
   limit: z.number().int().min(0).default(20),
+});
+
+export const ListConversationsOutputSchema = z.object({
+  conversations: z.array(ConversationSchema),
+  count: z.number().int(),
+  hasMore: z.boolean(),
+  nextOffset: z.number().int().nullable(),
 });
 
 export const SearchMessagesSchema = z.object({
@@ -69,15 +181,65 @@ export const SearchMessagesSchema = z.object({
   limit: z.number().int().min(0).default(20),
 });
 
+export const SearchMessagesOutputSchema = z.object({
+  messages: z.array(MessageSchema),
+  count: z.number().int(),
+  hasMore: z.boolean(),
+  nextOffset: z.number().int().nullable(),
+});
+
 export const GetLogsSchema = z.object({
   tail: z.number().int().min(1).max(500).optional(),
   source: z.enum(["memory", "file", "all"]).optional(),
 });
 
+export const GetLogsOutputSchema = z.object({
+  source: z.string(),
+  tail: z.number().int(),
+  sections: z.array(z.string()),
+});
+
 export const RunBuildSchema = z.object({});
+export const RunBuildOutputSchema = z.object({
+  ok: z.boolean(),
+  stdout: z.string(),
+  stderr: z.string(),
+});
+
 export const RequestRestartSchema = z.object({});
+export const RequestRestartOutputSchema = z.object({
+  restartRequested: z.boolean(),
+});
+
 export const HealthCheckSchema = z.object({});
+export const HealthCheckOutputSchema = z.object({
+  status: z.string(),
+  issues: z.array(z.string()),
+  uptimeMs: z.number(),
+  idleMs: z.number(),
+  pid: z.number(),
+  node: z.string(),
+  heapMb: z.number(),
+  rssMb: z.number(),
+  eventLoopP99Ms: z.number(),
+  eventLoopMaxMs: z.number(),
+  toolCallCount: z.number(),
+  recentErrorCount: z.number(),
+  engine: z.string(),
+});
+
 export const GetLastSendErrorSchema = z.object({});
+export const GetLastSendErrorOutputSchema = z.object({
+  lastSendError: z
+    .object({
+      message: z.string(),
+      timestamp: z.string(),
+      stderr: z.string().optional(),
+      stdout: z.string().optional(),
+      code: z.number().optional(),
+    })
+    .nullable(),
+});
 
 export type ToolName = keyof typeof TOOL_SCHEMAS;
 
@@ -94,6 +256,21 @@ export const TOOL_SCHEMAS = {
   run_build: RunBuildSchema,
   request_restart: RequestRestartSchema,
   health_check: HealthCheckSchema,
+} as const;
+
+export const OUTPUT_SCHEMAS = {
+  get_messages: GetMessagesOutputSchema,
+  export_messages: ExportMessagesOutputSchema,
+  get_unread_messages: GetUnreadMessagesOutputSchema,
+  send_message: SendMessageOutputSchema,
+  wait_for_reply: WaitForReplyOutputSchema,
+  list_conversations: ListConversationsOutputSchema,
+  search_messages: SearchMessagesOutputSchema,
+  get_logs: GetLogsOutputSchema,
+  get_last_send_error: GetLastSendErrorOutputSchema,
+  run_build: RunBuildOutputSchema,
+  request_restart: RequestRestartOutputSchema,
+  health_check: HealthCheckOutputSchema,
 } as const;
 
 type JsonSchema = Tool["inputSchema"];
@@ -172,6 +349,8 @@ export const TOOLS: Tool[] = [
         },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(GetMessagesOutputSchema),
   },
   {
     name: "export_messages",
@@ -198,6 +377,8 @@ export const TOOLS: Tool[] = [
         pageSize: { type: "number", default: 1000, description: "Internal page size, 100-5000" },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(ExportMessagesOutputSchema),
   },
   {
     name: "get_unread_messages",
@@ -209,6 +390,8 @@ export const TOOLS: Tool[] = [
         limit: { type: "number", description: "Max unread messages. 0 = unlimited. Default 100." },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(GetUnreadMessagesOutputSchema),
   },
   {
     name: "send_message",
@@ -224,6 +407,8 @@ export const TOOLS: Tool[] = [
         message: { type: "string", description: "Message text to send" },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(SendMessageOutputSchema),
   },
   {
     name: "wait_for_reply",
@@ -248,6 +433,8 @@ export const TOOLS: Tool[] = [
         afterMessageId: { type: "number", description: "Only return messages after this id" },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(WaitForReplyOutputSchema),
   },
   {
     name: "list_conversations",
@@ -264,6 +451,8 @@ export const TOOLS: Tool[] = [
         },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(ListConversationsOutputSchema),
   },
   {
     name: "search_messages",
@@ -277,6 +466,8 @@ export const TOOLS: Tool[] = [
         limit: { type: "number", default: 20, description: "Number of results. 0 = unlimited." },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(SearchMessagesOutputSchema),
   },
   {
     name: "get_logs",
@@ -289,29 +480,39 @@ export const TOOLS: Tool[] = [
         source: { type: "string", enum: ["memory", "file", "all"], description: "Log source" },
       },
     },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(GetLogsOutputSchema),
   },
   {
     name: "get_last_send_error",
     description: "Return details for the last send_message failure.",
     annotations: annotations.status,
     inputSchema: noArgsSchema,
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(GetLastSendErrorOutputSchema),
   },
   {
     name: "run_build",
     description: "Run pnpm build in the project directory and return stdout/stderr.",
     annotations: annotations.build,
     inputSchema: noArgsSchema,
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(RunBuildOutputSchema),
   },
   {
     name: "request_restart",
     description: "Exit the MCP server process so the client can restart it and load new code.",
     annotations: annotations.build,
     inputSchema: noArgsSchema,
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(RequestRestartOutputSchema),
   },
   {
     name: "health_check",
     description: "Return in-memory MCP vital signs without touching SQLite.",
     annotations: annotations.status,
     inputSchema: noArgsSchema,
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(HealthCheckOutputSchema),
   },
 ];

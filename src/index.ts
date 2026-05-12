@@ -45,6 +45,7 @@ import {
 } from "./mcp-tools.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import { hasNativeModule } from "./native-bridge.js";
+import { sanitizeUserText } from "./sanitize.js";
 import {
   enableOrphanWatchdog,
   enableStdinEofDetection,
@@ -157,12 +158,14 @@ function formatMessage(msg: Message, conversationLabel?: string): string {
   }
 
   const convCtx = conversationLabel ? ` {${conversationLabel}}` : "";
-  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${msg.text || "(no text)"}${status}${convCtx}`;
+  const text = sanitizeUserText(msg.text) || "(no text)";
+  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${text}${status}${convCtx}`;
 }
 
 function messageToStructured(msg: Message) {
   return {
     ...msg,
+    text: sanitizeUserText(msg.text),
     date: msg.date.toISOString(),
     dateRead: msg.dateRead?.toISOString() ?? null,
     dateDelivered: msg.dateDelivered?.toISOString() ?? null,
@@ -219,7 +222,7 @@ function engineLabel(): string {
 /**
  * Main MCP server class
  */
-class IMessageMCPServer {
+export class IMessageMCPServer {
   private server: Server;
   private db: IMessageDB;
 
@@ -518,11 +521,8 @@ class IMessageMCPServer {
       {
         messages: messages.map(messageToStructured),
         count: messages.length,
-        pagination:
-          chatIdentifier || threadSlug
-            ? { oldestMessageId: oldestId, hasMore, wasCapped, hardPageCap: HARD_PAGE_CAP }
-            : undefined,
-        performance: { engine: "TS", queryMs: durMs },
+        hasMore,
+        oldestMessageId: chatIdentifier || threadSlug ? oldestId : undefined,
       },
     );
   }
@@ -594,23 +594,33 @@ class IMessageMCPServer {
 
   private async handleGetUnreadMessages(args: unknown) {
     const { limit } = GetUnreadMessagesSchema.parse(args ?? {});
-    const messages = await this.db.getUnreadMessages(resolveLimit(limit, 100));
+    const resolvedLimit = resolveLimit(limit, 100);
+    const messages = await this.db.getUnreadMessages(resolvedLimit + 1);
+    const hasMore = messages.length > resolvedLimit;
+    const results = messages.slice(0, resolvedLimit);
 
-    if (messages.length === 0) {
-      return toolText("No unread messages.", { messages: [], count: 0 });
+    if (results.length === 0) {
+      return toolText("No unread messages.", {
+        messages: [],
+        count: 0,
+        hasMore: false,
+        nextOffset: null,
+      });
     }
 
     // Add conversation context per message (slug or display name)
-    const formatted = messages
+    const formatted = results
       .map((msg) => {
         const slug = this.db.getSlugForChatIdentifier(msg.chatId);
         const label = slug ?? msg.chatId;
         return formatMessage(msg, label);
       })
       .join("\n");
-    return toolText(`Found ${messages.length} unread message(s):\n\n${formatted}`, {
-      messages: messages.map(messageToStructured),
-      count: messages.length,
+    return toolText(`Found ${results.length} unread message(s):\n\n${formatted}`, {
+      messages: results.map(messageToStructured),
+      count: results.length,
+      hasMore,
+      nextOffset: null,
     });
   }
 
@@ -764,13 +774,21 @@ class IMessageMCPServer {
 
   private async handleListConversations(args: unknown) {
     const { limit } = ListConversationsSchema.parse(args);
-    const limited = await this.db.listConversations(resolveLimit(limit));
+    const resolvedLimit = resolveLimit(limit);
+    const limited = await this.db.listConversations(resolvedLimit + 1);
+    const hasMore = limited.length > resolvedLimit;
+    const results = limited.slice(0, resolvedLimit);
 
-    if (limited.length === 0) {
-      return toolText("No conversations found.", { conversations: [], count: 0 });
+    if (results.length === 0) {
+      return toolText("No conversations found.", {
+        conversations: [],
+        count: 0,
+        hasMore: false,
+        nextOffset: null,
+      });
     }
 
-    const formatted = limited
+    const formatted = results
       .map((conv) => {
         const slug = conv.threadSlug ?? conv.chatIdentifier;
         let name = conv.displayName || conv.chatIdentifier;
@@ -792,42 +810,60 @@ class IMessageMCPServer {
         const svc = conv.serviceType === "SMS" ? " [SMS]" : "";
         const group = conv.isGroupChat ? " [Group]" : "";
         const lastDate = conv.lastMessageDate ? ` - ${relativeDate(conv.lastMessageDate)}` : "";
-        const snippet = conv.lastMessageSnippet
-          ? ` - "${conv.lastMessageSnippet.length > 50 ? `${conv.lastMessageSnippet.slice(0, 47)}...` : conv.lastMessageSnippet}"`
+        let snippetText = conv.lastMessageSnippet;
+        if (snippetText) {
+          snippetText = sanitizeUserText(snippetText);
+        }
+        const snippet = snippetText
+          ? ` - "${snippetText.length > 50 ? `${snippetText.slice(0, 47)}...` : snippetText}"`
           : "";
         const unread = conv.unreadCount > 0 ? ` [${conv.unreadCount} unread]` : "";
         return `• [${slug}] ${name}${ident}${svc}${group}${lastDate}${snippet}${unread}`;
       })
       .join("\n");
 
-    return toolText(`Found ${limited.length} conversation(s):\n\n${formatted}`, {
-      conversations: limited.map((conversation) => ({
+    return toolText(`Found ${results.length} conversation(s):\n\n${formatted}`, {
+      conversations: results.map((conversation) => ({
         ...conversation,
         lastMessageDate: conversation.lastMessageDate?.toISOString() ?? null,
+        lastMessageSnippet: sanitizeUserText(conversation.lastMessageSnippet),
       })),
-      count: limited.length,
+      count: results.length,
+      hasMore,
+      nextOffset: null,
     });
   }
 
   private async handleSearchMessages(args: unknown) {
     const { query, limit } = SearchMessagesSchema.parse(args);
-    const messages = await this.db.searchMessages(query, resolveLimit(limit));
+    const resolvedLimit = resolveLimit(limit);
+    const messages = await this.db.searchMessages(query, resolvedLimit + 1);
+    const hasMore = messages.length > resolvedLimit;
+    const results = messages.slice(0, resolvedLimit);
 
-    if (messages.length === 0) {
-      return toolText(`No messages found matching "${query}".`, { query, messages: [], count: 0 });
+    if (results.length === 0) {
+      return toolText(`No messages found matching "${query}".`, {
+        query,
+        messages: [],
+        count: 0,
+        hasMore: false,
+        nextOffset: null,
+      });
     }
 
-    const formatted = messages
+    const formatted = results
       .map((msg) => {
         const slug = this.db.getSlugForChatIdentifier(msg.chatId);
         const label = slug ?? msg.chatId;
         return formatMessage(msg, label);
       })
       .join("\n");
-    return toolText(`Found ${messages.length} message(s) matching "${query}":\n\n${formatted}`, {
+    return toolText(`Found ${results.length} message(s) matching "${query}":\n\n${formatted}`, {
       query,
-      messages: messages.map(messageToStructured),
-      count: messages.length,
+      messages: results.map(messageToStructured),
+      count: results.length,
+      hasMore,
+      nextOffset: null,
     });
   }
 
