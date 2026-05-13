@@ -7,9 +7,10 @@ Auto-generated demo PNGs and GIFs of the CLI/TUI, produced by
 
 ```bash
 brew install vhs
+brew install --cask font-jetbrains-mono   # vhs reads system fonts; without this the PNGs render garbled
 ```
 
-(Linux: see the vhs README — there's a `.deb`, `.rpm`, and a static binary.)
+(Linux: see the vhs README — there's a `.deb`, `.rpm`, and a static binary. JetBrains Mono is available as a font package in most distros.)
 
 ## Regenerate
 
