@@ -333,6 +333,21 @@ export class ContactsDB {
   }
 
   /**
+   * Paginated list of all loaded contacts, sorted by displayName.
+   * Used by the MCP `list_contacts` tool.
+   */
+  listContacts(offset = 0, limit = 20): { contacts: Contact[]; total: number } {
+    if (!this.initialized) {
+      this.initialize();
+    }
+    const all = Array.from(this.contactCache.values()).sort((a, b) =>
+      a.displayName.localeCompare(b.displayName),
+    );
+    const slice = limit === 0 ? all.slice(offset) : all.slice(offset, offset + limit);
+    return { contacts: slice, total: all.length };
+  }
+
+  /**
    * Get statistics about loaded contacts
    */
   getStats() {

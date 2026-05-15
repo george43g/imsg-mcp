@@ -31,6 +31,10 @@ describe("MCP Output Schema Validation", () => {
       run_build: () => Promise.resolve({ structuredContent: { ok: true, stdout: "", stderr: "" } }), // Mock to avoid running build in tests
       request_restart: server.handleRequestRestart.bind(server),
       health_check: server.handleHealthCheck.bind(server),
+      list_contacts: server.handleListContacts.bind(server),
+      search_contacts: server.handleSearchContacts.bind(server),
+      get_contact: server.handleGetContact.bind(server),
+      resolve_handle: server.handleResolveHandle.bind(server),
     };
 
     return handlerMap[name](args);
@@ -59,6 +63,10 @@ describe("MCP Output Schema Validation", () => {
       args: { chatIdentifier: "test", timeoutSeconds: 0.1 },
       validate: false,
     }, // difficult to test due to timeout
+    { name: "list_contacts", args: { limit: 5 } },
+    { name: "search_contacts", args: { query: "z", limit: 5 } },
+    { name: "get_contact", args: { handle: "+15555550100" } },
+    { name: "resolve_handle", args: { handle: "+15555550100" } },
   ];
 
   for (const { name, args, validate } of testCases) {

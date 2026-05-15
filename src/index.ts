@@ -32,11 +32,15 @@ import {
 import {
   DEFAULT_TOOL_TIMEOUT_MS,
   ExportMessagesSchema,
+  GetContactSchema,
   GetLogsSchema,
   GetMessagesSchema,
   GetUnreadMessagesSchema,
+  ListContactsSchema,
   ListConversationsSchema,
+  ResolveHandleSchema,
   resolveLimit,
+  SearchContactsSchema,
   SearchMessagesSchema,
   SendMessageSchema,
   TOOL_TIMEOUTS_MS,
@@ -312,6 +316,14 @@ export class IMessageMCPServer {
         return await this.handleHealthCheck();
       case "export_messages":
         return await this.handleExportMessages(args, signal);
+      case "list_contacts":
+        return await this.handleListContacts(args);
+      case "search_contacts":
+        return await this.handleSearchContacts(args);
+      case "get_contact":
+        return await this.handleGetContact(args);
+      case "resolve_handle":
+        return await this.handleResolveHandle(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -868,6 +880,112 @@ export class IMessageMCPServer {
       count: results.length,
       hasMore,
       nextOffset: null,
+    });
+  }
+
+  // ── Contact tools ──────────────────────────────────────────────────────
+
+  private async handleListContacts(args: unknown) {
+    const { limit, offset } = ListContactsSchema.parse(args);
+    const resolvedLimit = resolveLimit(limit);
+    // Internal cap mirrors get_messages safety bound.
+    const SAFETY_CAP = 5_000;
+    const effectiveLimit = Math.min(resolvedLimit, SAFETY_CAP);
+    const { contacts, total } = this.db.contacts.listContacts(offset, effectiveLimit);
+    const hasMore = offset + contacts.length < total;
+
+    if (contacts.length === 0) {
+      return toolText(`No contacts found${offset > 0 ? ` (offset ${offset})` : ""}.`, {
+        contacts: [],
+        count: 0,
+        hasMore: false,
+        totalCount: total,
+      });
+    }
+
+    const formatted = contacts
+      .map((c) => {
+        const phones = c.phoneNumbers.length > 0 ? ` 📱 ${c.phoneNumbers.join(", ")}` : "";
+        const emails = c.emails.length > 0 ? ` ✉ ${c.emails.join(", ")}` : "";
+        return `• ${sanitizeUserText(c.displayName)}${phones}${emails}`;
+      })
+      .join("\n");
+    return toolText(`Showing ${contacts.length} of ${total} contact(s):\n\n${formatted}`, {
+      contacts,
+      count: contacts.length,
+      hasMore,
+      totalCount: total,
+    });
+  }
+
+  private async handleSearchContacts(args: unknown) {
+    const { query, limit } = SearchContactsSchema.parse(args);
+    const resolvedLimit = resolveLimit(limit);
+    const all = this.db.contacts.searchContacts(query);
+    const results = resolvedLimit === Number.MAX_SAFE_INTEGER ? all : all.slice(0, resolvedLimit);
+
+    if (results.length === 0) {
+      return toolText(`No contacts match "${query}".`, {
+        query,
+        contacts: [],
+        count: 0,
+      });
+    }
+
+    const formatted = results
+      .map((c) => {
+        const phones = c.phoneNumbers.length > 0 ? ` 📱 ${c.phoneNumbers.join(", ")}` : "";
+        const emails = c.emails.length > 0 ? ` ✉ ${c.emails.join(", ")}` : "";
+        return `• ${sanitizeUserText(c.displayName)}${phones}${emails}`;
+      })
+      .join("\n");
+    return toolText(`Found ${results.length} contact(s) matching "${query}":\n\n${formatted}`, {
+      query,
+      contacts: results,
+      count: results.length,
+    });
+  }
+
+  private async handleGetContact(args: unknown) {
+    const { handle, id } = GetContactSchema.parse(args);
+    let contact = null;
+    if (handle !== undefined) {
+      const lookup = this.db.contacts.lookupContact(handle);
+      contact = lookup ? this.db.contacts.getContact(lookup.contactId) : null;
+    } else if (id !== undefined) {
+      contact = this.db.contacts.getContact(id);
+    }
+    if (!contact) {
+      return toolText("Contact not found.", { contact: null });
+    }
+    const phones =
+      contact.phoneNumbers.length > 0 ? `\nPhones: ${contact.phoneNumbers.join(", ")}` : "";
+    const emails = contact.emails.length > 0 ? `\nEmails: ${contact.emails.join(", ")}` : "";
+    const org = contact.organization ? `\nOrganization: ${contact.organization}` : "";
+    return toolText(
+      `${sanitizeUserText(contact.displayName)} (id ${contact.id})${phones}${emails}${org}`,
+      { contact },
+    );
+  }
+
+  private async handleResolveHandle(args: unknown) {
+    const { handle } = ResolveHandleSchema.parse(args);
+    const lookup = this.db.contacts.lookupContact(handle);
+    if (lookup) {
+      return toolText(`${handle} → ${sanitizeUserText(lookup.displayName)}`, {
+        handle,
+        displayName: lookup.displayName,
+        contactId: lookup.contactId,
+        label: lookup.label ?? null,
+        resolved: true,
+      });
+    }
+    return toolText(`No contact for ${handle}.`, {
+      handle,
+      displayName: handle,
+      contactId: null,
+      label: null,
+      resolved: false,
     });
   }
 

@@ -68,6 +68,25 @@ export function ThreadPane({
     let cursorIdx = selectedMsgIdx >= 0 ? selectedMsgIdx : total - 1;
     cursorIdx = Math.max(0, Math.min(cursorIdx, total - 1));
 
+    // Bottom-anchor: when the cursor is at or near the last real message, walk
+    // UP from the end accumulating real heights until we fill msgAreaHeight.
+    // Fixes the clip where the last 1-3 messages run past Ink's overflow="hidden"
+    // because the downward fill loop never executes (end === total - 1 already).
+    const NEAR_END = 2;
+    if (cursorIdx >= messages.length - NEAR_END && pending.length === 0) {
+      let end = messages.length - 1;
+      let start = end;
+      let totalLines = lineHeight(messages, end, maxBubbleW);
+      while (
+        start > 0 &&
+        totalLines + lineHeight(messages, start - 1, maxBubbleW) <= msgAreaHeight
+      ) {
+        start--;
+        totalLines += lineHeight(messages, start, maxBubbleW);
+      }
+      return { visibleStart: start, visibleEnd: end + 1 };
+    }
+
     // Walk outward from cursor, counting actual lines consumed
     // Start by going upward from cursor
     let start = cursorIdx;
@@ -75,16 +94,16 @@ export function ThreadPane({
     const targetAbove = Math.floor(msgAreaHeight * 0.4);
     while (start > 0 && linesAbove < targetAbove) {
       start--;
-      linesAbove += lineHeight(messages, start);
+      linesAbove += lineHeight(messages, start, maxBubbleW);
     }
 
     // Then go downward from cursor
     let end = cursorIdx;
-    let totalLines = linesAbove + lineHeight(messages, cursorIdx);
+    let totalLines = linesAbove + lineHeight(messages, cursorIdx, maxBubbleW);
     while (end < total - 1 && totalLines < msgAreaHeight) {
       end++;
       if (end < messages.length) {
-        totalLines += lineHeight(messages, end);
+        totalLines += lineHeight(messages, end, maxBubbleW);
       } else {
         totalLines += 1; // pending messages
       }
@@ -93,7 +112,7 @@ export function ThreadPane({
     // If we have room, extend upward more
     while (start > 0 && totalLines < msgAreaHeight) {
       start--;
-      totalLines += lineHeight(messages, start);
+      totalLines += lineHeight(messages, start, maxBubbleW);
     }
 
     return { visibleStart: start, visibleEnd: end + 1 };
@@ -101,7 +120,7 @@ export function ThreadPane({
     // (see types.ts reducer), so depending on length is sufficient for the
     // common fast path. Content-mutating actions (SET_MESSAGES /
     // PREPEND_MESSAGES) replace the whole array, which also flips length.
-  }, [messages, pending.length, selectedMsgIdx, msgAreaHeight]);
+  }, [messages, pending.length, selectedMsgIdx, msgAreaHeight, maxBubbleW]);
 
   const visibleMessages = messages.slice(visibleStart, Math.min(visibleEnd, messages.length));
 
@@ -273,16 +292,37 @@ export function ThreadPane({
   );
 }
 
-/** Estimate how many terminal lines a message at index `i` will consume. */
-function lineHeight(messages: Message[], i: number): number {
+/**
+ * Estimate how many terminal lines a message at index `i` will consume.
+ * Conservative upper bound: under-counts trigger bottom-of-thread clipping
+ * (Ink's overflow="hidden" silently drops rows past the box edge), so we err
+ * toward over-counting wrap rows from text length.
+ */
+function lineHeight(messages: Message[], i: number, bubbleWidth: number): number {
   if (i < 0 || i >= messages.length) return 1;
   const msg = messages[i];
-  let h = 1; // base: one line for the message
-  // Reply context always adds a line when isReply (placeholder shown if no text)
-  if (msg.isReply) h += 1;
-  // Date separator adds a line (if day changed from previous message)
-  if (i === 0 || (i > 0 && isDifferentDay(messages[i - 1].date, msg.date))) h += 1;
-  // First in sender group may have slightly more visual weight but still 1 line
+  // Wrap rows for the message body. Bubble inner width is roughly bubbleWidth
+  // minus padding/prefix (sender name, line number). Use max(20) so very narrow
+  // terminals don't divide-by-near-zero.
+  const innerW = Math.max(20, bubbleWidth - 4);
+  const text = msg.text ?? "";
+  let h = Math.max(1, Math.ceil(text.length / innerW));
+  // Reply preview row(s)
+  if (msg.isReply) {
+    const replyLen = msg.replyTo?.replyToText?.length ?? 0;
+    h += Math.max(1, Math.ceil(replyLen / Math.max(20, innerW - 4)));
+  }
+  // Date separator. Rendered with marginTop={1} when realIdx > 0
+  // (ThreadPane.tsx ~line 216), so it actually occupies TWO terminal rows in
+  // that case: 1 blank margin + 1 separator content. Under-counting this
+  // pushes the last message past the box edge.
+  if (i === 0) {
+    h += 1;
+  } else if (isDifferentDay(messages[i - 1].date, msg.date)) {
+    h += 2;
+  }
+  // Attachment indicator row (paperclip + filename) when present
+  if (msg.attachments && msg.attachments.length > 0) h += 1;
   return h;
 }
 

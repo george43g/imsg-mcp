@@ -152,7 +152,8 @@ const macTimestampToDate = schemaMacTimestampToDate;
 export class IMessageDB {
   private raw: Database.Database;
   private dbPath: string;
-  private contacts: ContactsDB;
+  /** Address-book reader. Public so MCP `*_contacts` tools can wrap it. */
+  readonly contacts: ContactsDB;
   private slugStore: SlugStore;
   /** In-memory slug -> ChatWithLastDate for fast lookups during a session. */
   private slugMap = new Map<string, ChatWithLastDate>();

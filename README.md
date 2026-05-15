@@ -302,6 +302,8 @@ The server logs to stderr and speaks MCP over stdio on stdout.
 
 The server runs a watchdog that monitors event-loop lag, RSS / heap growth, and idle uptime. If anything goes wrong it self-kills so the MCP host respawns a clean instance — meaning a single bad query can't wedge your agent session.
 
+The 24-hour idle-restart is intentional — it keeps long-running sessions fresh after a day of no activity. If the process disappears with no `shutdown` line in the NDJSON log under `$TMPDIR/imsg-mcp/`, the kill came from outside (host process sent SIGKILL, OS reclaimed under memory pressure, etc). Heartbeats now log `system_free_mb` and signal names so the post-mortem is easier next time.
+
 ### Thread slugs
 
 `list_conversations` returns a stable `threadSlug` for each visible conversation. Use that slug with:

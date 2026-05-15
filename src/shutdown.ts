@@ -11,6 +11,8 @@
  * 3. Watching for parent PID change (reparented to launchd = orphaned)
  */
 
+import { appendLog } from "./logger.js";
+
 type CleanupFn = () => void | Promise<void>;
 
 const registry = new Set<CleanupFn>();
@@ -85,8 +87,14 @@ function syncCleanup(): void {
  * Call once at process startup.
  */
 export function installShutdownHandlers(): void {
-  // Signal handlers
+  // Signal handlers — log the signal name before cleanup so the post-mortem
+  // NDJSON tells us *why* the process ended (e.g. host sent SIGTERM at $time).
   const onSignal = (signal: string) => {
+    try {
+      appendLog("info", "signal_received", { signal });
+    } catch {
+      // logger may already be torn down; never fail shutdown over logging.
+    }
     shutdown(signal === "SIGINT" ? 130 : 0);
   };
 

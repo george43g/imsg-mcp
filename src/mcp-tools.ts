@@ -245,6 +245,69 @@ export const GetLastSendErrorOutputSchema = z.object({
     .nullable(),
 });
 
+// ── Contact tools ────────────────────────────────────────────────────────
+
+export const ContactSchema = z.object({
+  id: z.number().int(),
+  displayName: z.string(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  middleName: z.string().nullable(),
+  nickname: z.string().nullable(),
+  organization: z.string().nullable(),
+  phoneNumbers: z.array(z.string()),
+  emails: z.array(z.string()),
+});
+
+export const ListContactsSchema = z.object({
+  limit: z
+    .number()
+    .int()
+    .min(0)
+    .default(20)
+    .describe("Max contacts. 0 = unlimited (bounded by safety cap)."),
+  offset: z.number().int().min(0).default(0).describe("Offset for pagination."),
+});
+export const ListContactsOutputSchema = z.object({
+  contacts: z.array(ContactSchema),
+  count: z.number().int(),
+  hasMore: z.boolean(),
+  totalCount: z.number().int(),
+});
+
+export const SearchContactsSchema = z.object({
+  query: nonEmptyString("Substring to match against name, phone, or email."),
+  limit: z.number().int().min(0).default(20).describe("Max results. 0 = unlimited."),
+});
+export const SearchContactsOutputSchema = z.object({
+  query: z.string(),
+  contacts: z.array(ContactSchema),
+  count: z.number().int(),
+});
+
+export const GetContactSchema = z
+  .object({
+    handle: z.string().optional().describe("Phone number or email to look up."),
+    id: z.number().int().optional().describe("Numeric contact id."),
+  })
+  .refine((v) => v.handle !== undefined || v.id !== undefined, {
+    message: "Provide either `handle` or `id`.",
+  });
+export const GetContactOutputSchema = z.object({
+  contact: ContactSchema.nullable(),
+});
+
+export const ResolveHandleSchema = z.object({
+  handle: nonEmptyString("Phone number or email to resolve to a contact name."),
+});
+export const ResolveHandleOutputSchema = z.object({
+  handle: z.string(),
+  displayName: z.string(),
+  contactId: z.number().int().nullable(),
+  label: z.string().nullable(),
+  resolved: z.boolean(),
+});
+
 export type ToolName = keyof typeof TOOL_SCHEMAS;
 
 export const TOOL_SCHEMAS = {
@@ -260,6 +323,10 @@ export const TOOL_SCHEMAS = {
   run_build: RunBuildSchema,
   request_restart: RequestRestartSchema,
   health_check: HealthCheckSchema,
+  list_contacts: ListContactsSchema,
+  search_contacts: SearchContactsSchema,
+  get_contact: GetContactSchema,
+  resolve_handle: ResolveHandleSchema,
 } as const;
 
 export const OUTPUT_SCHEMAS = {
@@ -275,6 +342,10 @@ export const OUTPUT_SCHEMAS = {
   run_build: RunBuildOutputSchema,
   request_restart: RequestRestartOutputSchema,
   health_check: HealthCheckOutputSchema,
+  list_contacts: ListContactsOutputSchema,
+  search_contacts: SearchContactsOutputSchema,
+  get_contact: GetContactOutputSchema,
+  resolve_handle: ResolveHandleOutputSchema,
 } as const;
 
 type JsonSchema = Tool["inputSchema"];
@@ -327,6 +398,10 @@ export const TOOL_TIMEOUTS_MS: Record<string, number> = {
   get_logs: 10_000,
   get_last_send_error: 5_000,
   request_restart: 5_000,
+  list_contacts: 10_000,
+  search_contacts: 10_000,
+  get_contact: 5_000,
+  resolve_handle: 5_000,
 };
 
 export function resolveLimit(limit: number | undefined, defaultValue = 20): number {
@@ -518,5 +593,65 @@ export const TOOLS: Tool[] = [
     inputSchema: noArgsSchema,
     // @ts-expect-error
     outputSchema: zodToJsonSchema(HealthCheckOutputSchema),
+  },
+  {
+    name: "list_contacts",
+    description:
+      "List loaded contacts (from macOS Address Book + iCloud sources), sorted by name. Use search_contacts for substring matching.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", default: 20, description: "Max contacts. 0 = unlimited." },
+        offset: { type: "number", default: 0, description: "Offset for pagination." },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(ListContactsOutputSchema),
+  },
+  {
+    name: "search_contacts",
+    description: "Substring-match contacts by display name, phone number, or email.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", description: "Substring (case-insensitive for name/email)." },
+        limit: { type: "number", default: 20, description: "Max results. 0 = unlimited." },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(SearchContactsOutputSchema),
+  },
+  {
+    name: "get_contact",
+    description:
+      "Fetch a single contact by handle (phone/email) or by numeric id. Returns null if not found.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string", description: "Phone number or email to look up." },
+        id: { type: "number", description: "Numeric contact id." },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(GetContactOutputSchema),
+  },
+  {
+    name: "resolve_handle",
+    description:
+      "Resolve a phone number or email to its contact display name. Pass-through if unknown.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      required: ["handle"],
+      properties: {
+        handle: { type: "string", description: "Phone number or email." },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(ResolveHandleOutputSchema),
   },
 ];

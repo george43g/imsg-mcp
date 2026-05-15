@@ -10,7 +10,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { freemem, tmpdir } from "node:os";
 import { join } from "node:path";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -253,13 +253,21 @@ export function startHeapMonitor(): void {
     if (heap > HEAP_WARN_MB) {
       warn("heap exceeds threshold", { heap_mb: heap, rss_mb: rssMb, threshold_mb: HEAP_WARN_MB });
     }
+    // System-level memory pressure — captures cases where the host or OS may
+    // be about to reclaim us. Helps diagnose "process vanished" reports where
+    // the kill came from outside (SIGKILL, OOM, parent host).
+    const freeMb = Math.round(freemem() / 1024 / 1024);
     // Always log a periodic heartbeat at info level for post-mortem analysis
     emit({
       ts: new Date().toISOString(),
       level: "info",
       msg: "heartbeat",
       mem_mb: heap,
-      data: { rss_mb: rssMb, uptime_s: Math.round(process.uptime()) },
+      data: {
+        rss_mb: rssMb,
+        uptime_s: Math.round(process.uptime()),
+        system_free_mb: freeMb || undefined,
+      },
     });
   }, HEAP_CHECK_INTERVAL_MS);
   // Don't prevent process exit
