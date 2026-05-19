@@ -31,11 +31,14 @@ import {
 } from "./logger.js";
 import {
   DEFAULT_TOOL_TIMEOUT_MS,
+  DEV_TOOL_NAMES,
   ExportMessagesSchema,
   GetContactSchema,
   GetLogsSchema,
   GetMessagesSchema,
   GetUnreadMessagesSchema,
+  getActiveTools,
+  isDevMode,
   ListContactsSchema,
   ListConversationsSchema,
   ResolveHandleSchema,
@@ -44,7 +47,7 @@ import {
   SearchMessagesSchema,
   SendMessageSchema,
   TOOL_TIMEOUTS_MS,
-  TOOLS,
+  type ToolName,
   WaitForReplySchema,
 } from "./mcp-tools.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
@@ -255,7 +258,7 @@ export class IMessageMCPServer {
   private setupHandlers(): void {
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOLS,
+      tools: getActiveTools(),
     }));
 
     // Handle tool calls
@@ -291,6 +294,9 @@ export class IMessageMCPServer {
   }
 
   private async dispatchTool(name: string, args: unknown, signal?: AbortSignal) {
+    if (DEV_TOOL_NAMES.has(name as ToolName) && !isDevMode()) {
+      throw new Error(`Unknown tool: ${name}`);
+    }
     switch (name) {
       case "get_messages":
         return await this.handleGetMessages(args);

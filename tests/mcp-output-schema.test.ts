@@ -9,11 +9,12 @@ describe("MCP Output Schema Validation", () => {
   let server: any;
 
   beforeAll(() => {
-    // We instantiate the server so we can call its private handlers via reflection
+    process.env.IMSG_DEV = "1";
     server = new IMessageMCPServer();
   });
 
   afterAll(async () => {
+    delete process.env.IMSG_DEV;
     await server.db?.close();
   });
 

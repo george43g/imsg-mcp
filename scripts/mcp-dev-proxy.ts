@@ -95,7 +95,10 @@ function spawnChild(): void {
 
   child = spawn(cmd, args, {
     cwd: process.cwd(),
-    env: process.env,
+    // IMSG_DEV=1 tells the MCP server to expose dev-only tools (health_check,
+    // get_logs, get_last_send_error, run_build, request_restart). The prod
+    // `imsg mcp` entry doesn't set this, so end users never see those tools.
+    env: { ...process.env, IMSG_DEV: "1" },
     stdio: ["pipe", "pipe", "pipe"],
     shell: true,
     detached: true, // own process group so we can kill the whole tree

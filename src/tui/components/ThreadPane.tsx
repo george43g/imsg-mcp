@@ -74,7 +74,7 @@ export function ThreadPane({
     // because the downward fill loop never executes (end === total - 1 already).
     const NEAR_END = 2;
     if (cursorIdx >= messages.length - NEAR_END && pending.length === 0) {
-      let end = messages.length - 1;
+      const end = messages.length - 1;
       let start = end;
       let totalLines = lineHeight(messages, end, maxBubbleW);
       while (

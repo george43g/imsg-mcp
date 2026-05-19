@@ -655,3 +655,23 @@ export const TOOLS: Tool[] = [
     outputSchema: zodToJsonSchema(ResolveHandleOutputSchema),
   },
 ];
+
+// Tools that only make sense when the server is driven by mcp-dev-proxy.ts
+// against the repo checkout. End users running `imsg mcp` directly should
+// never see these in tools/list.
+export const DEV_TOOL_NAMES = new Set<ToolName>([
+  "health_check",
+  "get_logs",
+  "get_last_send_error",
+  "run_build",
+  "request_restart",
+]);
+
+export function isDevMode(): boolean {
+  return process.env.IMSG_DEV === "1";
+}
+
+export function getActiveTools(): Tool[] {
+  if (isDevMode()) return TOOLS;
+  return TOOLS.filter((t) => !DEV_TOOL_NAMES.has(t.name as ToolName));
+}
