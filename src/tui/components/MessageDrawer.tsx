@@ -1,6 +1,5 @@
 import { Box, Text } from "ink";
 import type { Message } from "../../types.js";
-import { detectImageProtocol, isDisplayableImage, isVideo } from "../terminal-image.js";
 import { TAPBACK_EMOJI } from "../theme.js";
 import { useTheme } from "../themes/ThemeContext.js";
 
@@ -137,9 +136,6 @@ export function MessageDrawer({ message: m, width, height }: Props) {
               Attachments ({m.attachments!.length}):
             </Text>
             {m.attachments!.map((att) => {
-              const imgProto = detectImageProtocol();
-              const canPreview = imgProto && isDisplayableImage(att.mimeType);
-              const isVid = isVideo(att.mimeType);
               return (
                 <Box
                   key={`${att.filename}-${att.transferName ?? ""}-${att.mimeType ?? ""}-${att.totalBytes}`}
@@ -152,8 +148,7 @@ export function MessageDrawer({ message: m, width, height }: Props) {
                   <Text color={theme.drawer.label}>
                     {att.mimeType ?? "unknown"} ·{" "}
                     {att.totalBytes > 0 ? formatBytes(att.totalBytes) : "?"}
-                    {canPreview && <Text color={theme.senderName}> (preview available)</Text>}
-                    {isVid && <Text color={theme.attachment}> (video - press o for mpv)</Text>}
+                    <Text color={theme.senderName}> (press o to preview)</Text>
                   </Text>
                 </Box>
               );

@@ -45,6 +45,23 @@ export interface LastSendErrorDetails {
 const MAX_LOG_LINES = 500;
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB rotation
 
+/**
+ * File logging is opt-in via IMSG_DEV=1. End users running the published
+ * `imsg mcp` bin don't get NDJSON files in $TMPDIR. The in-memory ring buffer
+ * still works (it's bounded to 500 lines) so a dev who opts in can still hit
+ * the `get_logs` MCP tool — but that tool itself is also gated on IMSG_DEV.
+ *
+ * Checked at call time, not module-load time, so tests can flip the flag
+ * without needing to re-import the module.
+ */
+function isFileLoggingEnabled(): boolean {
+  return process.env.IMSG_DEV === "1";
+}
+
+function isVerboseLogging(): boolean {
+  return process.env.IMSG_LOG_VERBOSE === "1";
+}
+
 const memoryLines: string[] = [];
 let logFilePath: string | null = null;
 let logFileBytes = 0;
@@ -73,6 +90,7 @@ function ensureLogFile(): string | null {
 }
 
 function writeToFile(json: string): void {
+  if (!isFileLoggingEnabled()) return;
   const path = ensureLogFile();
   if (!path) return;
   try {
@@ -237,15 +255,22 @@ export function getFileLogLines(tail = 50): string[] {
 // ── Heap monitor ───────────────────────────────────────────────────────
 
 const HEAP_WARN_MB = 150;
-const HEAP_CHECK_INTERVAL_MS = 60_000; // every 60s
 let heapMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start periodic heap monitoring. Logs a warning if heap exceeds the
  * threshold. Call once at server startup.
+ *
+ * No-op when IMSG_DEV is unset — end users running the published bin don't
+ * accumulate heartbeats. The watchdog itself (src/watchdog.ts) still runs
+ * unconditionally for self-healing; this monitor is purely observability.
+ *
+ * Heartbeats fire every 60s by default, or every 10s when IMSG_LOG_VERBOSE=1.
  */
 export function startHeapMonitor(): void {
+  if (!isFileLoggingEnabled()) return;
   if (heapMonitorTimer) return;
+  const intervalMs = isVerboseLogging() ? 10_000 : 60_000;
   heapMonitorTimer = setInterval(() => {
     const heap = heapMB();
     const { rss } = process.memoryUsage();
@@ -269,7 +294,7 @@ export function startHeapMonitor(): void {
         system_free_mb: freeMb || undefined,
       },
     });
-  }, HEAP_CHECK_INTERVAL_MS);
+  }, intervalMs);
   // Don't prevent process exit
   heapMonitorTimer.unref();
 }

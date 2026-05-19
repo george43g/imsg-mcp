@@ -64,6 +64,9 @@ interface WatchdogState {
   eventLoopMaxMs: number;
   /** Consecutive samples where p99 was >= EVENT_LOOP_SUSTAINED_MS. */
   eventLoopSustainedCount: number;
+  /** Wall-clock timestamp of the most recent event-loop sample tick.
+   *  Used to detect system sleep (huge interval gap → reset histogram). */
+  lastEventLoopSampleTs: number;
   rssMb: number;
   heapMb: number;
   heapHistory: number[]; // recent heap samples for leak detection
@@ -76,6 +79,7 @@ const state: WatchdogState = {
   eventLoopP99Ms: 0,
   eventLoopMaxMs: 0,
   eventLoopSustainedCount: 0,
+  lastEventLoopSampleTs: Date.now(),
   rssMb: 0,
   heapMb: 0,
   heapHistory: [],
@@ -130,6 +134,26 @@ export function installWatchdog(): void {
 
   eventLoopTimer = setInterval(() => {
     if (!eventLoopHistogram || isShuttingDown()) return;
+
+    // Sleep-skew detection: if wall-clock time between this tick and the
+    // previous one is much larger than the sample interval, the laptop
+    // probably slept (macOS suspends timers but the histogram keeps
+    // accumulating). Reset the histogram and skip threshold evaluation —
+    // otherwise we'd kill the process for "event_loop_blocked" with p99
+    // values like 17 minutes that are pure wall-clock skew, not real lag.
+    const now = Date.now();
+    const interval = now - state.lastEventLoopSampleTs;
+    state.lastEventLoopSampleTs = now;
+    if (interval > 3 * EVENT_LOOP_SAMPLE_MS) {
+      eventLoopHistogram.reset();
+      state.eventLoopSustainedCount = 0;
+      info("sleep_detected_skipping_sample", {
+        actual_interval_ms: interval,
+        expected_interval_ms: EVENT_LOOP_SAMPLE_MS,
+      });
+      return;
+    }
+
     // perf_hooks reports nanoseconds — convert to ms.
     const p99Ms = eventLoopHistogram.percentile(99) / 1e6;
     const maxMs = eventLoopHistogram.max / 1e6;
@@ -276,7 +300,7 @@ function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
-/** Returns true iff every sample is >= the previous (with at least 5MB total growth). */
+/** Returns true iff every sample is >= the previous (with at least 25MB total growth). */
 export function isMonotonicallyGrowing(samples: number[]): boolean {
   if (samples.length < 2) return false;
   let prev = samples[0];
@@ -284,8 +308,9 @@ export function isMonotonicallyGrowing(samples: number[]): boolean {
     if (samples[i] < prev) return false;
     prev = samples[i];
   }
-  // Require at least 5MB total growth to ignore noise
-  return samples[samples.length - 1] - samples[0] >= 5;
+  // Require at least 25MB total growth to ignore noise. 5MB was too sensitive
+  // — innocuous drift triggered false-positive `memory_leak_suspected` kills.
+  return samples[samples.length - 1] - samples[0] >= 25;
 }
 
 function triggerKill(reason: string, data: Record<string, unknown>): void {

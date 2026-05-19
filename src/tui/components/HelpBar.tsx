@@ -39,18 +39,22 @@ const SELECT_KEYS = [
   ["j/k", "extend"],
   ["{/}", "grp"],
   ["gg/G", "top/btm"],
+  ["^d/u", "½page"],
   ["e", "export"],
   ["y", "copy text"],
   ["Esc", "exit select"],
 ];
 
 const EXPORT_KEYS = [
-  ["Tab", "format"],
+  ["Tab", "fmt: md/csv/json"],
   ["Enter", "save"],
   ["Esc", "cancel"],
 ];
 
 const DATE_JUMP_KEYS = [
+  ["Tab", "picker↔text"],
+  ["←/→", "field"],
+  ["↑/↓", "adjust"],
   ["Enter", "jump"],
   ["Esc", "cancel"],
 ];
@@ -63,8 +67,9 @@ const COMPOSE_KEYS = [
 const FILTER_KEYS = [["Enter/Esc", "exit filter"]];
 
 const DRAWER_KEYS = [
-  ["Esc/q", "close"],
+  ["j/k", "scroll"],
   ["o", "open attachment"],
+  ["Esc/q", "close"],
 ];
 
 export function HelpBar({ mode, focus }: Props) {

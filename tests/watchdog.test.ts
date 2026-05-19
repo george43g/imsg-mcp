@@ -11,20 +11,22 @@ import { describe, expect, it } from "vitest";
 import { isMonotonicallyGrowing, noteActivity, readWatchdogState } from "../src/watchdog.js";
 
 describe("watchdog: isMonotonicallyGrowing", () => {
-  it("returns true for strictly increasing samples with > 5MB total growth", () => {
-    expect(isMonotonicallyGrowing([10, 12, 15, 18, 22])).toBe(true);
+  it("returns true for strictly increasing samples with >= 25MB total growth", () => {
+    expect(isMonotonicallyGrowing([10, 20, 30, 40, 50])).toBe(true);
   });
 
-  it("returns true for non-decreasing samples (plateaus allowed) when growth >= 5MB", () => {
-    expect(isMonotonicallyGrowing([10, 10, 12, 15, 15, 17])).toBe(true);
+  it("returns true for non-decreasing samples (plateaus allowed) when growth >= 25MB", () => {
+    expect(isMonotonicallyGrowing([10, 10, 18, 25, 25, 36])).toBe(true);
   });
 
   it("returns false if any sample drops below the previous", () => {
-    expect(isMonotonicallyGrowing([10, 12, 11, 15, 18])).toBe(false);
+    expect(isMonotonicallyGrowing([10, 20, 15, 35, 50])).toBe(false);
   });
 
-  it("returns false if total growth is less than 5MB (noise floor)", () => {
-    expect(isMonotonicallyGrowing([10, 11, 12, 13, 14])).toBe(false); // only 4MB growth
+  it("returns false if total growth is less than 25MB (noise floor)", () => {
+    // 10MB drift is exactly the kind of innocuous noise that triggered
+    // false-positive `memory_leak_suspected` kills before the floor was raised.
+    expect(isMonotonicallyGrowing([10, 12, 14, 16, 18, 20])).toBe(false);
   });
 
   it("returns false for fewer than 2 samples", () => {
@@ -32,8 +34,9 @@ describe("watchdog: isMonotonicallyGrowing", () => {
     expect(isMonotonicallyGrowing([42])).toBe(false);
   });
 
-  it("returns true for steady leak pattern (10 samples, +1MB each)", () => {
-    const samples = Array.from({ length: 10 }, (_, i) => 50 + i);
+  it("returns true for steady leak pattern (10 samples, +3MB each)", () => {
+    // 10 samples × 3MB = 27MB total — past the noise floor.
+    const samples = Array.from({ length: 10 }, (_, i) => 50 + i * 3);
     expect(isMonotonicallyGrowing(samples)).toBe(true);
   });
 });

@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getContactsDbPaths, getImsgDbPath } from "../src/config.js";
 import { IMessageDB } from "../src/imessage-db.js";
 import type { LogEntry } from "../src/logger.js";
@@ -18,6 +18,17 @@ import {
 import { isGitLfsPointer } from "./helpers.js";
 
 describe("logger", () => {
+  // File logging is gated on IMSG_DEV=1 (so end users running the published
+  // bin don't accumulate NDJSON in $TMPDIR). Opt in for tests that assert
+  // file-writing behavior.
+  const originalImsgDev = process.env.IMSG_DEV;
+  beforeAll(() => {
+    process.env.IMSG_DEV = "1";
+  });
+  afterAll(() => {
+    if (originalImsgDev === undefined) delete process.env.IMSG_DEV;
+    else process.env.IMSG_DEV = originalImsgDev;
+  });
   it("writes NDJSON log files to the temp directory", () => {
     const dir = getLogDirectory();
     info("test-log-entry", { test: true });

@@ -331,7 +331,7 @@ export function App() {
     }
 
     // Browse mode
-    if (input === "d" && state.mode === "browse") {
+    if (input === "d" && !key.ctrl && !key.meta && state.mode === "browse") {
       dispatch({ type: "TOGGLE_DEV_STATS" });
       return;
     }
@@ -636,17 +636,22 @@ export function App() {
     const filepath = att.filename.replace(/^~/, process.env.HOME ?? "~");
     const mime = att.mimeType ?? "";
 
-    if (mime.startsWith("video/")) {
-      // Open video in mpv
-      import("node:child_process").then(({ spawn }) => {
-        spawn("mpv", [filepath], { detached: true, stdio: "ignore" }).unref();
-      });
-    } else if (mime.startsWith("image/") || mime.startsWith("audio/")) {
-      // Open with system default
-      import("node:child_process").then(({ spawn }) => {
-        spawn("open", [filepath], { detached: true, stdio: "ignore" }).unref();
-      });
-    }
+    // macOS Quick Look (qlmanage -p) handles images, PDFs, audio, docs, and
+    // most archives natively — same UX as Finder spacebar preview. For video,
+    // mpv is preferred when installed (better scrubbing); otherwise fall back
+    // to Quick Look. All spawns are detached + unref'd so the TUI never blocks.
+    import("node:child_process").then(({ spawn }) => {
+      const spawnQuickLook = () =>
+        spawn("qlmanage", ["-p", filepath], { detached: true, stdio: "ignore" }).unref();
+
+      if (mime.startsWith("video/")) {
+        const child = spawn("mpv", [filepath], { detached: true, stdio: "ignore" });
+        child.on("error", spawnQuickLook);
+        child.unref();
+      } else {
+        spawnQuickLook();
+      }
+    });
   }
 
   // ── Mouse ──────────────────────────────────────────────────────────
