@@ -182,14 +182,30 @@ export const ListConversationsOutputSchema = z.object({
 export const SearchMessagesSchema = z.object({
   query: nonEmptyString("Search query"),
   limit: z.number().int().min(0).default(20),
+  mode: z
+    .enum(["literal", "fuzzy"])
+    .default("fuzzy")
+    .describe(
+      "Search mode. 'literal' = SQL LIKE substring match. 'fuzzy' = token-based scoring with typo tolerance; ranks by WRatio-style score.",
+    ),
+  minScore: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(0.6)
+    .describe(
+      "Fuzzy mode: minimum normalized score (0-1) for a match to be returned. Ignored in literal mode.",
+    ),
 });
 
 export const SearchMessagesOutputSchema = z.object({
   query: z.string().optional(),
+  mode: z.enum(["literal", "fuzzy"]).optional(),
   messages: z.array(MessageSchema),
   count: z.number().int(),
   hasMore: z.boolean(),
   nextOffset: z.number().int().nullable(),
+  softCapWarning: z.string().optional(),
 });
 
 export const GetLogsSchema = z.object({

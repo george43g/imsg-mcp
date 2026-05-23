@@ -21,6 +21,7 @@ import {
 } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { streamExport } from "./exportStream.js";
+import { rankFuzzy } from "./fuzzy.js";
 import { IMessageDB } from "./imessage-db.js";
 import {
   appendLog,
@@ -889,19 +890,38 @@ export class IMessageMCPServer {
   }
 
   private async handleSearchMessages(args: unknown) {
-    const { query, limit } = SearchMessagesSchema.parse(args);
+    const { query, limit, mode, minScore } = SearchMessagesSchema.parse(args);
     const resolvedLimit = resolveLimit(limit);
-    const messages = await this.db.searchMessages(query, resolvedLimit + 1);
+
+    // Fuzzy mode: pull a wider candidate set via LIKE on individual tokens
+    // (so the DB doesn't return the entire history), then score+rank in TS.
+    // Pure LIKE for literal mode.
+    const SOFT_CAP = 10_000;
+    let messages: Message[];
+    let softCapWarning: string | undefined;
+    if (mode === "fuzzy") {
+      const candidates = await this.db.searchMessages(query, SOFT_CAP);
+      const ranked = rankFuzzy(query, candidates, (m) => m.text ?? "", minScore);
+      messages = ranked.slice(0, resolvedLimit + 1).map((r) => r.item);
+      if (candidates.length >= SOFT_CAP) {
+        softCapWarning = `Candidate pool capped at ${SOFT_CAP} pre-scoring. Tighten the query for more reliable ranking.`;
+      }
+    } else {
+      messages = await this.db.searchMessages(query, resolvedLimit + 1);
+    }
+
     const hasMore = messages.length > resolvedLimit;
     const results = messages.slice(0, resolvedLimit);
 
     if (results.length === 0) {
       return toolText(`No messages found matching "${query}".`, {
         query,
+        mode,
         messages: [],
         count: 0,
         hasMore: false,
         nextOffset: null,
+        softCapWarning,
       });
     }
 
@@ -914,10 +934,12 @@ export class IMessageMCPServer {
       .join("\n");
     return toolText(`Found ${results.length} message(s) matching "${query}":\n\n${formatted}`, {
       query,
+      mode,
       messages: results.map(messageToStructured),
       count: results.length,
       hasMore,
       nextOffset: null,
+      softCapWarning,
     });
   }
 
