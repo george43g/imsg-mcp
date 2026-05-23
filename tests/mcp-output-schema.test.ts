@@ -36,6 +36,7 @@ describe("MCP Output Schema Validation", () => {
       search_contacts: server.handleSearchContacts.bind(server),
       get_contact: server.handleGetContact.bind(server),
       resolve_handle: server.handleResolveHandle.bind(server),
+      check_imessage_availability: server.handleCheckImessageAvailability.bind(server),
     };
 
     return handlerMap[name](args);
@@ -68,6 +69,7 @@ describe("MCP Output Schema Validation", () => {
     { name: "search_contacts", args: { query: "z", limit: 5 } },
     { name: "get_contact", args: { handle: "+15555550100" } },
     { name: "resolve_handle", args: { handle: "+15555550100" } },
+    { name: "check_imessage_availability", args: { handle: "+15555550100" } },
   ];
 
   for (const { name, args, validate } of testCases) {

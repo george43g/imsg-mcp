@@ -11,7 +11,14 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
-import { checkMessagesAvailable, sendMessageAlt, sendToChat, sendToChatId } from "./applescript.js";
+import {
+  checkImessageAvailability,
+  checkMessagesAvailable,
+  sendMessageAlt,
+  sendMessageReliable,
+  sendToChat,
+  sendToChatId,
+} from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { streamExport } from "./exportStream.js";
 import { IMessageDB } from "./imessage-db.js";
@@ -30,6 +37,7 @@ import {
   stopHeapMonitor,
 } from "./logger.js";
 import {
+  CheckImessageAvailabilitySchema,
   DEFAULT_TOOL_TIMEOUT_MS,
   DEV_TOOL_NAMES,
   ExportMessagesSchema,
@@ -52,6 +60,7 @@ import {
 } from "./mcp-tools.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import { hasNativeModule } from "./native-bridge.js";
+import { wrapUntrusted } from "./prompt-injection.js";
 import { sanitizeUserText } from "./sanitize.js";
 import {
   enableOrphanWatchdog,
@@ -165,7 +174,11 @@ function formatMessage(msg: Message, conversationLabel?: string): string {
   }
 
   const convCtx = conversationLabel ? ` {${conversationLabel}}` : "";
-  const text = sanitizeUserText(msg.text) || "(no text)";
+  const rawText = sanitizeUserText(msg.text);
+  // Wrap user-controlled message bodies in <untrusted> so a downstream LLM
+  // treats prompt-injection attempts in the body as data, not instructions.
+  // The empty-message placeholder is server-generated and trusted.
+  const text = rawText ? wrapUntrusted(rawText) : "(no text)";
   return `[${dateStr}] ${direction} ${sender}${svcTag}: ${text}${status}${convCtx}`;
 }
 
@@ -273,8 +286,14 @@ export class IMessageMCPServer {
       // to long-running handlers so they can bail out early.
       const signal = extra?.signal;
 
+      const startedAt = performance.now();
+      const stampMeta = <T extends Record<string, unknown>>(result: T): T => {
+        const duration_ms = Math.round((performance.now() - startedAt) * 10) / 10;
+        return { ...result, _meta: { engine: engineLabel(), duration_ms } } as T;
+      };
+
       try {
-        return await withTimeout(name, () => this.dispatchTool(name, args, signal));
+        return stampMeta(await withTimeout(name, () => this.dispatchTool(name, args, signal)));
       } catch (error: any) {
         const isTimeout = error instanceof ToolTimeoutError;
         appendLog(isTimeout ? "warn" : "error", isTimeout ? "Tool timed out" : "Tool error", {
@@ -282,11 +301,13 @@ export class IMessageMCPServer {
           error: error.message || String(error),
         });
         if (!isTimeout) this.recentErrorCount++;
-        return toolError(`Error: ${error.message || String(error)}`, {
-          tool: name,
-          error: error.message || String(error),
-          timedOut: isTimeout,
-        });
+        return stampMeta(
+          toolError(`Error: ${error.message || String(error)}`, {
+            tool: name,
+            error: error.message || String(error),
+            timedOut: isTimeout,
+          }),
+        );
       } finally {
         this.db.scheduleBackgroundRefresh();
       }
@@ -330,6 +351,8 @@ export class IMessageMCPServer {
         return await this.handleGetContact(args);
       case "resolve_handle":
         return await this.handleResolveHandle(args);
+      case "check_imessage_availability":
+        return await this.handleCheckImessageAvailability(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -679,11 +702,20 @@ export class IMessageMCPServer {
           result = await sendToChatId(slugRecord.chatGuid, message);
         }
       } else {
-        result = await sendMessageAlt(slugRecord.chatIdentifier, message);
+        // Route 1:1 sends through the temp-file + SMS-fallback path. Falls
+        // back to sendMessageAlt only if the reliable path itself errors
+        // before AppleScript runs (e.g. tmp-file write failure).
+        result = await sendMessageReliable(slugRecord.chatIdentifier, message);
+        if (!result.success) {
+          result = await sendMessageAlt(slugRecord.chatIdentifier, message);
+        }
       }
       resolvedTarget = slugRecord.displayName || slugRecord.chatIdentifier;
     } else {
-      result = await sendMessageAlt(recipient!, message);
+      result = await sendMessageReliable(recipient!, message);
+      if (!result.success) {
+        result = await sendMessageAlt(recipient!, message);
+      }
     }
 
     if (result.success) {
@@ -837,7 +869,7 @@ export class IMessageMCPServer {
           snippetText = sanitizeUserText(snippetText);
         }
         const snippet = snippetText
-          ? ` - "${snippetText.length > 50 ? `${snippetText.slice(0, 47)}...` : snippetText}"`
+          ? ` - "${wrapUntrusted(snippetText.length > 50 ? `${snippetText.slice(0, 47)}...` : snippetText)}"`
           : "";
         const unread = conv.unreadCount > 0 ? ` [${conv.unreadCount} unread]` : "";
         return `• [${slug}] ${name}${ident}${svc}${group}${lastDate}${snippet}${unread}`;
@@ -992,6 +1024,20 @@ export class IMessageMCPServer {
       contactId: null,
       label: null,
       resolved: false,
+    });
+  }
+
+  private async handleCheckImessageAvailability(args: unknown) {
+    const { handle } = CheckImessageAvailabilitySchema.parse(args);
+    const result = await checkImessageAvailability(handle);
+    const text = result.reachable
+      ? `${handle} reachable via ${result.service}.`
+      : `${handle} not reachable. ${result.hint ?? ""}`.trim();
+    return toolText(text, {
+      handle,
+      service: result.service,
+      reachable: result.reachable,
+      hint: result.hint,
     });
   }
 

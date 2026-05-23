@@ -2,3 +2,10 @@
 # repo are synthetic fixtures generated locally on `pnpm install` (and
 # gitignored). Auto-LFS-tracking *.db would silently push 50MB+ of synthetic
 # fixture data to LFS storage on every accidental commit.
+#
+# These explicit `-filter -diff -merge` patterns prevent a future contributor
+# (or `git lfs track "*.db"` invocation) from accidentally re-enabling LFS on
+# DB blobs. If you genuinely need LFS for a specific path, tag that path
+# narrowly, not the whole pattern.
+*.db -filter -diff -merge text
+*.abcddb -filter -diff -merge text

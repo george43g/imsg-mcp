@@ -308,6 +308,16 @@ export const ResolveHandleOutputSchema = z.object({
   resolved: z.boolean(),
 });
 
+export const CheckImessageAvailabilitySchema = z.object({
+  handle: nonEmptyString("Phone number or email to preflight-check for reachability."),
+});
+export const CheckImessageAvailabilityOutputSchema = z.object({
+  handle: z.string(),
+  service: z.enum(["iMessage", "SMS", "unknown"]),
+  reachable: z.boolean(),
+  hint: z.string().optional(),
+});
+
 export type ToolName = keyof typeof TOOL_SCHEMAS;
 
 export const TOOL_SCHEMAS = {
@@ -327,6 +337,7 @@ export const TOOL_SCHEMAS = {
   search_contacts: SearchContactsSchema,
   get_contact: GetContactSchema,
   resolve_handle: ResolveHandleSchema,
+  check_imessage_availability: CheckImessageAvailabilitySchema,
 } as const;
 
 export const OUTPUT_SCHEMAS = {
@@ -346,6 +357,7 @@ export const OUTPUT_SCHEMAS = {
   search_contacts: SearchContactsOutputSchema,
   get_contact: GetContactOutputSchema,
   resolve_handle: ResolveHandleOutputSchema,
+  check_imessage_availability: CheckImessageAvailabilityOutputSchema,
 } as const;
 
 type JsonSchema = Tool["inputSchema"];
@@ -402,6 +414,7 @@ export const TOOL_TIMEOUTS_MS: Record<string, number> = {
   search_contacts: 10_000,
   get_contact: 5_000,
   resolve_handle: 5_000,
+  check_imessage_availability: 10_000,
 };
 
 export function resolveLimit(limit: number | undefined, defaultValue = 20): number {
@@ -653,6 +666,24 @@ export const TOOLS: Tool[] = [
     },
     // @ts-expect-error
     outputSchema: zodToJsonSchema(ResolveHandleOutputSchema),
+  },
+  {
+    name: "check_imessage_availability",
+    description:
+      "Preflight check: is this handle reachable via iMessage or SMS? Call BEFORE send_message to avoid wasted send attempts to unreachable recipients. Returns the best-guess service plus a human-readable hint when unreachable.",
+    annotations: annotations.status,
+    inputSchema: {
+      type: "object",
+      required: ["handle"],
+      properties: {
+        handle: {
+          type: "string",
+          description: "Phone number (E.164 preferred) or email to preflight.",
+        },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(CheckImessageAvailabilityOutputSchema),
   },
 ];
 

@@ -124,6 +124,8 @@ export interface SendMessageResult {
   success: boolean;
   error?: string;
   timestamp?: Date;
+  /** Which service actually delivered the message. Populated by reliable-send paths. */
+  service?: "iMessage" | "SMS";
 }
 
 /**

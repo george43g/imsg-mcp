@@ -1,4 +1,8 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { getImsgDbPath, isAiEnv } from "./config.js";
 import { setLastSendError } from "./logger.js";
@@ -6,6 +10,25 @@ import { insertSentMessage } from "./mock-send-db.js";
 import type { SendMessageResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Detect whether a handle looks like a phone number suitable for SMS
+ * fallback. We don't bother validating the country/area code — Messages.app
+ * will reject malformed ones with a clear error.
+ */
+function isPhoneLike(handle: string): boolean {
+  return /^\+?[\d\s\-()]+$/.test(handle.trim());
+}
+
+/** Result shape for the preflight reachability check. */
+export interface ImessageAvailability {
+  /** Best-guess service that will reach this handle. */
+  service: "iMessage" | "SMS" | "unknown";
+  /** True iff at least one service appears to be reachable for the handle. */
+  reachable: boolean;
+  /** Human-readable hint when not reachable, for LLM remediation. */
+  hint?: string;
+}
 /** `VITE_ENV=ai`, or any test run (never hit Messages.app / osascript under Vitest). */
 const MOCK = isAiEnv() || process.env.VITEST === "true";
 
@@ -234,5 +257,131 @@ export async function buddyExists(address: string): Promise<boolean> {
     return result === "true";
   } catch {
     return false;
+  }
+}
+
+/**
+ * Reliable send: writes the message body to a UTF-8 temp file and uses
+ * `read (POSIX file "...") as «class utf8»` inside AppleScript. This avoids
+ * two recurring failure modes of inline-string sends:
+ *   1. AppleScript string-length limits on very long messages.
+ *   2. Quote/backslash/escape bugs when the message contains arbitrary user
+ *      content (emoji ZWJ sequences, smart quotes, backticks, etc).
+ *
+ * Auto-fallback: if iMessage send fails AND the recipient looks like a phone
+ * number, retries via the SMS service in the same AppleScript invocation.
+ */
+export async function sendMessageReliable(
+  recipient: string,
+  message: string,
+): Promise<SendMessageResult> {
+  if (MOCK) return mockSend(message, { chatIdentifier: recipient });
+
+  const tmpFile = join(tmpdir(), `imsg-send-${randomBytes(8).toString("hex")}.txt`);
+  try {
+    writeFileSync(tmpFile, message, { encoding: "utf8" });
+  } catch (error: any) {
+    return { success: false, error: `Failed to stage send payload: ${error.message ?? error}` };
+  }
+
+  const escapedRecipient = appleScriptEscape(recipient);
+  const escapedPath = appleScriptEscape(tmpFile);
+  const phoneFallback = isPhoneLike(recipient);
+
+  // Outer try sends via iMessage; if it errors AND the recipient is a phone
+  // number, the on-error branch falls back to SMS. Both branches read the
+  // body from the temp file to avoid AppleScript string handling.
+  const script = phoneFallback
+    ? `
+      tell application "Messages"
+        set msgBody to read (POSIX file "${escapedPath}") as «class utf8»
+        try
+          set iSvc to 1st account whose service type = iMessage
+          send msgBody to participant "${escapedRecipient}" of iSvc
+          return "iMessage"
+        on error
+          set sSvc to 1st account whose service type = SMS
+          send msgBody to participant "${escapedRecipient}" of sSvc
+          return "SMS"
+        end try
+      end tell
+    `
+    : `
+      tell application "Messages"
+        set msgBody to read (POSIX file "${escapedPath}") as «class utf8»
+        set iSvc to 1st account whose service type = iMessage
+        send msgBody to participant "${escapedRecipient}" of iSvc
+        return "iMessage"
+      end tell
+    `;
+
+  try {
+    const service = await runAppleScript(script, true);
+    return {
+      success: true,
+      timestamp: new Date(),
+      service: service === "SMS" || service === "iMessage" ? service : undefined,
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message || String(error) };
+  } finally {
+    // Best-effort cleanup — failure here is non-fatal (OS will reap $TMPDIR).
+    try {
+      unlinkSync(tmpFile);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Preflight reachability check. Cheap call that an agent should make BEFORE
+ * `send_message` to avoid wasted attempts when the handle can't be reached.
+ *
+ * Detection rules:
+ *   - Try iMessage `buddy` lookup → if success, return `iMessage`.
+ *   - If handle looks like a phone number, try SMS `buddy` → if success,
+ *     return `SMS`.
+ *   - Otherwise return `unknown` with a remediation hint.
+ */
+export async function checkImessageAvailability(handle: string): Promise<ImessageAvailability> {
+  if (MOCK) {
+    return { service: "iMessage", reachable: true };
+  }
+
+  const escaped = appleScriptEscape(handle);
+  const script = `
+    tell application "Messages"
+      try
+        set b to buddy "${escaped}" of (1st account whose service type is iMessage)
+        return "iMessage"
+      on error
+        try
+          set b to buddy "${escaped}" of (1st account whose service type is SMS)
+          return "SMS"
+        on error
+          return "unknown"
+        end try
+      end try
+    end tell
+  `;
+  try {
+    const result = await runAppleScript(script);
+    if (result === "iMessage" || result === "SMS") {
+      return { service: result, reachable: true };
+    }
+    return {
+      service: "unknown",
+      reachable: false,
+      hint: isPhoneLike(handle)
+        ? "Handle not found in iMessage or SMS buddies. Verify the number format (try '+1...' for US) and that the recipient has at least one of iMessage or SMS reachable."
+        : "Handle not found in iMessage buddies. For email addresses, the recipient must have iMessage active on that address.",
+    };
+  } catch (error: any) {
+    return {
+      service: "unknown",
+      reachable: false,
+      hint: `Availability check failed: ${error.message ?? error}. Most common cause: Messages.app Automation permission is not granted to this terminal/IDE.`,
+    };
   }
 }
