@@ -14,6 +14,7 @@ import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import {
   checkImessageAvailability,
   checkMessagesAvailable,
+  sendAttachment,
   sendMessageAlt,
   sendMessageReliable,
   sendToChat,
@@ -677,10 +678,23 @@ export class IMessageMCPServer {
   }
 
   private async handleSendMessage(args: unknown) {
-    const { recipient, threadSlug, message } = SendMessageSchema.parse(args);
+    const { recipient, threadSlug, message, attachments } = SendMessageSchema.parse(args);
 
     if (!recipient && !threadSlug) {
       return toolError("Either recipient or threadSlug is required.", {});
+    }
+
+    // Pre-validate attachment paths so we fail fast (before sending the
+    // text body) when a path is bogus.
+    if (attachments?.length) {
+      for (const p of attachments) {
+        if (!isAbsolute(p)) {
+          return toolError(`Attachment path must be absolute: ${p}`, { attachment: p });
+        }
+        if (!existsSync(p)) {
+          return toolError(`Attachment file not found: ${p}`, { attachment: p });
+        }
+      }
     }
 
     const available = await checkMessagesAvailable();
@@ -726,6 +740,39 @@ export class IMessageMCPServer {
     }
 
     if (result.success) {
+      // Ship attachments as follow-up sends. 1:1 only — Messages.app's
+      // `send (POSIX file …) to chat …` form is unreliable, so for slug-based
+      // group sends we surface the limitation in the response rather than
+      // attempting it.
+      const attachmentResults: Array<{ path: string; success: boolean; error?: string }> = [];
+      if (attachments?.length) {
+        const targetHandle = threadSlug
+          ? this.db.getSlugRecord(threadSlug)?.chatIdentifier
+          : recipient;
+        const isGroupTarget = threadSlug
+          ? Boolean(this.db.getSlugRecord(threadSlug)?.isGroup)
+          : false;
+
+        if (isGroupTarget) {
+          for (const p of attachments) {
+            attachmentResults.push({
+              path: p,
+              success: false,
+              error: "Attachment send to group chats not supported (Messages.app limitation).",
+            });
+          }
+        } else if (targetHandle) {
+          for (const p of attachments) {
+            const r = await sendAttachment(targetHandle, p);
+            attachmentResults.push({
+              path: p,
+              success: r.success,
+              error: r.error,
+            });
+          }
+        }
+      }
+
       const chat = await this.db.findChatByHandle(
         threadSlug ? (this.db.getSlugRecord(threadSlug)?.chatIdentifier ?? "") : recipient!,
       );
@@ -736,14 +783,20 @@ export class IMessageMCPServer {
         lastMessageId = lastMsg?.id;
       }
 
+      const attSummary =
+        attachmentResults.length > 0
+          ? `\nAttachments: ${attachmentResults.filter((a) => a.success).length}/${attachmentResults.length} delivered`
+          : "";
+
       return toolText(
-        `Message sent to ${resolvedTarget} at ${result.timestamp?.toLocaleString()}${chat ? `\nThread: ${chat.threadSlug}` : ""}${lastMessageId ? `\nLast message ID: ${lastMessageId} (use with wait_for_reply)` : ""}`,
+        `Message sent to ${resolvedTarget} at ${result.timestamp?.toLocaleString()}${chat ? `\nThread: ${chat.threadSlug}` : ""}${lastMessageId ? `\nLast message ID: ${lastMessageId} (use with wait_for_reply)` : ""}${attSummary}`,
         {
           success: true,
           target: resolvedTarget,
           timestamp: result.timestamp?.toISOString() ?? null,
           threadSlug: chat?.threadSlug,
           lastMessageId,
+          attachments: attachmentResults.length > 0 ? attachmentResults : undefined,
         },
       );
     } else {

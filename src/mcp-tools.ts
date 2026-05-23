@@ -137,6 +137,12 @@ export const SendMessageSchema = z.object({
   recipient: nonEmptyString("Phone number or email address to send to").optional(),
   threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
   message: nonEmptyString("Message text to send"),
+  attachments: z
+    .array(nonEmptyString("Absolute file path to attach"))
+    .optional()
+    .describe(
+      "Absolute file paths to attach. Each is sent in a follow-up AppleScript call after the text. Use sparingly — large files may be silently rate-limited by Messages.app.",
+    ),
 });
 
 export const SendMessageOutputSchema = z.object({
@@ -146,6 +152,15 @@ export const SendMessageOutputSchema = z.object({
   timestamp: z.string().nullable().optional(),
   threadSlug: z.string().optional(),
   lastMessageId: z.number().int().optional(),
+  attachments: z
+    .array(
+      z.object({
+        path: z.string(),
+        success: z.boolean(),
+        error: z.string().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const WaitForReplySchema = z.object({
@@ -565,7 +580,7 @@ export const TOOLS: Tool[] = [
   {
     name: "send_message",
     description:
-      "Send an iMessage or SMS. Use recipient for 1-on-1 or threadSlug for existing threads, including groups.",
+      "Send an iMessage or SMS. Use recipient for 1-on-1 or threadSlug for existing threads, including groups. Optional `attachments` is an array of absolute file paths sent as follow-up messages (1-on-1 only — Messages.app does not reliably accept file sends to group chats).",
     annotations: annotations.send,
     inputSchema: {
       type: "object",
@@ -574,6 +589,11 @@ export const TOOLS: Tool[] = [
         recipient: { type: "string", description: "Phone number or email" },
         threadSlug: { type: "string", description: "Thread slug from list_conversations" },
         message: { type: "string", description: "Message text to send" },
+        attachments: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional absolute file paths to send after the text. 1-on-1 only.",
+        },
       },
     },
     // @ts-expect-error

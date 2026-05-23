@@ -335,6 +335,60 @@ export async function sendMessageReliable(
 }
 
 /**
+ * Send a file attachment to a participant. Returns success/error.
+ *
+ * Uses `send (POSIX file "...") to participant ...` — the Messages SDEF
+ * accepts a file specifier as the first argument to `send`. The file must
+ * exist on disk; Messages.app will rate-limit or reject very large files
+ * (typical cap ~100MB).
+ *
+ * For phone-like recipients, falls back to SMS service on iMessage failure.
+ */
+export async function sendAttachment(
+  recipient: string,
+  filepath: string,
+): Promise<SendMessageResult> {
+  if (MOCK) return mockSend(`[attachment:${filepath}]`, { chatIdentifier: recipient });
+
+  const escapedRecipient = appleScriptEscape(recipient);
+  const escapedPath = appleScriptEscape(filepath);
+  const phoneFallback = isPhoneLike(recipient);
+
+  const script = phoneFallback
+    ? `
+      tell application "Messages"
+        try
+          set iSvc to 1st account whose service type = iMessage
+          send (POSIX file "${escapedPath}") to participant "${escapedRecipient}" of iSvc
+          return "iMessage"
+        on error
+          set sSvc to 1st account whose service type = SMS
+          send (POSIX file "${escapedPath}") to participant "${escapedRecipient}" of sSvc
+          return "SMS"
+        end try
+      end tell
+    `
+    : `
+      tell application "Messages"
+        set iSvc to 1st account whose service type = iMessage
+        send (POSIX file "${escapedPath}") to participant "${escapedRecipient}" of iSvc
+        return "iMessage"
+      end tell
+    `;
+
+  try {
+    const service = await runAppleScript(script, true);
+    return {
+      success: true,
+      timestamp: new Date(),
+      service: service === "SMS" || service === "iMessage" ? service : undefined,
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
  * Preflight reachability check. Cheap call that an agent should make BEFORE
  * `send_message` to avoid wasted attempts when the handle can't be reached.
  *
