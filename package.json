@@ -56,6 +56,7 @@
     "screenshots": "fc-list | grep -qi 'jetbrains mono' || { echo 'Install: brew install --cask font-jetbrains-mono'; exit 1; }; for f in scripts/screenshots/*.tape; do vhs \"$f\"; done",
     "screenshots:check": "pnpm screenshots && git diff --exit-code docs/screenshots/",
     "prepare": "pnpm build && pnpm fixtures:if-missing",
+    "pack:mcpb": "pnpm build && rm -rf release/mcpb && mkdir -p release/mcpb && cp -R dist dxt-manifest.json release/mcpb/ && (cd release/mcpb && zip -r ../imsg-mcp.mcpb . -x '*.DS_Store') && echo 'Built release/imsg-mcp.mcpb'",
     "fixtures:if-missing": "node -e \"if(!require('fs').existsSync('fixtures/chat.db')){require('child_process').execSync('pnpm fixtures', {stdio:'inherit'})}\"",
     "rebuild": "pnpm rebuild better-sqlite3",
     "native:build": "cd native && napi build --platform --release",

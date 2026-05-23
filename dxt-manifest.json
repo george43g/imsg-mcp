@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/dxt-manifest.schema.json",
+  "dxt_version": "0.3",
+  "name": "imsg-mcp",
+  "version": "1.0.0",
+  "description": "iMessage / SMS MCP for macOS — read, search, send, attach.",
+  "long_description": "Read chat.db, send iMessage/SMS via AppleScript with auto-fallback, search messages with fuzzy + literal modes, fetch attachments (HEIC→PNG auto-conversion), browse via MCP Resources, run analytics, and 26 contact tools — all from your Mac. End-user data never leaves the device.",
+  "author": {
+    "name": "George G",
+    "url": "https://github.com/george43g/imsg-mcp"
+  },
+  "homepage": "https://github.com/george43g/imsg-mcp",
+  "documentation": "https://github.com/george43g/imsg-mcp/blob/main/README.md",
+  "support": "https://github.com/george43g/imsg-mcp/issues",
+  "license": "MIT",
+  "keywords": ["imessage", "sms", "messages", "macos", "mcp", "applescript"],
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/cli.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/cli.js", "mcp"],
+      "env": {}
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin"],
+    "runtimes": {
+      "node": ">=24"
+    }
+  },
+  "user_config": {
+    "imsg_db_path": {
+      "type": "string",
+      "title": "iMessage chat.db path",
+      "description": "Override the default ~/Library/Messages/chat.db. Leave empty for default.",
+      "required": false
+    },
+    "contacts_db_path": {
+      "type": "string",
+      "title": "AddressBook DB path",
+      "description": "Override the default AddressBook-v22.abcddb path. Leave empty for default.",
+      "required": false
+    }
+  }
+}
