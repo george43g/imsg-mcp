@@ -27,6 +27,7 @@ import {
   sendToChatId,
 } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
+import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
 import { streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
 import { IMessageDB } from "./imessage-db.js";
@@ -1150,25 +1151,44 @@ export class IMessageMCPServer {
       });
     }
 
+    // Remember this result set so the next call can re-select by `contact:N`.
+    // Use the first phone or email as the canonical "handle" for the selector.
+    rememberSearch(
+      query,
+      results.map((c) => ({
+        handle: c.phoneNumbers[0] ?? c.emails[0] ?? c.displayName,
+        displayName: c.displayName,
+      })),
+    );
+
     const formatted = results
-      .map((c) => {
+      .map((c, i) => {
         const phones = c.phoneNumbers.length > 0 ? ` 📱 ${c.phoneNumbers.join(", ")}` : "";
         const emails = c.emails.length > 0 ? ` ✉ ${c.emails.join(", ")}` : "";
-        return `• ${sanitizeUserText(c.displayName)}${phones}${emails}`;
+        return `[contact:${i + 1}] ${sanitizeUserText(c.displayName)}${phones}${emails}`;
       })
       .join("\n");
-    return toolText(`Found ${results.length} contact(s) matching "${query}":\n\n${formatted}`, {
-      query,
-      contacts: results,
-      count: results.length,
-    });
+    const hint =
+      results.length > 1
+        ? `\n\nRe-select by index in any contact-accepting tool: handle: "contact:1" … "contact:${results.length}".`
+        : "";
+    return toolText(
+      `Found ${results.length} contact(s) matching "${query}":\n\n${formatted}${hint}`,
+      {
+        query,
+        contacts: results,
+        count: results.length,
+      },
+    );
   }
 
   private async handleGetContact(args: unknown) {
     const { handle, id } = GetContactSchema.parse(args);
     let contact = null;
     if (handle !== undefined) {
-      const lookup = this.db.contacts.lookupContact(handle);
+      const selectorHit = resolveContactSelector(handle);
+      const effectiveHandle = selectorHit?.handle ?? handle;
+      const lookup = this.db.contacts.lookupContact(effectiveHandle);
       contact = lookup ? this.db.contacts.getContact(lookup.contactId) : null;
     } else if (id !== undefined) {
       contact = this.db.contacts.getContact(id);
@@ -1188,7 +1208,9 @@ export class IMessageMCPServer {
 
   private async handleResolveHandle(args: unknown) {
     const { handle } = ResolveHandleSchema.parse(args);
-    const lookup = this.db.contacts.lookupContact(handle);
+    const selectorHit = resolveContactSelector(handle);
+    const effectiveHandle = selectorHit?.handle ?? handle;
+    const lookup = this.db.contacts.lookupContact(effectiveHandle);
     if (lookup) {
       return toolText(`${handle} → ${sanitizeUserText(lookup.displayName)}`, {
         handle,
@@ -1209,7 +1231,9 @@ export class IMessageMCPServer {
 
   private async handleCheckImessageAvailability(args: unknown) {
     const { handle } = CheckImessageAvailabilitySchema.parse(args);
-    const result = await checkImessageAvailability(handle);
+    const selectorHit = resolveContactSelector(handle);
+    const effectiveHandle = selectorHit?.handle ?? handle;
+    const result = await checkImessageAvailability(effectiveHandle);
     const text = result.reachable
       ? `${handle} reachable via ${result.service}.`
       : `${handle} not reachable. ${result.hint ?? ""}`.trim();
