@@ -9,7 +9,13 @@ import { dirname, isAbsolute } from "node:path";
 import { promisify } from "node:util";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import {
   checkImessageAvailability,
@@ -264,6 +270,7 @@ export class IMessageMCPServer {
       {
         capabilities: {
           tools: {},
+          resources: { subscribe: false, listChanged: false },
         },
       },
     );
@@ -316,6 +323,98 @@ export class IMessageMCPServer {
         this.db.scheduleBackgroundRefresh();
       }
     });
+
+    // MCP Resources — let hosts browse/subscribe without an explicit tool call.
+    // We advertise templates (parameterized URIs) rather than concrete
+    // resources because the user's data is open-ended.
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+      resources: [],
+    }));
+
+    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+      resourceTemplates: [
+        {
+          uriTemplate: "messages://recent/{hours}",
+          name: "Recent messages (last N hours)",
+          description: "Read all messages across every chat from the last {hours} hours.",
+          mimeType: "application/json",
+        },
+        {
+          uriTemplate: "messages://contact/{handle}/{hours}",
+          name: "Messages with a contact (last N hours)",
+          description:
+            "Read messages from the chat containing {handle} (phone/email) in the last {hours} hours.",
+          mimeType: "application/json",
+        },
+        {
+          uriTemplate: "contacts://",
+          name: "All loaded contacts",
+          description: "Read all contacts from the macOS Address Book sources.",
+          mimeType: "application/json",
+        },
+      ],
+    }));
+
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params;
+      try {
+        const result = await this.readResource(uri);
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(result),
+            },
+          ],
+        };
+      } catch (e: any) {
+        throw new Error(`Resource ${uri} failed: ${e.message ?? e}`);
+      }
+    });
+  }
+
+  private async readResource(uri: string): Promise<unknown> {
+    // messages://recent/{hours}
+    let m = uri.match(/^messages:\/\/recent\/(\d+)$/);
+    if (m?.[1]) {
+      const hours = Number(m[1]);
+      const cutoffMs = Date.now() - hours * 3600 * 1000;
+      // Use existing getRecentMessages then filter by date (cheap; recent is
+      // already bounded). For hours > 24 callers should use get_messages
+      // tool instead.
+      const msgs = await this.db.getRecentMessages(500);
+      return {
+        windowHours: hours,
+        messages: msgs
+          .filter((mm: Message) => mm.date.getTime() >= cutoffMs)
+          .map(messageToStructured),
+      };
+    }
+    // messages://contact/{handle}/{hours}
+    m = uri.match(/^messages:\/\/contact\/([^/]+)\/(\d+)$/);
+    if (m?.[1] && m?.[2]) {
+      const handle = decodeURIComponent(m[1]);
+      const hours = Number(m[2]);
+      const cutoffMs = Date.now() - hours * 3600 * 1000;
+      const chat = await this.db.findChatByHandle(handle);
+      if (!chat) return { handle, windowHours: hours, messages: [] };
+      const msgs = await this.db.getMessagesForChat(chat.chatIdentifier, 500);
+      return {
+        handle,
+        chatId: chat.chatIdentifier,
+        windowHours: hours,
+        messages: msgs
+          .filter((mm: Message) => mm.date.getTime() >= cutoffMs)
+          .map(messageToStructured),
+      };
+    }
+    // contacts://
+    if (uri === "contacts://") {
+      const all = this.db.contacts.listContacts(0, 10000);
+      return { count: all.contacts.length, contacts: all.contacts };
+    }
+    throw new Error(`Unknown resource URI: ${uri}`);
   }
 
   private async dispatchTool(name: string, args: unknown, signal?: AbortSignal) {
