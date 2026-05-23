@@ -37,6 +37,8 @@ describe("MCP Output Schema Validation", () => {
       get_contact: server.handleGetContact.bind(server),
       resolve_handle: server.handleResolveHandle.bind(server),
       check_imessage_availability: server.handleCheckImessageAvailability.bind(server),
+      search_attachments: server.handleSearchAttachments.bind(server),
+      get_attachment: server.handleGetAttachment.bind(server),
     };
 
     return handlerMap[name](args);
@@ -70,6 +72,8 @@ describe("MCP Output Schema Validation", () => {
     { name: "get_contact", args: { handle: "+15555550100" } },
     { name: "resolve_handle", args: { handle: "+15555550100" } },
     { name: "check_imessage_availability", args: { handle: "+15555550100" } },
+    { name: "search_attachments", args: { limit: 5 } },
+    { name: "get_attachment", args: { rowId: 999999 }, validate: false }, // file likely missing
   ];
 
   for (const { name, args, validate } of testCases) {

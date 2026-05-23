@@ -334,6 +334,61 @@ export const CheckImessageAvailabilityOutputSchema = z.object({
   hint: z.string().optional(),
 });
 
+export const AttachmentRecordSchema = z.object({
+  rowId: z.number().int(),
+  filename: z.string(),
+  mimeType: z.string().nullable(),
+  transferName: z.string().nullable(),
+  totalBytes: z.number().int(),
+  createdDate: z.string(),
+  chatId: z.string(),
+});
+
+export const SearchAttachmentsSchema = z.object({
+  mimePrefix: z
+    .string()
+    .optional()
+    .describe("Filter by MIME type prefix, e.g. 'image/', 'video/', 'application/pdf'."),
+  chatIdentifier: z
+    .string()
+    .optional()
+    .describe("Restrict to a single chat (use chat_identifier from list_conversations)."),
+  since: z
+    .string()
+    .optional()
+    .describe("ISO date or relative ('1 week ago'). Lower bound on attachment creation."),
+  until: z.string().optional().describe("ISO date or relative. Upper bound on creation."),
+  limit: z
+    .number()
+    .int()
+    .min(0)
+    .default(20)
+    .describe("Max results. 0 = unlimited (capped at 1000)."),
+});
+export const SearchAttachmentsOutputSchema = z.object({
+  attachments: z.array(AttachmentRecordSchema),
+  count: z.number().int(),
+});
+
+export const GetAttachmentSchema = z.object({
+  rowId: z.number().int().describe("Attachment ROWID (from search_attachments)."),
+  inlineMaxBytes: z
+    .number()
+    .int()
+    .default(5_000_000)
+    .describe("If file is ≤ this size, return base64 content inline; otherwise return path only."),
+});
+export const GetAttachmentOutputSchema = z.object({
+  rowId: z.number().int(),
+  filename: z.string(),
+  resolvedPath: z.string(),
+  mimeType: z.string().nullable(),
+  totalBytes: z.number().int(),
+  inline: z.boolean(),
+  base64: z.string().optional(),
+  converted: z.string().optional().describe("Set when source was HEIC and we converted to PNG."),
+});
+
 export type ToolName = keyof typeof TOOL_SCHEMAS;
 
 export const TOOL_SCHEMAS = {
@@ -354,6 +409,8 @@ export const TOOL_SCHEMAS = {
   get_contact: GetContactSchema,
   resolve_handle: ResolveHandleSchema,
   check_imessage_availability: CheckImessageAvailabilitySchema,
+  search_attachments: SearchAttachmentsSchema,
+  get_attachment: GetAttachmentSchema,
 } as const;
 
 export const OUTPUT_SCHEMAS = {
@@ -374,6 +431,8 @@ export const OUTPUT_SCHEMAS = {
   get_contact: GetContactOutputSchema,
   resolve_handle: ResolveHandleOutputSchema,
   check_imessage_availability: CheckImessageAvailabilityOutputSchema,
+  search_attachments: SearchAttachmentsOutputSchema,
+  get_attachment: GetAttachmentOutputSchema,
 } as const;
 
 type JsonSchema = Tool["inputSchema"];
@@ -431,6 +490,8 @@ export const TOOL_TIMEOUTS_MS: Record<string, number> = {
   get_contact: 5_000,
   resolve_handle: 5_000,
   check_imessage_availability: 10_000,
+  search_attachments: 30_000,
+  get_attachment: 30_000,
 };
 
 export function resolveLimit(limit: number | undefined, defaultValue = 20): number {
@@ -700,6 +761,44 @@ export const TOOLS: Tool[] = [
     },
     // @ts-expect-error
     outputSchema: zodToJsonSchema(CheckImessageAvailabilityOutputSchema),
+  },
+  {
+    name: "search_attachments",
+    description:
+      "Search attachments (images, videos, files) by MIME type prefix, date range, and/or chat. Returns metadata only — use get_attachment to fetch bytes. Excludes stickers and Apple plugin payloads.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      properties: {
+        mimePrefix: { type: "string", description: "e.g. 'image/', 'video/', 'application/pdf'." },
+        chatIdentifier: { type: "string", description: "Restrict to one chat." },
+        since: { type: "string", description: "ISO date or relative ('1 week ago')." },
+        until: { type: "string", description: "ISO date or relative." },
+        limit: {
+          type: "number",
+          default: 20,
+          description: "Max results. 0 = unlimited (cap 1000).",
+        },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(SearchAttachmentsOutputSchema),
+  },
+  {
+    name: "get_attachment",
+    description:
+      "Fetch an attachment by ROWID (from search_attachments). Returns base64 inline if ≤ inlineMaxBytes (default 5MB); otherwise returns the resolved path only. HEIC images are auto-converted to PNG via macOS sips.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      required: ["rowId"],
+      properties: {
+        rowId: { type: "number", description: "Attachment ROWID from search_attachments." },
+        inlineMaxBytes: { type: "number", default: 5_000_000, description: "Inline byte cap." },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(GetAttachmentOutputSchema),
   },
 ];
 

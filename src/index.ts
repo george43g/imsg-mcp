@@ -42,6 +42,7 @@ import {
   DEFAULT_TOOL_TIMEOUT_MS,
   DEV_TOOL_NAMES,
   ExportMessagesSchema,
+  GetAttachmentSchema,
   GetContactSchema,
   GetLogsSchema,
   GetMessagesSchema,
@@ -52,6 +53,7 @@ import {
   ListConversationsSchema,
   ResolveHandleSchema,
   resolveLimit,
+  SearchAttachmentsSchema,
   SearchContactsSchema,
   SearchMessagesSchema,
   SendMessageSchema,
@@ -354,6 +356,10 @@ export class IMessageMCPServer {
         return await this.handleResolveHandle(args);
       case "check_imessage_availability":
         return await this.handleCheckImessageAvailability(args);
+      case "search_attachments":
+        return await this.handleSearchAttachments(args);
+      case "get_attachment":
+        return await this.handleGetAttachment(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1061,6 +1067,108 @@ export class IMessageMCPServer {
       reachable: result.reachable,
       hint: result.hint,
     });
+  }
+
+  private async handleSearchAttachments(args: unknown) {
+    const { mimePrefix, chatIdentifier, since, until, limit } = SearchAttachmentsSchema.parse(args);
+    const sinceMs = since ? parseUserDate(since)?.getTime() : undefined;
+    const untilMs = until ? parseUserDate(until)?.getTime() : undefined;
+    const resolvedLimit = resolveLimit(limit);
+    const opts: Parameters<typeof this.db.searchAttachments>[0] = {
+      limit: resolvedLimit,
+    };
+    if (mimePrefix !== undefined) opts.mimePrefix = mimePrefix;
+    if (chatIdentifier !== undefined) opts.chatIdentifier = chatIdentifier;
+    if (sinceMs !== undefined) opts.sinceMs = sinceMs;
+    if (untilMs !== undefined) opts.untilMs = untilMs;
+    const results = this.db.searchAttachments(opts);
+
+    const formatted = results
+      .map(
+        (a) =>
+          `[${a.rowId}] ${a.mimeType ?? "?"} · ${a.totalBytes}B · ${a.createdDate.toISOString().slice(0, 10)} · ${a.transferName ?? a.filename}`,
+      )
+      .join("\n");
+    return toolText(`Found ${results.length} attachment(s):\n\n${formatted}`, {
+      attachments: results.map((a) => ({
+        rowId: a.rowId,
+        filename: a.filename,
+        mimeType: a.mimeType,
+        transferName: a.transferName,
+        totalBytes: a.totalBytes,
+        createdDate: a.createdDate.toISOString(),
+        chatId: a.chatId,
+      })),
+      count: results.length,
+    });
+  }
+
+  private async handleGetAttachment(args: unknown) {
+    const { readFileSync } = await import("node:fs");
+    const { rowId, inlineMaxBytes } = GetAttachmentSchema.parse(args);
+    const rec = this.db.getAttachmentByRowId(rowId);
+    if (!rec) return toolError(`Attachment ROWID ${rowId} not found.`, { rowId });
+
+    const resolvedPath = rec.filename.replace(/^~/, process.env.HOME ?? "~");
+    if (!existsSync(resolvedPath)) {
+      return toolError(`Attachment file does not exist: ${resolvedPath}`, {
+        rowId,
+        resolvedPath,
+      });
+    }
+
+    const stat = statSync(resolvedPath);
+    const sizeBytes = stat.size;
+    const isHeic =
+      (rec.mimeType ?? "").toLowerCase().includes("heic") ||
+      resolvedPath.toLowerCase().endsWith(".heic");
+
+    // Inline if small AND not too large to base64-encode (base64 inflates ~33%).
+    const inline = sizeBytes <= inlineMaxBytes;
+
+    let base64: string | undefined;
+    let convertedNote: string | undefined;
+    let finalMime = rec.mimeType;
+    let finalPath = resolvedPath;
+
+    if (inline) {
+      if (isHeic) {
+        // Convert HEIC → PNG via macOS sips (zero-dep, ships with macOS).
+        try {
+          const { execFileSync } = await import("node:child_process");
+          const { tmpdir } = await import("node:os");
+          const { join: pjoin } = await import("node:path");
+          const out = pjoin(tmpdir(), `imsg-att-${rowId}.png`);
+          execFileSync("sips", ["-s", "format", "png", resolvedPath, "--out", out], {
+            stdio: "ignore",
+          });
+          finalPath = out;
+          finalMime = "image/png";
+          convertedNote = "HEIC → PNG via sips";
+          base64 = readFileSync(out).toString("base64");
+        } catch (e: any) {
+          return toolError(`HEIC→PNG conversion failed: ${e.message ?? e}`, { rowId });
+        }
+      } else {
+        base64 = readFileSync(resolvedPath).toString("base64");
+      }
+    }
+
+    return toolText(
+      inline
+        ? `Attachment ${rowId} (${sizeBytes}B, ${finalMime ?? "?"}) returned inline.`
+        : `Attachment ${rowId} too large to inline (${sizeBytes}B > ${inlineMaxBytes}B). Use path: ${resolvedPath}`,
+      {
+        rowId,
+        filename: rec.filename,
+        resolvedPath: finalPath,
+        mimeType: finalMime,
+        totalBytes: sizeBytes,
+        inline,
+        base64,
+        converted: convertedNote,
+      },
+    );
   }
 
   async run(): Promise<void> {

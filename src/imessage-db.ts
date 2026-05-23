@@ -42,6 +42,8 @@ import {
 import {
   AssociatedMessageType,
   isReactionType,
+  MAC_EPOCH_OFFSET,
+  NANOS_PER_SECOND,
   OBJECT_REPLACEMENT_CHAR,
   macTimestampToDate as schemaMacTimestampToDate,
   parseAssociatedMessageGuid as schemaParseAssociatedMessageGuid,
@@ -1493,6 +1495,112 @@ export class IMessageDB {
       }
     }
     return result;
+  }
+
+  /**
+   * Search attachments by MIME prefix, date window, and/or chat identifier.
+   * Excludes stickers (is_sticker=1) and Apple plugin-payload UTIs which
+   * aren't meaningful as user-facing attachments.
+   *
+   * Returns metadata only — use getAttachmentByRowId for the file bytes.
+   */
+  searchAttachments(opts: {
+    mimePrefix?: string;
+    chatIdentifier?: string;
+    sinceMs?: number;
+    untilMs?: number;
+    limit: number;
+  }): Array<{
+    rowId: number;
+    filename: string;
+    mimeType: string | null;
+    transferName: string | null;
+    totalBytes: number;
+    createdDate: Date;
+    chatId: string;
+  }> {
+    const span = perf("searchAttachments");
+    const conds: string[] = [
+      "a.is_sticker = 0",
+      "(a.uti IS NULL OR a.uti NOT LIKE 'com.apple.messages.plugin%')",
+    ];
+    const params: any[] = [];
+    if (opts.mimePrefix) {
+      conds.push("a.mime_type LIKE ?");
+      params.push(`${opts.mimePrefix}%`);
+    }
+    if (opts.chatIdentifier) {
+      conds.push("c.chat_identifier = ?");
+      params.push(opts.chatIdentifier);
+    }
+    const toMacNanos = (ms: number): number =>
+      Math.floor((ms / 1000 - MAC_EPOCH_OFFSET) * NANOS_PER_SECOND);
+    if (opts.sinceMs !== undefined) {
+      conds.push("a.created_date >= ?");
+      params.push(toMacNanos(opts.sinceMs));
+    }
+    if (opts.untilMs !== undefined) {
+      conds.push("a.created_date <= ?");
+      params.push(toMacNanos(opts.untilMs));
+    }
+    const lim = opts.limit > 0 ? opts.limit : 1000;
+    params.push(lim);
+
+    const sql = `
+      SELECT
+        a.ROWID as rowId,
+        a.filename,
+        a.mime_type,
+        a.transfer_name,
+        a.total_bytes,
+        a.created_date,
+        c.chat_identifier
+      FROM ${Tables.ATTACHMENT} a
+      JOIN ${Tables.MESSAGE_ATTACHMENT_JOIN} maj ON a.ROWID = maj.attachment_id
+      JOIN ${Tables.MESSAGE} m ON maj.message_id = m.ROWID
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
+      WHERE ${conds.join(" AND ")}
+      ORDER BY a.created_date DESC
+      LIMIT ?
+    `;
+    const rows = this.raw.prepare(sql).all(...params) as any[];
+    const out = rows.map((r) => ({
+      rowId: Number(r.rowId),
+      filename: r.filename || "",
+      mimeType: r.mime_type ?? null,
+      transferName: r.transfer_name ?? null,
+      totalBytes: Number(r.total_bytes) || 0,
+      createdDate: schemaMacTimestampToDate(Number(r.created_date)) ?? new Date(0),
+      chatId: r.chat_identifier || "",
+    }));
+    span.end({ count: out.length });
+    return out;
+  }
+
+  /** Fetch a single attachment record by ROWID. */
+  getAttachmentByRowId(rowId: number): {
+    rowId: number;
+    filename: string;
+    mimeType: string | null;
+    transferName: string | null;
+    totalBytes: number;
+  } | null {
+    const row = this.raw
+      .prepare(
+        `SELECT ROWID as rowId, filename, mime_type, transfer_name, total_bytes
+         FROM ${Tables.ATTACHMENT}
+         WHERE ROWID = ?`,
+      )
+      .get(rowId) as any;
+    if (!row) return null;
+    return {
+      rowId: Number(row.rowId),
+      filename: row.filename || "",
+      mimeType: row.mime_type ?? null,
+      transferName: row.transfer_name ?? null,
+      totalBytes: Number(row.total_bytes) || 0,
+    };
   }
 
   /**
