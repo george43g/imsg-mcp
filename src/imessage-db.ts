@@ -1497,6 +1497,49 @@ export class IMessageDB {
     return result;
   }
 
+  /** Max ROWID currently in the message table — used as a cache key. */
+  getMaxMessageRowId(): number {
+    const row = this.raw
+      .prepare(`SELECT COALESCE(MAX(ROWID), 0) AS m FROM ${Tables.MESSAGE}`)
+      .get() as { m: number };
+    return Number(row.m) || 0;
+  }
+
+  /**
+   * Fetch every message newer than `cutoffMs` across all chats. Used by the
+   * chat_analytics tool — bounded by date, not by per-chat limit. Reactions
+   * are included (tapback analytics need them); hidden system items dropped.
+   */
+  async getMessagesInWindow(cutoffMs: number, capPerWindow = 200_000): Promise<Message[]> {
+    const span = perf("getMessagesInWindow");
+    const cutoffNanos = Math.floor((cutoffMs / 1000 - MAC_EPOCH_OFFSET) * NANOS_PER_SECOND);
+    const sql = `
+      SELECT m.ROWID, m.guid, m.text, m.date, m.date_read, m.date_delivered,
+             m.is_read, m.is_delivered, m.is_from_me, h.id as handle_id,
+             m.cache_has_attachments, m.associated_message_type,
+             m.associated_message_guid, m.associated_message_emoji,
+             m.item_type, c.chat_identifier
+      FROM ${Tables.MESSAGE} m
+      LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+      LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+      LEFT JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
+      WHERE m.date >= ?
+      ORDER BY m.date ASC
+      LIMIT ?
+    `;
+    const rows = this.raw.prepare(sql).all(cutoffNanos, capPerWindow) as any[];
+    const out: Message[] = [];
+    for (const r of rows) {
+      if (isHiddenSystemItem(r.item_type)) continue;
+      const text = this.parseMessageText(r);
+      const ext = { item_type: r.item_type };
+      const msg = this.convertMessage(r, text, r.chat_identifier || "", ext);
+      out.push(msg);
+    }
+    span.end({ cutoffMs, returned: out.length });
+    return out;
+  }
+
   /**
    * Search attachments by MIME prefix, date window, and/or chat identifier.
    * Excludes stickers (is_sticker=1) and Apple plugin-payload UTIs which

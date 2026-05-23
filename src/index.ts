@@ -17,6 +17,8 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
+import { dispatchAnalytic } from "./analytics.js";
+import { lookupCache, storeCache } from "./analytics-cache.js";
 import {
   checkImessageAvailability,
   checkMessagesAvailable,
@@ -46,6 +48,7 @@ import {
   stopHeapMonitor,
 } from "./logger.js";
 import {
+  ChatAnalyticsSchema,
   CheckImessageAvailabilitySchema,
   DEFAULT_TOOL_TIMEOUT_MS,
   DEV_TOOL_NAMES,
@@ -461,6 +464,8 @@ export class IMessageMCPServer {
         return await this.handleSearchAttachments(args);
       case "get_attachment":
         return await this.handleGetAttachment(args);
+      case "chat_analytics":
+        return await this.handleChatAnalytics(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1343,6 +1348,45 @@ export class IMessageMCPServer {
         inline,
         base64,
         converted: convertedNote,
+      },
+    );
+  }
+
+  private async handleChatAnalytics(args: unknown) {
+    const { type, windowDays } = ChatAnalyticsSchema.parse(args);
+    // year_in_review pins to 365 days regardless of caller; otherwise use the
+    // requested window.
+    const effectiveDays = type === "year_in_review_wrapped" ? 365 : windowDays;
+    const cutoffMs = Date.now() - effectiveDays * 86_400_000;
+
+    // Cache lookup. Key includes effectiveDays + the DB's max message ROWID,
+    // so a recent send/receive invalidates the cache.
+    const maxRowId = this.db.getMaxMessageRowId();
+    const cacheArgs = { type, windowDays: effectiveDays };
+    const hit = lookupCache(type, cacheArgs, maxRowId);
+    if (hit) {
+      return toolText(`Cached ${type} (computed at ${new Date(hit.computedAt).toISOString()}).`, {
+        type,
+        windowDays: effectiveDays,
+        computedAtIso: new Date(hit.computedAt).toISOString(),
+        fromCache: true,
+        data: hit.data,
+      });
+    }
+
+    const messages = await this.db.getMessagesInWindow(cutoffMs);
+    const result = dispatchAnalytic(type, messages);
+    const computedAtIso = new Date().toISOString();
+    storeCache(type, cacheArgs, maxRowId, result.data);
+
+    return toolText(
+      `Computed ${type} over ${messages.length} messages in the last ${effectiveDays}d.`,
+      {
+        type,
+        windowDays: effectiveDays,
+        computedAtIso,
+        fromCache: false,
+        data: result.data,
       },
     );
   }

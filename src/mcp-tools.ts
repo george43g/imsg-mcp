@@ -385,6 +385,36 @@ export const SearchAttachmentsOutputSchema = z.object({
   count: z.number().int(),
 });
 
+export const ChatAnalyticsSchema = z.object({
+  type: z
+    .enum([
+      "messaging_streaks",
+      "double_texts",
+      "response_time_stats",
+      "daily_heatmap",
+      "tapback_summary",
+      "year_in_review_wrapped",
+    ])
+    .describe(
+      "Which analytic to compute. Six priority types are implemented; 20 more are reserved for future versions and return a structured 'not_yet_implemented' error.",
+    ),
+  windowDays: z
+    .number()
+    .int()
+    .min(1)
+    .max(3650)
+    .default(90)
+    .describe("Days of history to analyze. Defaults to 90; year_in_review pin to 365 internally."),
+});
+
+export const ChatAnalyticsOutputSchema = z.object({
+  type: z.string(),
+  windowDays: z.number().int(),
+  computedAtIso: z.string(),
+  fromCache: z.boolean(),
+  data: z.unknown(),
+});
+
 export const GetAttachmentSchema = z.object({
   rowId: z.number().int().describe("Attachment ROWID (from search_attachments)."),
   inlineMaxBytes: z
@@ -426,6 +456,7 @@ export const TOOL_SCHEMAS = {
   check_imessage_availability: CheckImessageAvailabilitySchema,
   search_attachments: SearchAttachmentsSchema,
   get_attachment: GetAttachmentSchema,
+  chat_analytics: ChatAnalyticsSchema,
 } as const;
 
 export const OUTPUT_SCHEMAS = {
@@ -448,6 +479,7 @@ export const OUTPUT_SCHEMAS = {
   check_imessage_availability: CheckImessageAvailabilityOutputSchema,
   search_attachments: SearchAttachmentsOutputSchema,
   get_attachment: GetAttachmentOutputSchema,
+  chat_analytics: ChatAnalyticsOutputSchema,
 } as const;
 
 type JsonSchema = Tool["inputSchema"];
@@ -507,6 +539,7 @@ export const TOOL_TIMEOUTS_MS: Record<string, number> = {
   check_imessage_availability: 10_000,
   search_attachments: 30_000,
   get_attachment: 30_000,
+  chat_analytics: 60_000,
 };
 
 export function resolveLimit(limit: number | undefined, defaultValue = 20): number {
@@ -819,6 +852,36 @@ export const TOOLS: Tool[] = [
     },
     // @ts-expect-error
     outputSchema: zodToJsonSchema(GetAttachmentOutputSchema),
+  },
+  {
+    name: "chat_analytics",
+    description:
+      "Compute analytics over your chat history. Pick a `type`: messaging_streaks, double_texts, response_time_stats, daily_heatmap, tapback_summary, or year_in_review_wrapped. Results are cached at ~/.imsg-mcp/analytics-cache.db keyed on (type, args, MAX(message.rowid)) so subsequent calls without new messages hit cache. 20 additional analytic types are reserved for future versions.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      required: ["type"],
+      properties: {
+        type: {
+          type: "string",
+          enum: [
+            "messaging_streaks",
+            "double_texts",
+            "response_time_stats",
+            "daily_heatmap",
+            "tapback_summary",
+            "year_in_review_wrapped",
+          ],
+        },
+        windowDays: {
+          type: "number",
+          default: 90,
+          description: "Days of history to scan (1-3650). year_in_review pins to 365.",
+        },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(ChatAnalyticsOutputSchema),
   },
 ];
 
