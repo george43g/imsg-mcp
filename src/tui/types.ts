@@ -9,7 +9,8 @@ export type Mode =
   | "drawer"
   | "select"
   | "export"
-  | "date-jump";
+  | "date-jump"
+  | "send-via";
 
 export interface PendingMessage {
   text: string;
@@ -94,6 +95,8 @@ export type Action =
   | { type: "SET_EXPORT_STATUS"; status: string }
   | { type: "ENTER_DATE_JUMP" }
   | { type: "EXIT_DATE_JUMP" }
+  | { type: "ENTER_SEND_VIA" }
+  | { type: "EXIT_SEND_VIA" }
   | { type: "SET_DATE_JUMP_INPUT"; value: string }
   | { type: "SET_DATE_JUMP_ERROR"; error: string };
 
@@ -348,6 +351,10 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, mode: "date-jump", dateJumpInput: "", dateJumpError: "" };
     case "EXIT_DATE_JUMP":
       return { ...state, mode: "browse", dateJumpInput: "", dateJumpError: "" };
+    case "ENTER_SEND_VIA":
+      return { ...state, mode: "send-via" };
+    case "EXIT_SEND_VIA":
+      return { ...state, mode: "browse" };
     case "SET_DATE_JUMP_INPUT":
       return { ...state, dateJumpInput: action.value, dateJumpError: "" };
     case "SET_DATE_JUMP_ERROR":

@@ -6,11 +6,13 @@ import { useScreenSize } from "fullscreen-ink";
 import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { registerCleanup } from "../shutdown.js";
+import { getInstalledChatApps } from "../url-schemes.js";
 import { DateJumpModal } from "./components/DateJumpModal.js";
 import { CompactStats, DevStats } from "./components/DevStats.js";
 import { ExportModal } from "./components/ExportModal.js";
 import { HelpBar } from "./components/HelpBar.js";
 import { MessageDrawer } from "./components/MessageDrawer.js";
+import { SendViaModal } from "./components/SendViaModal.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { nextGroupBoundary, prevGroupBoundary, ThreadPane } from "./components/ThreadPane.js";
@@ -276,6 +278,39 @@ export function App() {
       return;
     }
 
+    // Send-via modal: digit picks an app + launches its URL-scheme deep link.
+    if (state.mode === "send-via") {
+      if (key.escape) {
+        dispatch({ type: "EXIT_SEND_VIA" });
+        return;
+      }
+      if (input && /^[1-9]$/.test(input) && selected) {
+        const apps = getInstalledChatApps();
+        const idx = Number.parseInt(input, 10) - 1;
+        const app = apps[idx];
+        if (app) {
+          const lastMsgText = state.messages.length
+            ? (state.messages[state.messages.length - 1]?.text ?? undefined)
+            : undefined;
+          const built = app.buildUri(selected.chatIdentifier, lastMsgText);
+          if (built) {
+            (await import("node:child_process"))
+              .spawn("open", [built], { detached: true, stdio: "ignore" })
+              .unref();
+            dispatch({ type: "SET_STATUS", status: `Launched ${app.name}` });
+          } else {
+            dispatch({
+              type: "SET_STATUS",
+              status: `${app.name}: handle not compatible with this scheme`,
+            });
+          }
+        }
+        dispatch({ type: "EXIT_SEND_VIA" });
+        setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 2500);
+      }
+      return;
+    }
+
     // Export-modal mode — Tab cycles format, Esc cancels.
     // Path text input + Enter handled by the inline TextInput inside the modal.
     if (state.mode === "export") {
@@ -341,6 +376,40 @@ export function App() {
     }
     if (input === ":" && state.focus === "thread" && state.mode === "browse") {
       dispatch({ type: "ENTER_DATE_JUMP" });
+      return;
+    }
+    // O — open the current thread in Messages.app via the imessage:// URL scheme.
+    // For 1:1 chats this focuses or composes that thread. Groups have no URL
+    // scheme — we fall back to AppleScript activate.
+    if (
+      input === "O" &&
+      !key.ctrl &&
+      !key.meta &&
+      state.focus === "thread" &&
+      state.mode === "browse" &&
+      selected
+    ) {
+      const handle = selected.chatIdentifier;
+      const uri = `imessage://${encodeURIComponent(handle)}`;
+      (await import("node:child_process"))
+        .spawn("open", [uri], { detached: true, stdio: "ignore" })
+        .unref();
+      dispatch({ type: "SET_STATUS", status: `Opened ${handle} in Messages.app` });
+      setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 2500);
+      return;
+    }
+    // S — send-via picker: list installed external chat apps and let the user
+    // launch one. Body is the most recent message text in the thread (best-
+    // effort context); the URI carries it only on schemes that support body.
+    if (
+      input === "S" &&
+      !key.ctrl &&
+      !key.meta &&
+      state.focus === "thread" &&
+      state.mode === "browse" &&
+      selected
+    ) {
+      dispatch({ type: "ENTER_SEND_VIA" });
       return;
     }
     if (input === "q") {
@@ -752,6 +821,11 @@ export function App() {
           onChange={(v) => dispatch({ type: "SET_DATE_JUMP_INPUT", value: v })}
           onSubmit={(v) => doDateJump(v)}
         />
+      )}
+
+      {/* Send-via picker — launch external chat apps for the current thread */}
+      {state.mode === "send-via" && selected && (
+        <SendViaModal handle={selected.chatIdentifier} apps={getInstalledChatApps()} />
       )}
 
       {/* Export modal — overlays the bottom of the body when active */}

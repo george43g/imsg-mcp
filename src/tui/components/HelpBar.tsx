@@ -30,9 +30,16 @@ const THREAD_KEYS = [
   [":", "date jump"],
   ["Enter", "details"],
   ["o", "open att"],
+  ["O", "open in Msgs"],
+  ["S", "send-via"],
   ["c", "compose"],
   ["d", "stats"],
   ["Tab", "→list"],
+];
+
+const SEND_VIA_KEYS = [
+  ["1-9", "pick app"],
+  ["Esc", "cancel"],
 ];
 
 const SELECT_KEYS = [
@@ -81,6 +88,7 @@ export function HelpBar({ mode, focus }: Props) {
   else if (mode === "select") keys = SELECT_KEYS;
   else if (mode === "export") keys = EXPORT_KEYS;
   else if (mode === "date-jump") keys = DATE_JUMP_KEYS;
+  else if (mode === "send-via") keys = SEND_VIA_KEYS;
   else keys = focus === "thread" ? THREAD_KEYS : SIDEBAR_KEYS;
 
   return (
