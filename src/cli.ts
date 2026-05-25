@@ -204,7 +204,11 @@ async function runInteractiveConsole(): Promise<void> {
   log("Starting local MCP server...", "dim");
   const client = new LocalMcpClient((line) => process.stderr.write(color.dim(`[server] ${line}`)));
   await client.start();
-  log("Console ready. Type help for commands.\n", "ok");
+  log("Console ready.\n", "ok");
+  // Show the full help text on launch so the user doesn't have to type `help`
+  // to discover what's available.
+  console.log(CONSOLE_HELP);
+  console.log("");
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
