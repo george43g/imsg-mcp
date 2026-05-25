@@ -35,8 +35,6 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10.29.3
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,6 +60,8 @@ jobs:
 
       - name: Run semantic-release
         env:
+          # OIDC: npmjs.com Trusted Publisher is configured for this repo + workflow.
+          # No NPM_TOKEN — npm CLI v11.5+ (bundled with Node 24) exchanges the
+          # job's id-token for a short-lived publish token automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm exec semantic-release
