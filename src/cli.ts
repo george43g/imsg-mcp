@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { LocalMcpClient } from "./mcp-client.js";
@@ -236,6 +237,154 @@ async function runInteractiveConsole(): Promise<void> {
   registerCleanup(() => client.close());
 }
 
+// ── Export command ─────────────────────────────────────────────────────
+
+interface ExportOpts {
+  format?: string;
+  since?: string;
+  until?: string;
+  output?: string;
+  includeAttachments?: boolean;
+  attachmentsDir?: string;
+  pageSize?: string;
+}
+
+function normalizeFormat(raw: string): "markdown" | "csv" | "json" | "ndjson" {
+  const v = raw.toLowerCase();
+  if (v === "md" || v === "markdown") return "markdown";
+  if (v === "csv") return "csv";
+  if (v === "json") return "json";
+  if (v === "ndjson") return "ndjson";
+  throw new Error(`Unknown format: ${raw}. Expected md, csv, json, or ndjson.`);
+}
+
+function extForFormat(fmt: "markdown" | "csv" | "json" | "ndjson"): string {
+  return fmt === "markdown" ? "md" : fmt;
+}
+
+function sanitizeForFilename(s: string): string {
+  return s.replace(/[^A-Za-z0-9._~-]+/g, "_").replace(/^_+|_+$/g, "") || "chat";
+}
+
+export async function runExportCommand(target: string, opts: ExportOpts): Promise<void> {
+  const { existsSync, mkdirSync, copyFileSync, statSync } = await import("node:fs");
+  const { homedir } = await import("node:os");
+  const { dirname, join, isAbsolute, resolve } = await import("node:path");
+  const { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } = await import("./config.js");
+  const { IMessageDB } = await import("./imessage-db.js");
+  const { streamExport } = await import("./exportStream.js");
+  const { parseUserDate } = await import("./tui/dateParse.js");
+
+  const format = normalizeFormat(opts.format ?? "md");
+  const ext = extForFormat(format);
+
+  const pageSize = Number(opts.pageSize ?? "1000");
+  if (!Number.isFinite(pageSize) || pageSize < 100 || pageSize > 5000) {
+    throw new Error("--page-size must be between 100 and 5000.");
+  }
+
+  const since = opts.since ? parseUserDate(opts.since) : null;
+  if (opts.since && !since) throw new Error(`Could not parse --since: ${opts.since}`);
+  const until = opts.until ? parseUserDate(opts.until) : null;
+  if (opts.until && !until) throw new Error(`Could not parse --until: ${opts.until}`);
+
+  const db = new IMessageDB(getImsgDbPath(), getContactsDbPaths(), getSlugsDbPath());
+  try {
+    // Resolve target → chatIdentifier + display slug for filename
+    let chatIdentifier = target;
+    let displayHandle = target;
+    if (looksLikeThreadSlug(target)) {
+      const rec = db.getSlugRecord(target);
+      if (!rec) throw new Error(`Unknown thread slug: ${target}`);
+      chatIdentifier = rec.chatIdentifier;
+      displayHandle = rec.slug;
+    }
+
+    // Default output path: ~/imsg-export-<sanitized>-<YYYY-MM-DD>.<ext>
+    let outputPath: string;
+    if (opts.output) {
+      outputPath = isAbsolute(opts.output) ? opts.output : resolve(opts.output);
+    } else {
+      const today = new Date().toISOString().slice(0, 10);
+      outputPath = join(
+        homedir(),
+        `imsg-export-${sanitizeForFilename(displayHandle)}-${today}.${ext}`,
+      );
+    }
+
+    const parent = dirname(outputPath);
+    if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
+
+    log(`Exporting ${displayHandle} → ${outputPath} (${format})`, "dim");
+
+    const result = await streamExport({
+      db,
+      chatIdentifier,
+      format,
+      outputPath,
+      since,
+      until,
+      pageSize,
+    });
+
+    let attachmentSummary = "";
+    if (opts.includeAttachments) {
+      const dir = opts.attachmentsDir
+        ? isAbsolute(opts.attachmentsDir)
+          ? opts.attachmentsDir
+          : resolve(opts.attachmentsDir)
+        : `${outputPath}.attachments`;
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+      const filters: Parameters<typeof db.searchAttachments>[0] = {
+        chatIdentifier,
+        limit: 0,
+      };
+      if (since) filters.sinceMs = since.getTime();
+      if (until) filters.untilMs = until.getTime();
+      const attachments = db.searchAttachments(filters);
+
+      let copied = 0;
+      let totalBytes = 0;
+      const seen = new Set<string>();
+      for (const a of attachments) {
+        if (!a.filename) continue;
+        const src = a.filename.replace(/^~/, homedir());
+        if (!existsSync(src)) continue;
+        const baseName = a.transferName || src.split("/").pop() || `att-${a.rowId}`;
+        let destName = `${a.rowId}-${sanitizeForFilename(baseName)}`;
+        if (seen.has(destName)) destName = `${a.rowId}-${Date.now()}-${baseName}`;
+        seen.add(destName);
+        const dest = join(dir, destName);
+        try {
+          copyFileSync(src, dest);
+          copied++;
+          totalBytes += statSync(dest).size;
+        } catch (err) {
+          log(
+            `  warn: copy failed for ${src}: ${err instanceof Error ? err.message : String(err)}`,
+            "warn",
+          );
+        }
+      }
+      attachmentSummary = `\nAttachments: ${copied} file(s), ${(totalBytes / 1024).toFixed(1)} KB → ${dir}`;
+    }
+
+    log(
+      [
+        "",
+        `✓ Exported ${result.count} message(s) to ${result.savedTo}`,
+        `  Format: ${format}`,
+        `  Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
+        `  Size: ${(result.sizeBytes / 1024).toFixed(1)} KB${attachmentSummary}`,
+      ].join("\n"),
+      "ok",
+    );
+  } finally {
+    await db.close();
+  }
+}
+
 // ── CLI program (Commander) ────────────────────────────────────────────
 
 const program = new Command()
@@ -402,6 +551,20 @@ program
     await runTui();
   });
 
+// ── Export ───────────────────────────────────────────────────────────────
+
+program
+  .command("export <target>")
+  .description("Export a conversation to a file (md/csv/json/ndjson)")
+  .option("-f, --format <fmt>", "Output format: md (default), csv, json, ndjson", "md")
+  .option("--since <date>", "Earliest date (ISO or relative, e.g. '3 months ago')")
+  .option("--until <date>", "Latest date (ISO or relative)")
+  .option("-o, --output <path>", "Output path (default: ~/imsg-export-<target>-<YYYY-MM-DD>.<ext>)")
+  .option("--include-attachments", "Copy attachments next to the export")
+  .option("--attachments-dir <path>", "Where to copy attachments (default: <output>.attachments/)")
+  .option("--page-size <n>", "Messages per DB page (100-5000)", "1000")
+  .action(runExportCommand);
+
 // ── Setup ────────────────────────────────────────────────────────────────
 
 program
@@ -506,7 +669,20 @@ program.action(() => {
   program.outputHelp();
 });
 
-program.parseAsync(process.argv).catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+// Only auto-parse when invoked as a script (not when imported from tests).
+const invokedAsScript = (() => {
+  try {
+    const entry = process.argv[1];
+    if (!entry) return false;
+    return import.meta.url === pathToFileURL(entry).href;
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedAsScript) {
+  program.parseAsync(process.argv).catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

@@ -1,0 +1,69 @@
+name: screenshots-check
+
+on:
+  pull_request:
+    paths:
+      - 'src/tui/**'
+      - 'scripts/screenshots/*.tape'
+      - 'docs/screenshots/**'
+      - '.github/workflows/screenshots-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install JetBrains Mono
+        run: |
+          brew tap homebrew/cask-fonts || true
+          brew install --cask font-jetbrains-mono
+          fc-cache -f
+
+      - name: Install vhs
+        run: brew install vhs
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/pnpm/store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Regenerate fixtures (test mode)
+        run: pnpm fixtures
+
+      - name: Regenerate screenshots
+        run: pnpm screenshots
+
+      - name: Fail on drift
+        run: |
+          if ! git diff --exit-code -- docs/screenshots/; then
+            echo ""
+            echo "::error::Screenshots are stale. Run 'pnpm screenshots' locally and commit the result."
+            echo ""
+            git diff --name-only -- docs/screenshots/
+            exit 1
+          fi
+          echo "✓ screenshots match source"

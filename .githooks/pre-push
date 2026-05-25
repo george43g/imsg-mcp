@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Opt-in pre-push hook — activated via `pnpm hook:install`.
+#
+# Behavior:
+#  1. Identify which files changed in the commits being pushed.
+#  2. If any TUI source or .tape file is in the diff AND JetBrains Mono is
+#     installed AND we're on macOS, run `pnpm screenshots`.
+#  3. If the regeneration produces a non-empty working-tree diff under
+#     docs/screenshots/, abort the push and ask the user to commit the
+#     regenerated PNGs.
+#  4. Skip silently on non-macOS contributors. CI is the safety net.
+
+set -euo pipefail
+
+if [[ "$(uname)" != "Darwin" ]]; then
+  exit 0
+fi
+
+# Resolve the range of commits being pushed. The standard pre-push contract
+# passes refs via stdin as "<local_ref> <local_sha> <remote_ref> <remote_sha>".
+# We rely on `git diff @{push}..HEAD` which expands to the same range when
+# the branch has an upstream — robust across initial pushes too.
+CHANGED_FILES=$(git diff --name-only "@{push}..HEAD" 2>/dev/null || git diff --name-only "HEAD~10..HEAD" 2>/dev/null || echo "")
+
+# Match the path globs we care about.
+RELEVANT=$(echo "$CHANGED_FILES" | grep -E '^(src/tui/|scripts/screenshots/.*\.tape$)' || true)
+
+if [[ -z "$RELEVANT" ]]; then
+  exit 0
+fi
+
+# Need JetBrains Mono for the renders to match committed PNGs.
+if ! fc-list 2>/dev/null | grep -qi 'jetbrains mono'; then
+  echo "⚠ pre-push: TUI files changed but JetBrains Mono is not installed."
+  echo "  Install via: brew install --cask font-jetbrains-mono"
+  echo "  Push proceeding — CI will catch any screenshot drift."
+  exit 0
+fi
+
+echo "→ pre-push: TUI source changed; regenerating screenshots…"
+pnpm screenshots
+
+# Anything new under docs/screenshots/?
+DIRTY=$(git status --porcelain -- docs/screenshots/ | head -1)
+if [[ -n "$DIRTY" ]]; then
+  echo ""
+  echo "✗ Screenshots are stale. The regen produced new content:"
+  echo ""
+  git status --short -- docs/screenshots/
+  echo ""
+  echo "  Commit the regenerated PNGs and re-push:"
+  echo "    git add docs/screenshots/"
+  echo "    git commit -m 'docs: regenerate screenshots'"
+  echo "    git push"
+  exit 1
+fi
+
+echo "✓ screenshots in sync."
