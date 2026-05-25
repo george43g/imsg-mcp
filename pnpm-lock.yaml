@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  imsg-mcp: 'link:'
+
 importers:
 
   .:
@@ -26,6 +29,9 @@ importers:
       fullscreen-ink:
         specifier: ^0.1.0
         version: 0.1.0(@types/react@19.2.14)
+      imsg-mcp:
+        specifier: 'link:'
+        version: 'link:'
       ink:
         specifier: ^7.0.1
         version: 7.0.1(@types/react@19.2.14)(react@19.2.5)
@@ -2630,6 +2636,7 @@ packages:
   prebuild-install@7.1.3:
     resolution: {integrity: sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug==}
     engines: {node: '>=10'}
+    deprecated: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
     hasBin: true
 
   pretty-ms@9.3.0:
