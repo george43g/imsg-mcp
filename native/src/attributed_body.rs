@@ -122,16 +122,106 @@ fn strip_doubled_letter_prefix(text: &str) -> String {
     text.to_string()
 }
 
-/// Extract readable text from an attributedBody BLOB.
-/// Uses a heuristic approach: split the blob on control characters,
-/// filter out metadata strings, and return the best candidate.
-pub fn extract_text(blob: &[u8]) -> Option<String> {
-    // Try to interpret as UTF-8 and extract readable segments
-    let text = String::from_utf8_lossy(blob);
+/// Boost added to structured-parse candidates so they win against byte-scan
+/// noise even when the byte-scan happens to produce a longer string (e.g. a
+/// length-byte prefix collated with content, like "RImagine..." for an 82-char
+/// message starting with "Imagine...").
+const STRUCTURED_BOOST: i32 = 500;
 
+/// Parse a length-prefixed NSString at `marker_end` (the byte index *after*
+/// the literal "NSString" marker). Returns the UTF-8 content with the length
+/// byte correctly stripped.
+///
+/// Layout: `[01 94|95 84 01 2b] [LL] [content...]`
+///         or `[01 94|95 84 01 2b] [81] [LL_LO LL_HI] [content...]`
+///
+/// The 5-byte preamble (01 [94|95] 84 01 2b) is the NSString class marker.
+/// The length byte that follows is the actual string length in bytes. When
+/// that length byte happens to be a printable ASCII char (e.g. 0x52='R'),
+/// the heuristic byte-scan will include it as content — that's the artifact
+/// this function avoids.
+fn parse_nsstring_at(blob: &[u8], marker_end: usize) -> Option<String> {
+    const PREAMBLE_LEN: usize = 5;
+    if marker_end + PREAMBLE_LEN >= blob.len() {
+        return None;
+    }
+    let preamble = &blob[marker_end..marker_end + PREAMBLE_LEN];
+    let matches_preamble = preamble[0] == 0x01
+        && (preamble[1] == 0x94 || preamble[1] == 0x95)
+        && preamble[2] == 0x84
+        && preamble[3] == 0x01
+        && preamble[4] == 0x2b;
+    if !matches_preamble {
+        return None;
+    }
+
+    let len_pos = marker_end + PREAMBLE_LEN;
+    if len_pos >= blob.len() {
+        return None;
+    }
+
+    let (content_start, length) = if blob[len_pos] == 0x81 {
+        if len_pos + 3 > blob.len() {
+            return None;
+        }
+        let len = u16::from_le_bytes([blob[len_pos + 1], blob[len_pos + 2]]) as usize;
+        (len_pos + 3, len)
+    } else {
+        (len_pos + 1, blob[len_pos] as usize)
+    };
+
+    if length == 0 || content_start + length > blob.len() {
+        return None;
+    }
+    str::from_utf8(&blob[content_start..content_start + length])
+        .ok()
+        .map(String::from)
+}
+
+/// Walk the blob and parse every NSString instance via the structured length
+/// byte. These results are reliably free of length-byte prefix artifacts.
+fn parse_all_nsstrings(blob: &[u8]) -> Vec<String> {
+    let marker = b"NSString";
+    let mut out = Vec::new();
+    let mut search_from = 0;
+    while let Some(pos) = blob[search_from..]
+        .windows(marker.len())
+        .position(|w| w == marker)
+    {
+        let abs_pos = search_from + pos;
+        let marker_end = abs_pos + marker.len();
+        if let Some(s) = parse_nsstring_at(blob, marker_end) {
+            out.push(s);
+        }
+        // Always advance past the matched marker so we make progress even
+        // when the parse fails (e.g. unknown preamble).
+        search_from = marker_end;
+    }
+    out
+}
+
+/// Extract readable text from an attributedBody BLOB.
+///
+/// Strategy:
+///   1. Structured parse — find every NSString via its preamble + length byte
+///      and treat those candidates with a +500 score boost. These are
+///      guaranteed not to include the length byte as the first char.
+///   2. Byte-scan fallback — same heuristic as before, lower priority.
+///   3. Highest-scoring candidate wins.
+pub fn extract_text(blob: &[u8]) -> Option<String> {
     let mut candidates: Vec<(String, i32)> = Vec::new();
 
-    // Split on control characters and null bytes
+    // Phase 1: structured NSString parsing (high confidence — no length-byte leak).
+    for raw in parse_all_nsstrings(blob) {
+        if let Some(normalized) = normalize_candidate(&raw) {
+            let score = score_candidate(&normalized) + STRUCTURED_BOOST;
+            candidates.push((normalized, score));
+        }
+    }
+
+    // Phase 2: byte-scan fallback (handles non-NSString-framed blobs, but
+    // may include length bytes as text artifacts when the byte is printable).
+    let text = String::from_utf8_lossy(blob);
     for segment in text.split(|c: char| is_control_char(c) || c == '\0') {
         let segment = segment.trim();
         if segment.is_empty() {
@@ -143,7 +233,6 @@ pub fn extract_text(blob: &[u8]) -> Option<String> {
         }
     }
 
-    // Return the highest-scoring candidate
     candidates.sort_by(|a, b| b.1.cmp(&a.1));
     candidates.into_iter().next().map(|(text, _)| text)
 }
@@ -229,6 +318,81 @@ mod tests {
         assert_eq!(strip_doubled_letter_prefix("HHH"), "HHH"); // third is uppercase
         assert_eq!(strip_doubled_letter_prefix("hi"), "hi");
         assert_eq!(strip_doubled_letter_prefix(""), "");
+    }
+
+    /// Real-world artifact: the structured NSString parse must beat the
+    /// byte-scan so the length byte never leaks into the result. Mirrors
+    /// the bug surfaced live (e.g. "RImagine im dying..." for an 82-char
+    /// message starting with "Imagine...", length byte 0x52 = 'R').
+    #[test]
+    fn test_structured_parse_strips_length_byte_prefix() {
+        // Cases where the doubled-letter strip CANNOT catch the artifact:
+        //   - length 0x52 'R' before "Imagine im dying..." (82 bytes)
+        //   - length 0x5d ']' before "One of my favourite..." (93 bytes)
+        //   - length 0x5c '\' before "Lmao no problem..." (92 bytes)
+        //   - length 0x35 '5' before "No im saying..." (53 bytes)
+        let cases: &[(u8, &str)] = &[
+            (0x52, "Imagine im dying of horniness and then go beast mode on u and take it all out on u"),
+            (0x5d, "One of my favourite things to do is listen to ur voice / listen to u moan whilst im fukin you"),
+            (0x5c, "Lmao no problem. Altho unsure abt drug psychosis lmao not sure when thats every happened lol"),
+            (0x35, "No im saying u mentioning clay was good advice lmaooo"),
+        ];
+
+        for &(length_byte, content) in cases {
+            assert_eq!(
+                length_byte as usize,
+                content.len(),
+                "test fixture: length byte must match content byte length"
+            );
+
+            // Build a typedstream-ish blob: header → NSString → preamble → length → content → trailer
+            let mut blob: Vec<u8> = b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@".to_vec();
+            blob.extend_from_slice(b"NSString\x01\x94\x84\x01+");
+            blob.push(length_byte);
+            blob.extend_from_slice(content.as_bytes());
+            blob.extend_from_slice(b"\x86\x84\x02iI");
+
+            let result = extract_text(&blob).expect("should extract text");
+            assert_eq!(
+                result, content,
+                "structured parse must strip length byte 0x{length_byte:02x}; got {result:?}"
+            );
+            // Catch the specific regression — the length byte should not
+            // appear as the leading char of the result.
+            let leading = result.chars().next().unwrap();
+            assert_ne!(
+                leading as u8, length_byte,
+                "leading char must not equal length byte (artifact regression)"
+            );
+        }
+    }
+
+    /// Same coverage for the 0x95 preamble variant (DataDetector-annotated messages).
+    #[test]
+    fn test_structured_parse_handles_0x95_preamble() {
+        let content = "Ur crazy. Changing my masterbation fantasy for tonight effective immediately";
+        let mut blob: Vec<u8> = b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@".to_vec();
+        blob.extend_from_slice(b"NSString\x01\x95\x84\x01+");
+        blob.push(content.len() as u8);
+        blob.extend_from_slice(content.as_bytes());
+        blob.extend_from_slice(b"\x86\x84\x02iI");
+        let result = extract_text(&blob).expect("should extract text");
+        assert_eq!(result, content);
+    }
+
+    /// Long-string framing: when the length is >= 256 the typedstream uses
+    /// 0x81 LL_LO LL_HI (little-endian u16) instead of a single byte.
+    #[test]
+    fn test_structured_parse_handles_long_length_marker() {
+        let content = "x".repeat(300);
+        let len = content.len() as u16;
+        let mut blob: Vec<u8> = b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@".to_vec();
+        blob.extend_from_slice(b"NSString\x01\x94\x84\x01+");
+        blob.push(0x81);
+        blob.extend_from_slice(&len.to_le_bytes());
+        blob.extend_from_slice(content.as_bytes());
+        let result = extract_text(&blob).expect("should extract long string");
+        assert_eq!(result, content);
     }
 
     /// Synthetic blob with embedded "HHeres" pattern should produce the
