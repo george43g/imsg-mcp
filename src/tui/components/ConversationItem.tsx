@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { Conversation } from "../../types.js";
+import { truncateToWidth } from "../../visual-width.js";
 import { useTheme } from "../themes/ThemeContext.js";
 
 function relativeDate(date: Date | null): string {
@@ -72,9 +73,11 @@ export function ConversationItem({
   const serviceIcon = c.serviceType === "SMS" ? theme.glyphs.sms : theme.glyphs.iMessage;
 
   const nameW = nameBudget(width, hasUnread, c.unreadCount, c.isGroupChat);
-  const truncatedName = name.length > nameW ? `${name.slice(0, Math.max(nameW - 1, 1))}…` : name;
+  // Grapheme-aware truncation — never splits a surrogate pair (emoji)
+  // and budgets each emoji as 2 terminal cells. See src/visual-width.ts.
+  const truncatedName = truncateToWidth(name, nameW);
   const snippetW = Math.max(width - 6, 8); // -5 for left padding, -1 safety
-  const truncatedSnippet = snippet.length > snippetW ? snippet.slice(0, snippetW) : snippet;
+  const truncatedSnippet = truncateToWidth(snippet, snippetW, "");
 
   return (
     <Box flexDirection="column" width={width}>
