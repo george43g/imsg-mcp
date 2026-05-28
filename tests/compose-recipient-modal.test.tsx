@@ -120,10 +120,11 @@ describe("ComposeRecipientModal — ambiguous numbered picker", () => {
 
 describe("ComposeRecipientModal — resolution badge transparency", () => {
   it("shows normalized handle when input differs (local phone → E.164)", async () => {
-    const resolve = vi.fn((input: string): RecipientResolution =>
-      input.trim()
-        ? { kind: "phone", handle: "+61401990797", displayName: "+61401990797" }
-        : { kind: "error" as const, message: "" },
+    const resolve = vi.fn(
+      (input: string): RecipientResolution =>
+        input.trim()
+          ? { kind: "phone", handle: "+61401990797", displayName: "+61401990797" }
+          : { kind: "error" as const, message: "" },
     );
     const { stdin, lastFrame, unmount } = mount({ resolve });
     stdin.write("0");
@@ -134,10 +135,11 @@ describe("ComposeRecipientModal — resolution badge transparency", () => {
   });
 
   it("hides the redundant arrow when input matches resolved handle (E.164)", async () => {
-    const resolve = vi.fn((input: string): RecipientResolution =>
-      input.trim()
-        ? { kind: "phone", handle: "+61401990797", displayName: "+61401990797" }
-        : { kind: "error" as const, message: "" },
+    const resolve = vi.fn(
+      (input: string): RecipientResolution =>
+        input.trim()
+          ? { kind: "phone", handle: "+61401990797", displayName: "+61401990797" }
+          : { kind: "error" as const, message: "" },
     );
     const { stdin, lastFrame, unmount } = mount({ resolve });
     stdin.write("+61401990797");
