@@ -16,9 +16,9 @@ import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import { DevStats } from "../src/tui/components/DevStats.js";
 import { SendViaModal } from "../src/tui/components/SendViaModal.js";
+import type { DevStatsData } from "../src/tui/hooks/useDevStats.js";
 import { makeTheme } from "../src/tui/theme.js";
 import { ThemeProvider } from "../src/tui/themes/ThemeContext.js";
-import type { DevStatsData } from "../src/tui/hooks/useDevStats.js";
 import type { ChatAppDef } from "../src/url-schemes.js";
 
 const stats: DevStatsData = {
@@ -74,12 +74,42 @@ describe("DevStats engine label", () => {
 // `/System/Applications/FaceTime.app` in src/url-schemes.ts). The live audit
 // found this exact combination dropped one row from the rendered modal.
 const apps: ChatAppDef[] = [
-  { name: "Messages", appPath: "/System/Applications/Messages.app", buildUri: () => "imessage://", supportsBody: false },
-  { name: "FaceTime", appPath: "/System/Applications/FaceTime.app", buildUri: () => "facetime://", supportsBody: false },
-  { name: "FaceTime Audio", appPath: "/System/Applications/FaceTime.app", buildUri: () => "facetime-audio://", supportsBody: false },
-  { name: "Signal", appPath: "/Applications/Signal.app", buildUri: () => "sgnl://", supportsBody: false },
-  { name: "WhatsApp", appPath: "/Applications/WhatsApp.app", buildUri: () => "whatsapp://", supportsBody: true },
-  { name: "SMS", appPath: "/System/Applications/Messages.app", buildUri: () => "sms:", supportsBody: true },
+  {
+    name: "Messages",
+    appPath: "/System/Applications/Messages.app",
+    buildUri: () => "imessage://",
+    supportsBody: false,
+  },
+  {
+    name: "FaceTime",
+    appPath: "/System/Applications/FaceTime.app",
+    buildUri: () => "facetime://",
+    supportsBody: false,
+  },
+  {
+    name: "FaceTime Audio",
+    appPath: "/System/Applications/FaceTime.app",
+    buildUri: () => "facetime-audio://",
+    supportsBody: false,
+  },
+  {
+    name: "Signal",
+    appPath: "/Applications/Signal.app",
+    buildUri: () => "sgnl://",
+    supportsBody: false,
+  },
+  {
+    name: "WhatsApp",
+    appPath: "/Applications/WhatsApp.app",
+    buildUri: () => "whatsapp://",
+    supportsBody: true,
+  },
+  {
+    name: "SMS",
+    appPath: "/System/Applications/Messages.app",
+    buildUri: () => "sms:",
+    supportsBody: true,
+  },
 ];
 
 describe("SendViaModal", () => {
