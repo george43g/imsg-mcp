@@ -75,7 +75,7 @@ import {
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import { hasNativeModule } from "./native-bridge.js";
 import { wrapUntrusted } from "./prompt-injection.js";
-import { resolveRecipient } from "./recipient.js";
+import { defaultCountryFromEnv, resolveRecipient } from "./recipient.js";
 import { sanitizeUserText } from "./sanitize.js";
 import {
   enableOrphanWatchdog,
@@ -820,7 +820,7 @@ export class IMessageMCPServer {
     if (recipient && !threadSlug) {
       const resolution = resolveRecipient(recipient, {
         contacts: this.db.contacts,
-        defaultCountry: "AU",
+        defaultCountry: defaultCountryFromEnv(),
       });
       if (resolution.kind === "error") {
         return toolError(resolution.message, { recipient });

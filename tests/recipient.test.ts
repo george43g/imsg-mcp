@@ -4,9 +4,14 @@
  * type into the recipient picker + the CLI + the MCP tool.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Contact } from "../src/contacts-db.js";
-import { isLikelyEmail, normalizePhoneToE164, resolveRecipient } from "../src/recipient.js";
+import {
+  defaultCountryFromEnv,
+  isLikelyEmail,
+  normalizePhoneToE164,
+  resolveRecipient,
+} from "../src/recipient.js";
 
 describe("normalizePhoneToE164", () => {
   describe("AU default (project's primary user)", () => {
@@ -173,5 +178,33 @@ describe("resolveRecipient", () => {
     const r = resolveRecipient("555-010-0100", { contacts, defaultCountry: "US" });
     expect(r.kind).toBe("phone");
     if (r.kind === "phone") expect(r.handle).toBe("+15550100100");
+  });
+});
+
+describe("defaultCountryFromEnv", () => {
+  const original = process.env.IMSG_DEFAULT_COUNTRY;
+  afterEach(() => {
+    if (original === undefined) delete process.env.IMSG_DEFAULT_COUNTRY;
+    else process.env.IMSG_DEFAULT_COUNTRY = original;
+  });
+
+  it("defaults to AU when env is unset", () => {
+    delete process.env.IMSG_DEFAULT_COUNTRY;
+    expect(defaultCountryFromEnv()).toBe("AU");
+  });
+
+  it("returns US when IMSG_DEFAULT_COUNTRY=US", () => {
+    process.env.IMSG_DEFAULT_COUNTRY = "US";
+    expect(defaultCountryFromEnv()).toBe("US");
+  });
+
+  it("is case-insensitive and trims", () => {
+    process.env.IMSG_DEFAULT_COUNTRY = "  us  ";
+    expect(defaultCountryFromEnv()).toBe("US");
+  });
+
+  it("falls back to AU for unknown values", () => {
+    process.env.IMSG_DEFAULT_COUNTRY = "GB"; // not yet supported
+    expect(defaultCountryFromEnv()).toBe("AU");
   });
 });

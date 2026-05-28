@@ -2,7 +2,11 @@ import { useCallback, useRef } from "react";
 import { sendMessageAlt, sendToChat, sendToChatId } from "../../applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../../config.js";
 import { IMessageDB } from "../../imessage-db.js";
-import { type RecipientResolution, resolveRecipient } from "../../recipient.js";
+import {
+  defaultCountryFromEnv,
+  type RecipientResolution,
+  resolveRecipient,
+} from "../../recipient.js";
 import type { Conversation, Message } from "../../types.js";
 import { getCached, isFresh, prependCached, setCached } from "../messageCache.js";
 
@@ -83,7 +87,10 @@ export function useImsg() {
   const resolveRecipientInput = useCallback(
     (input: string): RecipientResolution => {
       const db = getDb();
-      return resolveRecipient(input, { contacts: db.contacts, defaultCountry: "AU" });
+      return resolveRecipient(input, {
+        contacts: db.contacts,
+        defaultCountry: defaultCountryFromEnv(),
+      });
     },
     [getDb],
   );

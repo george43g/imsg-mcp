@@ -48,6 +48,17 @@ export interface ContactsSource {
   searchContacts(query: string): Contact[];
 }
 
+/**
+ * Read the default country from env (`IMSG_DEFAULT_COUNTRY=AU|US`), falling
+ * back to `"AU"` (project's primary user is in AU). Used by TUI/CLI/MCP
+ * call sites so a single env var changes the default everywhere.
+ */
+export function defaultCountryFromEnv(): "AU" | "US" {
+  const raw = (process.env.IMSG_DEFAULT_COUNTRY ?? "").toUpperCase().trim();
+  if (raw === "US") return "US";
+  return "AU";
+}
+
 /** What we treat as "phone-like" before attempting normalization. */
 const PHONE_LIKE_RE = /^[\d\s()+\-.]+$/;
 

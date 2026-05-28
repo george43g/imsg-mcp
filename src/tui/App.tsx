@@ -512,9 +512,11 @@ export function App() {
           next = 0;
         } else {
           ggPendingRef.current = true;
+          // 350ms is the typical vim chord window — feels snappy without
+          // false-positive-firing on a slow second keypress. Was 500ms.
           ggTimerRef.current = setTimeout(() => {
             ggPendingRef.current = false;
-          }, 500);
+          }, 350);
           return;
         }
       } else if (key.ctrl && input === "d") {
@@ -571,9 +573,11 @@ export function App() {
           dispatch({ type: "SELECT_MSG", index: 0 });
         } else {
           ggPendingRef.current = true;
+          // 350ms is the typical vim chord window — feels snappy without
+          // false-positive-firing on a slow second keypress. Was 500ms.
           ggTimerRef.current = setTimeout(() => {
             ggPendingRef.current = false;
-          }, 500);
+          }, 350);
         }
       } else if (key.ctrl && input === "d") {
         dispatch({ type: "MOVE_MSG", delta: Math.floor(bodyHeight / 2) });
@@ -603,9 +607,13 @@ export function App() {
         // Jump to previous sender group
         const prev = prevGroupBoundary(state.messages, state.selectedMsgIdx);
         dispatch({ type: "SELECT_MSG", index: prev });
-      } else if (input === "o" && state.selectedMsgIdx >= 0) {
-        // Open attachment for selected message
-        openAttachment(state.messages[state.selectedMsgIdx]);
+      } else if (input === "o") {
+        // Open attachment for selected message. Always call so the no-msg/
+        // no-attachment toast fires when the user presses `o` without a
+        // valid selection — silent no-op is confusing UX.
+        openAttachment(
+          state.selectedMsgIdx >= 0 ? state.messages[state.selectedMsgIdx] : undefined,
+        );
       }
     }
   });
@@ -722,9 +730,21 @@ export function App() {
   // ── Open attachment ────────────────────────────────────────────────
 
   function openAttachment(msg: import("../types.js").Message | undefined) {
-    if (!msg?.attachments?.length) return;
+    // Surface UX feedback when `o` can't do anything — previously this
+    // silently no-op'd, leaving the user wondering if the key worked.
+    if (!msg) {
+      dispatch({ type: "SET_STATUS", status: "No message selected." });
+      return;
+    }
+    if (!msg.attachments?.length) {
+      dispatch({ type: "SET_STATUS", status: "No attachment on this message." });
+      return;
+    }
     const att = msg.attachments[0];
-    if (!att.filename) return;
+    if (!att.filename) {
+      dispatch({ type: "SET_STATUS", status: "Attachment has no file path." });
+      return;
+    }
     // Expand ~ to home directory
     const filepath = att.filename.replace(/^~/, process.env.HOME ?? "~");
     const mime = att.mimeType ?? "";
