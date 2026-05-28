@@ -4,6 +4,7 @@ export type FocusPane = "sidebar" | "thread";
 export type Mode =
   | "browse"
   | "compose"
+  | "compose-new"
   | "confirm"
   | "filter"
   | "drawer"
@@ -97,6 +98,8 @@ export type Action =
   | { type: "EXIT_DATE_JUMP" }
   | { type: "ENTER_SEND_VIA" }
   | { type: "EXIT_SEND_VIA" }
+  | { type: "ENTER_COMPOSE_NEW" }
+  | { type: "EXIT_COMPOSE_NEW" }
   | { type: "SET_DATE_JUMP_INPUT"; value: string }
   | { type: "SET_DATE_JUMP_ERROR"; error: string };
 
@@ -354,6 +357,10 @@ export function reducer(state: AppState, action: Action): AppState {
     case "ENTER_SEND_VIA":
       return { ...state, mode: "send-via" };
     case "EXIT_SEND_VIA":
+      return { ...state, mode: "browse" };
+    case "ENTER_COMPOSE_NEW":
+      return { ...state, mode: "compose-new", focus: "sidebar" };
+    case "EXIT_COMPOSE_NEW":
       return { ...state, mode: "browse" };
     case "SET_DATE_JUMP_INPUT":
       return { ...state, dateJumpInput: action.value, dateJumpError: "" };

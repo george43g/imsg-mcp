@@ -13,6 +13,7 @@ const SIDEBAR_KEYS = [
   ["gg/G", "top/btm"],
   ["^d/u", "½page"],
   ["y", "copy slug"],
+  ["N", "new msg"],
   ["Tab", "→msgs"],
   ["/", "filter"],
   ["d", "stats"],
@@ -71,6 +72,12 @@ const COMPOSE_KEYS = [
   ["Esc", "cancel"],
 ];
 
+const COMPOSE_NEW_KEYS = [
+  ["type", "phone/email/contact"],
+  ["Enter", "next"],
+  ["Esc", "cancel"],
+];
+
 const FILTER_KEYS = [["Enter/Esc", "exit filter"]];
 
 const DRAWER_KEYS = [
@@ -82,7 +89,8 @@ const DRAWER_KEYS = [
 export function HelpBar({ mode, focus }: Props) {
   const theme = useTheme();
   let keys: string[][];
-  if (mode === "compose" || mode === "confirm") keys = COMPOSE_KEYS;
+  if (mode === "compose-new") keys = COMPOSE_NEW_KEYS;
+  else if (mode === "compose" || mode === "confirm") keys = COMPOSE_KEYS;
   else if (mode === "filter") keys = FILTER_KEYS;
   else if (mode === "drawer") keys = DRAWER_KEYS;
   else if (mode === "select") keys = SELECT_KEYS;

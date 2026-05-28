@@ -7,6 +7,7 @@ import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { registerCleanup } from "../shutdown.js";
 import { getInstalledChatApps } from "../url-schemes.js";
+import { ComposeRecipientModal } from "./components/ComposeRecipientModal.js";
 import { DateJumpModal } from "./components/DateJumpModal.js";
 import { CompactStats, DevStats } from "./components/DevStats.js";
 import { ExportModal } from "./components/ExportModal.js";
@@ -432,10 +433,22 @@ export function App() {
       await refreshAll();
       return;
     }
+    // N (uppercase) opens compose-to-new-thread from anywhere in browse mode.
+    // Distinct from `c` which composes WITHIN the currently-selected thread.
+    if (input === "N" && state.mode === "browse") {
+      dispatch({ type: "ENTER_COMPOSE_NEW" });
+      return;
+    }
     if (input === "c" || (key.return && state.focus === "thread" && state.mode === "browse")) {
       if (state.focus === "thread" && key.return && state.selectedMsgIdx >= 0) {
         // Enter on a message opens drawer
         dispatch({ type: "OPEN_DRAWER" });
+        return;
+      }
+      // `c` from sidebar with no selected thread → fall through to compose-new
+      // so the user always gets a meaningful action.
+      if (state.focus === "sidebar" && !selected) {
+        dispatch({ type: "ENTER_COMPOSE_NEW" });
         return;
       }
       dispatch({ type: "ENTER_COMPOSE" });
@@ -837,6 +850,27 @@ export function App() {
       {/* Send-via picker — launch external chat apps for the current thread */}
       {state.mode === "send-via" && selected && (
         <SendViaModal handle={selected.chatIdentifier} apps={getInstalledChatApps()} />
+      )}
+
+      {/* Compose-to-new-thread modal — `N` (or `c` from sidebar with no
+          selected thread). Two-stage: recipient input → message body. */}
+      {state.mode === "compose-new" && (
+        <ComposeRecipientModal
+          resolve={imsg.resolveRecipientInput}
+          onSend={async (handle, text) => {
+            const result = await imsg.sendToRecipient(handle, text);
+            if (result.success) {
+              dispatch({
+                type: "SET_STATUS",
+                status: `Sent to ${handle}`,
+              });
+              // Trigger a refresh so the new conversation shows up in the sidebar.
+              await refreshAll();
+            }
+            return result;
+          }}
+          onCancel={() => dispatch({ type: "EXIT_COMPOSE_NEW" })}
+        />
       )}
 
       {/* Export modal — overlays the bottom of the body when active */}

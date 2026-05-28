@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { Command } from "commander";
@@ -494,7 +495,10 @@ program
 program
   .command("send")
   .description("Send a message via Messages.app")
-  .argument("<target>", "Phone number, email, or thread slug")
+  .argument(
+    "<target>",
+    "Recipient: thread slug, E.164 phone (+61401990797), local phone (0401 990 797), iMessage email, or contact name",
+  )
   .argument("<message...>", "Message text")
   .action(async (target: string, messageParts: string[]) => {
     await withClient((c) =>
@@ -674,7 +678,7 @@ const invokedAsScript = (() => {
   try {
     const entry = process.argv[1];
     if (!entry) return false;
-    return import.meta.url === pathToFileURL(entry).href;
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
   } catch {
     return false;
   }

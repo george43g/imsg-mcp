@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import { sendMessageAlt, sendToChat, sendToChatId } from "../../applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../../config.js";
 import { IMessageDB } from "../../imessage-db.js";
+import { type RecipientResolution, resolveRecipient } from "../../recipient.js";
 import type { Conversation, Message } from "../../types.js";
 import { getCached, isFresh, prependCached, setCached } from "../messageCache.js";
 
@@ -74,6 +75,41 @@ export function useImsg() {
     [getDb],
   );
 
+  /**
+   * Resolve a free-form recipient (E.164 / local phone / iMessage email /
+   * contact name) without sending — used by ComposeRecipientModal to validate
+   * input as the user types and to surface ambiguous-contact candidates.
+   */
+  const resolveRecipientInput = useCallback(
+    (input: string): RecipientResolution => {
+      const db = getDb();
+      return resolveRecipient(input, { contacts: db.contacts, defaultCountry: "AU" });
+    },
+    [getDb],
+  );
+
+  /**
+   * Send to an arbitrary recipient (not tied to an existing thread slug).
+   * Runs the same `resolveRecipient` normalizer as the MCP path, so any of
+   * the 4 input shapes work: E.164 phone, local phone, iMessage email,
+   * unique contact name. Returns an error result for ambiguous matches —
+   * caller should disambiguate before calling.
+   */
+  const sendToRecipient = useCallback(
+    async (input: string, text: string): Promise<{ success: boolean; error?: string }> => {
+      const resolution = resolveRecipientInput(input);
+      if (resolution.kind === "error") return { success: false, error: resolution.message };
+      if (resolution.kind === "ambiguous") {
+        return {
+          success: false,
+          error: `Ambiguous: ${resolution.candidates.length} matches for "${input}". Pick a specific handle.`,
+        };
+      }
+      return sendMessageAlt(resolution.handle, text);
+    },
+    [resolveRecipientInput],
+  );
+
   const refresh = useCallback(() => {
     getDb().scheduleBackgroundRefresh();
   }, [getDb]);
@@ -85,5 +121,15 @@ export function useImsg() {
     }
   }, []);
 
-  return { loadConversations, loadMessages, loadOlderMessages, resolveNames, send, refresh, close };
+  return {
+    loadConversations,
+    loadMessages,
+    loadOlderMessages,
+    resolveNames,
+    send,
+    sendToRecipient,
+    resolveRecipientInput,
+    refresh,
+    close,
+  };
 }

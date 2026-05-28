@@ -75,6 +75,7 @@ import {
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import { hasNativeModule } from "./native-bridge.js";
 import { wrapUntrusted } from "./prompt-injection.js";
+import { resolveRecipient } from "./recipient.js";
 import { sanitizeUserText } from "./sanitize.js";
 import {
   enableOrphanWatchdog,
@@ -810,6 +811,37 @@ export class IMessageMCPServer {
     let result: { success: boolean; error?: string; timestamp?: Date };
     let resolvedTarget = recipient ?? threadSlug ?? "";
 
+    // Normalize `recipient` if provided. Accepts E.164 / local phone /
+    // iMessage email / contact name. The pre-existing path only worked
+    // for E.164 + email (AppleScript layer's expectation) — now any of
+    // the 4 forms route through one normalizer + the contact:N selector
+    // for ambiguous lookups.
+    let normalizedRecipient = recipient;
+    if (recipient && !threadSlug) {
+      const resolution = resolveRecipient(recipient, {
+        contacts: this.db.contacts,
+        defaultCountry: "AU",
+      });
+      if (resolution.kind === "error") {
+        return toolError(resolution.message, { recipient });
+      }
+      if (resolution.kind === "ambiguous") {
+        // Surface the same disambiguation list the contact:N selector uses.
+        const lines = resolution.candidates
+          .map((c, i) => `  contact:${i + 1}  ${c.displayName}  →  ${c.handle}`)
+          .join("\n");
+        return toolError(
+          `Ambiguous recipient "${recipient}" — multiple matches:\n${lines}\n\nCall again with one of the contact:N labels.`,
+          {
+            recipient,
+            candidates: resolution.candidates,
+          },
+        );
+      }
+      normalizedRecipient = resolution.handle;
+      resolvedTarget = resolution.handle;
+    }
+
     if (threadSlug) {
       const slugRecord = this.db.getSlugRecord(threadSlug);
       if (!slugRecord) {
@@ -838,9 +870,9 @@ export class IMessageMCPServer {
       }
       resolvedTarget = slugRecord.displayName || slugRecord.chatIdentifier;
     } else {
-      result = await sendMessageReliable(recipient!, message);
+      result = await sendMessageReliable(normalizedRecipient!, message);
       if (!result.success) {
-        result = await sendMessageAlt(recipient!, message);
+        result = await sendMessageAlt(normalizedRecipient!, message);
       }
     }
 
