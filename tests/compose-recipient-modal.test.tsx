@@ -118,6 +118,38 @@ describe("ComposeRecipientModal — ambiguous numbered picker", () => {
   });
 });
 
+describe("ComposeRecipientModal — resolution badge transparency", () => {
+  it("shows normalized handle when input differs (local phone → E.164)", async () => {
+    const resolve = vi.fn((input: string): RecipientResolution =>
+      input.trim()
+        ? { kind: "phone", handle: "+61401990797", displayName: "+61401990797" }
+        : { kind: "error" as const, message: "" },
+    );
+    const { stdin, lastFrame, unmount } = mount({ resolve });
+    stdin.write("0");
+    await new Promise((r) => setTimeout(r, 30));
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("→ +61401990797");
+    unmount();
+  });
+
+  it("hides the redundant arrow when input matches resolved handle (E.164)", async () => {
+    const resolve = vi.fn((input: string): RecipientResolution =>
+      input.trim()
+        ? { kind: "phone", handle: "+61401990797", displayName: "+61401990797" }
+        : { kind: "error" as const, message: "" },
+    );
+    const { stdin, lastFrame, unmount } = mount({ resolve });
+    stdin.write("+61401990797");
+    await new Promise((r) => setTimeout(r, 40));
+    const frame = lastFrame() ?? "";
+    // [phone] should appear WITHOUT an arrow (input already E.164).
+    expect(frame).toMatch(/\[phone\]/);
+    expect(frame).not.toMatch(/\[phone → /);
+    unmount();
+  });
+});
+
 describe("ComposeRecipientModal — Esc handling", () => {
   it("calls onCancel when Esc is pressed at stage 1", async () => {
     const onCancel = vi.fn();

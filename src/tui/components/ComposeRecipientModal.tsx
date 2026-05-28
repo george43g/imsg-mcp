@@ -107,10 +107,17 @@ export function ComposeRecipientModal({ resolve, onSend, onCancel }: Props) {
   };
 
   // Render
+  // Show the normalized handle in the badge when it differs from the raw
+  // input — gives the user transparency about how their typing was parsed.
+  // E.g. typing `0401990797` shows `[phone → +61401990797]`, typing
+  // `+61401990797` directly shows just `[phone]` (no transformation).
   const badge = (() => {
-    if (resolution.kind === "phone") return "[phone]";
-    if (resolution.kind === "email") return "[email]";
-    if (resolution.kind === "contact") return "[contact]";
+    const trimmedInput = recipientInput.trim();
+    const showResolved = (handle: string) =>
+      handle.toLowerCase() === trimmedInput.toLowerCase() ? "" : ` → ${handle}`;
+    if (resolution.kind === "phone") return `[phone${showResolved(resolution.handle)}]`;
+    if (resolution.kind === "email") return `[email${showResolved(resolution.handle)}]`;
+    if (resolution.kind === "contact") return `[contact → ${resolution.displayName}]`;
     if (resolution.kind === "ambiguous") return `[${resolution.candidates.length} matches]`;
     return "";
   })();
