@@ -93,7 +93,7 @@ Full reference (CLI subcommands + MCP tools + every flag): [**docs/TOOLS.md**](d
 imsg tui
 ```
 
-Vim-style: `j/k` move, `gg/G` jump, `Enter` drawer, `o` Quick Look an attachment, `:` jump to date, `V` visual select, `e` export, `S` send via other app, `y` copy slug, `c` compose, `q` quit.
+Vim-style: `j/k` move, `gg/G` jump, `Enter` drawer, `o` Quick Look an attachment, `:` jump to date, `V` visual select, `e` export, `S` send via other app, `y` copy slug, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `q` quit.
 
 Themes (`safe` / `powerline`) and a single accent color drive the whole palette. See [docs/TOOLS.md#tui-configuration](docs/TOOLS.md#tui-configuration).
 

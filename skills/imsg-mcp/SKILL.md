@@ -51,7 +51,7 @@ Stable, human-readable IDs for conversations: `{name}~{service}~{4-hex}` (e.g. `
 
 ## TUI (`imsg`)
 
-Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump, `Enter` message details, `o` open attachment, `y` copy slug, `d` toggle dev stats, `Tab` switch panes, `/` filter, `c` compose, `q` quit.
+Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump, `Enter` message details, `o` open attachment, `y` copy slug, `d` toggle dev stats, `Tab` switch panes, `/` filter, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `S` send via other app, `:` date jump, `V` visual select, `q` quit.
 
 ## Native Rust module (optional)
 

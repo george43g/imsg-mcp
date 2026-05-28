@@ -135,7 +135,8 @@ The server exposes resources under two URI schemes for hosts that prefer resourc
 | `/` | Filter (any substring of name or last message) |
 | `y` | Copy thread slug |
 | `Enter` / `Tab` / `l` / `→` | Open messages pane |
-| `c` | Compose |
+| `c` | Compose in current thread (or in new thread if none selected) |
+| `N` | Compose to new recipient — opens picker (phone / email / contact name typeahead, with vanity-letter parsing) |
 | `S` | Send via other app (URL-scheme picker) |
 | `r` | Refresh |
 | `d` | Toggle dev stats panel |
@@ -197,6 +198,7 @@ Resolution order: CLI flag → `IMSG_TUI_*` env → config file → defaults.
 | `VITE_SLUGS_DB_PATH` | `~/.imsg-mcp/slugs.db` | Shared multi-user install |
 | `IMSG_DEV` | unset | When `1`, exposes the 5 dev tools (`health_check`, etc) |
 | `IMSG_DISABLE_NATIVE` | `0` | Force the TS-only DB parser (debug) |
+| `IMSG_DEFAULT_COUNTRY` | `AU` | Country for normalizing bare local phone numbers (`AU` or `US`). E.g. AU turns `0401 990 797` → `+61401990797`; US turns `555-010-0100` → `+15550100100`. Used by `send_message`, CLI `imsg send`, and the TUI `N` compose modal. |
 | `IMSG_MAX_RSS_MB` | `1024` | Watchdog: kill self when RSS exceeds this |
 | `IMSG_EVENT_LOOP_KILL_MS` | `10000` | Watchdog: kill when p99 event-loop lag > this |
 | `IMSG_EVENT_LOOP_SUSTAINED_MS` | `750` | Watchdog: sustained-lag kill threshold |

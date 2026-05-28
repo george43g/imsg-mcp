@@ -117,7 +117,27 @@ The picker auto-detects what's installed and only shows working options. URL sch
 
 ---
 
-## 4. Jump to a date
+## 4. Compose to a new recipient (`N`)
+
+`c` composes within the currently-selected thread. To start a brand-new conversation — without first finding or scrolling to an existing thread — press **`N`** from the sidebar.
+
+The two-stage modal accepts any of four input shapes:
+
+| Input | Result |
+|---|---|
+| `+61401990797` | E.164 phone, sent as-is |
+| `0401 990 797` | Local AU phone → normalized to `+61401990797` |
+| `1-800-FLOWERS` | Vanity letters → `+18003569377` (US default with `IMSG_DEFAULT_COUNTRY=US`) |
+| `alice@icloud.com` | iMessage email, lowercased |
+| `brian` | Contact-name typeahead. Single match → locks immediately. Multiple → numbered picker (1-9) appears. |
+
+Locale defaults to **AU**. Set `IMSG_DEFAULT_COUNTRY=US` to swap. The same normalizer is used by `imsg send <recipient>` (CLI) and the MCP `send_message` tool, so agents and one-off CLI calls accept the same inputs.
+
+The recipient picker shows a live badge as you type — `[phone]`, `[email]`, `[contact]`, or `[N matches]`. Press Enter when the badge is single-resolution to advance to stage 2 (message body). Press Esc to back out / cancel.
+
+---
+
+## 5. Jump to a date
 
 Long threads are tedious to scroll. Press **`:`** in the TUI message pane to open the date-jump modal.
 
@@ -131,7 +151,7 @@ The MCP `export_messages` / CLI `imsg export` use the same parser for `--since` 
 
 ---
 
-## 5. Analytics in the agent flow
+## 6. Analytics in the agent flow
 
 `chat_analytics` returns pre-aggregated stats — agents don't have to chunk through raw messages.
 
@@ -162,7 +182,7 @@ Results are cached per-window for 60s so a chat-of-the-week agent doesn't re-agg
 
 ---
 
-## 6. Wait for a reply
+## 7. Wait for a reply
 
 `wait_for_reply` is the "ping the user" primitive. Agent texts the user, then polls for a response without blocking the whole event loop:
 
