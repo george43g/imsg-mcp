@@ -94,9 +94,24 @@ export function HelpBar({ mode, focus }: Props) {
   return (
     <Box paddingX={1} height={1} gap={1}>
       {keys.map(([key, desc]) => (
-        <Box key={key}>
-          <Text color={theme.help.key}>{key}</Text>
-          <Text color={theme.help.desc}>:{desc} </Text>
+        // Render each hint as a SINGLE <Text> with nested colored spans.
+        // Splitting `<Text>{key}</Text>` and `<Text>:desc</Text>` into separate
+        // <Text> siblings inside a row Box makes Ink's flex-shrink consider
+        // each individually — when the hints overflow the terminal width (which
+        // happens in thread mode with 14 entries) flex-shrink trims ONE
+        // character off each child's last <Text>, eating the final char of the
+        // key label (e.g. `j/k` → `j/`, `Enter` → `Ente`, `V` → ``).
+        // A single <Text> with nested color spans is treated as one atomic
+        // string for shrink purposes — it either fits or wraps the whole
+        // hint, never partial.
+        // Also `flexShrink={0}` so overflow doesn't truncate at all; if the
+        // row is too narrow the trailing hints drop off the right edge
+        // instead of being silently clipped char-by-char.
+        <Box key={key} flexShrink={0}>
+          <Text>
+            <Text color={theme.help.key}>{key}</Text>
+            <Text color={theme.help.desc}>:{desc} </Text>
+          </Text>
         </Box>
       ))}
     </Box>

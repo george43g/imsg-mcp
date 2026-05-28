@@ -126,52 +126,63 @@ export function MessageBubble({
       backgroundColor={selected ? theme.sidebar.selected : inSelection ? theme.selectionBg : bgTint}
     >
       <Box>
-        {/* Line number */}
-        {lineNum !== undefined && (
-          <Text color={selected ? theme.sent.bg : theme.lineNum}>{lineNum.padStart(3)} </Text>
-        )}
-
-        {/* Cursor */}
-        <Text color={cursorColor}>{cursor}</Text>
-
-        {/* Group gutter — visual thread indicator */}
-        <Text color={groupColor}>{groupSepChar} </Text>
-
-        {/* Timestamp — only on first in group or if selected */}
-        {isFirstInGroup ? (
-          <Text color={theme.timestamp}>{timestamp.padEnd(13)}</Text>
-        ) : (
-          <Text color={theme.timestamp}>{"             "}</Text>
-        )}
-
-        {/* Direction indicator + sender (only first in group) */}
-        {isFirstInGroup ? (
-          <>
-            {isSent ? (
-              <Text color={theme.sent.bg} bold>
-                {theme.glyphs.sent}{" "}
-              </Text>
-            ) : (
-              <Text color={theme.received.border} bold>
-                {theme.glyphs.received}{" "}
-              </Text>
-            )}
-            {sender && (
-              <Text color={isSent ? theme.sent.bg : theme.senderName} bold>
-                {sender.length > 12 ? `${sender.slice(0, 11)}…` : sender}
-                {": "}
-              </Text>
-            )}
-          </>
-        ) : (
-          // Continuation: indent to align with first message text
+        {/*
+         * Prefix block — line number, cursor, group gutter, timestamp,
+         * direction glyph, sender. Rendered as a SINGLE <Text> with nested
+         * colored spans so Ink treats the whole prefix as one atomic
+         * shrink-unit. Splitting it into separate <Text> siblings made
+         * Ink's flex-shrink chop one char off each on overflow rows —
+         * e.g. `9:49 PM ◀` rendered as `9:49 P◀` (M and trailing space
+         * eaten), `Me: ` rendered as `Me:` (running into the message body).
+         * Wrapped in a Box with flexShrink={0} so the prefix never loses
+         * a char; the message <Text> below (with wrap="truncate") is the
+         * sole shrinkable element on the row.
+         */}
+        <Box flexShrink={0}>
           <Text>
-            {"  "}
-            {sender ? "                " : ""}
+            {lineNum !== undefined && (
+              <Text color={selected ? theme.sent.bg : theme.lineNum}>{lineNum.padStart(3)} </Text>
+            )}
+            <Text color={cursorColor}>{cursor}</Text>
+            <Text color={groupColor}>{groupSepChar} </Text>
+            {isFirstInGroup ? (
+              // pad to 14 (not 13) so even the widest natural timestamp
+              // (`MM/DD HH:MM PM` = 13 chars, or `Yest 12:37 PM` = 13)
+              // always has at least one trailing space before the glyph —
+              // otherwise the row renders as `10:39 PM◀ Hey` with no gap.
+              <Text color={theme.timestamp}>{timestamp.padEnd(14)}</Text>
+            ) : (
+              <Text color={theme.timestamp}>{"              "}</Text>
+            )}
+            {isFirstInGroup ? (
+              <>
+                {isSent ? (
+                  <Text color={theme.sent.bg} bold>
+                    {theme.glyphs.sent}{" "}
+                  </Text>
+                ) : (
+                  <Text color={theme.received.border} bold>
+                    {theme.glyphs.received}{" "}
+                  </Text>
+                )}
+                {sender && (
+                  <Text color={isSent ? theme.sent.bg : theme.senderName} bold>
+                    {sender.length > 12 ? `${sender.slice(0, 11)}…` : sender}
+                    {": "}
+                  </Text>
+                )}
+              </>
+            ) : (
+              // Continuation: indent to align with first message text
+              <Text>
+                {"  "}
+                {sender ? "                " : ""}
+              </Text>
+            )}
           </Text>
-        )}
+        </Box>
 
-        {/* Message text */}
+        {/* Message text — the only shrinkable element on the row. */}
         <Text color={isSent ? theme.sentText : theme.receivedText} wrap="truncate">
           {text}
         </Text>
@@ -229,7 +240,7 @@ export function PendingBubble({ text, status }: PendingBubbleProps) {
     <Box backgroundColor={theme.groupBg.sent}>
       <Text>{"    "}</Text>
       <Text color={color}>{indicator} </Text>
-      <Text color={theme.timestamp}>{"now".padEnd(13)}</Text>
+      <Text color={theme.timestamp}>{"now".padEnd(14)}</Text>
       <Text color={theme.sent.bg} bold>
         {`${theme.glyphs.sent} Me: `}
       </Text>
