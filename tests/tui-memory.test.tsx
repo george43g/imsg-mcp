@@ -70,4 +70,48 @@ describe("TUI memory + event-loop stability", () => {
     // A few system-level timers (vitest, node telemetry) are expected.
     expect(orphanTimers.length).toBeLessThan(8);
   }, 10_000);
+
+  it("handles a 200-key rapid burst without exceeding the lag budget", async () => {
+    // Pins the perf budget surfaced by the iteration-2 live-tmux stress
+    // pass (100 rapid `j`s = 5.8% CPU / 25ms lag; 50 rapid `Ctrl-u`s on a
+    // 200-msg thread = 15% CPU / 45ms lag). This test fires 200 navigation
+    // keys back-to-back with no inter-key delay and asserts the event-loop
+    // p99 stays well under the sustained-lag kill threshold.
+    const theme = makeTheme();
+    const { stdin, unmount } = render(
+      <ThemeProvider value={theme}>
+        <App />
+      </ThemeProvider>,
+    );
+
+    // Give the App a brief mount tick so initial loaders settle.
+    await new Promise((r) => setTimeout(r, 200));
+
+    const heapBefore = process.memoryUsage().heapUsed;
+
+    // 200 rapid keys (mix of move/refresh/tab to exercise multiple reducers).
+    for (let i = 0; i < 200; i++) {
+      if (i % 4 === 0) stdin.write("j");
+      else if (i % 4 === 1) stdin.write("k");
+      else if (i % 4 === 2)
+        stdin.write("\t"); // Tab
+      else stdin.write("d"); // toggle dev stats (cheap state change)
+    }
+
+    // Let the queue drain.
+    await new Promise((r) => setTimeout(r, 300));
+
+    const wd = readWatchdogState();
+    const heapAfter = process.memoryUsage().heapUsed;
+
+    unmount();
+
+    // Budget: 200 keypresses + render churn must keep p99 lag < 200ms
+    // (50% of the watchdog warn threshold and 5% of the kill threshold).
+    expect(wd.eventLoopP99Ms).toBeLessThan(200);
+    expect(wd.eventLoopSustainedCount).toBe(0);
+    // Heap churn for a 200-key burst should not allocate more than 30MB.
+    const burstMb = (heapAfter - heapBefore) / 1024 / 1024;
+    expect(burstMb).toBeLessThan(30);
+  }, 10_000);
 });
