@@ -58,6 +58,34 @@ describe("normalizePhoneToE164", () => {
       expect(normalizePhoneToE164("15550100100", "US")).toBe("+15550100100");
     });
   });
+
+  describe("vanity letters (phone keypad)", () => {
+    it("converts the classic 1-800-FLOWERS form", () => {
+      // 1-800-FLOWERS → 1-800-3569377 → 11-digit US → +18003569377
+      expect(normalizePhoneToE164("1-800-FLOWERS", "US")).toBe("+18003569377");
+    });
+
+    it("accepts mixed-case + extra hyphens (1-800-Free-411)", () => {
+      // F=3, R=7, E=3, E=3 → 3733, then 411 = 3733411
+      // "1-800-FREE-411" → "1-800-3733-411" → digits "18003733411"
+      expect(normalizePhoneToE164("1-800-FREE-411", "US")).toBe("+18003733411");
+    });
+
+    it("handles spaces between vanity groups (1 800 GO GEICO)", () => {
+      // G=4, O=6, G=4, E=3, I=4, C=2, O=6 → 46 43426 → "1 800 46 43426"
+      expect(normalizePhoneToE164("1 800 GO GEICO", "US")).toBe("+18004643426");
+    });
+
+    it("converts but still returns null when result isn't a valid phone length", () => {
+      // "ABC" → "222" → too short
+      expect(normalizePhoneToE164("ABC", "US")).toBeNull();
+    });
+
+    it("doesn't convert pure-letter input (treated as not phone-like)", () => {
+      // "alice" has no digits, isn't phone-like → null (caller falls to contact search)
+      expect(normalizePhoneToE164("alice", "US")).toBeNull();
+    });
+  });
 });
 
 describe("isLikelyEmail", () => {

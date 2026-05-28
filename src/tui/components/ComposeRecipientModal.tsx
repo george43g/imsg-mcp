@@ -51,7 +51,10 @@ export function ComposeRecipientModal({ resolve, onSend, onCancel }: Props) {
 
   // Esc cancels at any stage. We listen at modal level so it fires
   // regardless of which inner input has focus.
-  useInput((_input, key) => {
+  // Digit 1-9 picks an ambiguous-candidate when one is shown — same
+  // pattern as the existing `contact:N` selector. Caps at the first 9
+  // candidates (matches the visual cap below).
+  useInput((input, key) => {
     if (key.escape) {
       if (stage === "body") {
         // Back out to recipient stage rather than full-cancel.
@@ -60,6 +63,16 @@ export function ComposeRecipientModal({ resolve, onSend, onCancel }: Props) {
         return;
       }
       onCancel();
+      return;
+    }
+    if (stage === "recipient" && resolution.kind === "ambiguous" && /^[1-9]$/.test(input)) {
+      const idx = Number.parseInt(input, 10) - 1;
+      const pick = resolution.candidates[idx];
+      if (pick) {
+        setLockedRecipient(pick);
+        setStage("body");
+        setStatus("");
+      }
     }
   });
 
@@ -73,7 +86,8 @@ export function ComposeRecipientModal({ resolve, onSend, onCancel }: Props) {
         setStatus("");
         return;
       case "ambiguous":
-        setStatus(`Ambiguous — ${resolution.candidates.length} matches. Be more specific.`);
+        // Numbered picker shows in render; nudge user toward it.
+        setStatus(`Ambiguous — ${resolution.candidates.length} matches. Press 1-9 to pick.`);
         return;
       case "error":
         setStatus(resolution.message);
@@ -130,18 +144,22 @@ export function ComposeRecipientModal({ resolve, onSend, onCancel }: Props) {
           </Box>
           {resolution.kind === "ambiguous" && (
             <Box flexDirection="column" flexShrink={0}>
-              {resolution.candidates.slice(0, 5).map((c) => (
+              {resolution.candidates.slice(0, 9).map((c, i) => (
                 <Box key={c.handle} flexShrink={0}>
-                  <Text color={theme.help.desc}>{`  ${c.displayName}`}</Text>
+                  <Text color={theme.help.key} bold>{`  ${i + 1}`}</Text>
+                  <Text color={theme.help.desc}>{`: ${c.displayName}`}</Text>
                 </Box>
               ))}
-              {resolution.candidates.length > 5 && (
+              {resolution.candidates.length > 9 && (
                 <Box flexShrink={0}>
                   <Text
                     color={theme.help.desc}
-                  >{`  …and ${resolution.candidates.length - 5} more`}</Text>
+                  >{`  …and ${resolution.candidates.length - 9} more (refine search)`}</Text>
                 </Box>
               )}
+              <Box flexShrink={0}>
+                <Text color={theme.help.desc}>Press 1-9 to pick a match</Text>
+              </Box>
             </Box>
           )}
           {resolution.kind === "error" && resolution.message && (

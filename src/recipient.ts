@@ -62,6 +62,70 @@ export function defaultCountryFromEnv(): "AU" | "US" {
 /** What we treat as "phone-like" before attempting normalization. */
 const PHONE_LIKE_RE = /^[\d\s()+\-.]+$/;
 
+/** What we treat as "vanity-phone-like" — phone-like + letters (e.g. 1-800-FLOWERS). */
+const VANITY_PHONE_LIKE_RE = /^[\dA-Za-z\s()+\-.]+$/;
+
+/**
+ * Phone-keypad letter → digit mapping. ABC=2, DEF=3, …, WXYZ=9.
+ * Lowercased input maps the same way.
+ */
+const KEYPAD_MAP: Record<string, string> = {
+  a: "2",
+  b: "2",
+  c: "2",
+  d: "3",
+  e: "3",
+  f: "3",
+  g: "4",
+  h: "4",
+  i: "4",
+  j: "5",
+  k: "5",
+  l: "5",
+  m: "6",
+  n: "6",
+  o: "6",
+  p: "7",
+  q: "7",
+  r: "7",
+  s: "7",
+  t: "8",
+  u: "8",
+  v: "8",
+  w: "9",
+  x: "9",
+  y: "9",
+  z: "9",
+};
+
+/**
+ * Translate vanity-phone letters to keypad digits in-place. Non-letter chars
+ * pass through untouched.
+ *
+ *   "1-800-FLOWERS" → "1-800-3569377"
+ *   "1 800 GO GEICO" → "1 800 46 43426"
+ */
+function translateVanityLetters(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const lower = ch.toLowerCase();
+    out += KEYPAD_MAP[lower] ?? ch;
+  }
+  return out;
+}
+
+/**
+ * Detect a vanity-phone input: phone-like chars + at least one letter +
+ * at least one digit. "Alice" alone has no digits → not a vanity phone.
+ * "1-800-FLOWERS" has digits + letters → is.
+ */
+function isVanityPhone(input: string): boolean {
+  if (!VANITY_PHONE_LIKE_RE.test(input)) return false;
+  const hasLetter = /[A-Za-z]/.test(input);
+  const hasDigit = /\d/.test(input);
+  return hasLetter && hasDigit;
+}
+
 /**
  * Pure helper: turn any user-typed phone number into E.164 format if
  * possible, else return null. Locale: AU default for bare local numbers
@@ -80,8 +144,13 @@ export function normalizePhoneToE164(
   input: string,
   defaultCountry: "AU" | "US" = "AU",
 ): string | null {
-  const trimmed = input.trim();
-  if (!trimmed || !PHONE_LIKE_RE.test(trimmed)) return null;
+  let trimmed = input.trim();
+  if (!trimmed) return null;
+  // Vanity-phone pre-pass: "1-800-FLOWERS" → "1-800-3569377"
+  if (isVanityPhone(trimmed)) {
+    trimmed = translateVanityLetters(trimmed);
+  }
+  if (!PHONE_LIKE_RE.test(trimmed)) return null;
 
   const digits = trimmed.replace(/\D/g, "");
   if (digits.length === 0) return null;
@@ -148,8 +217,8 @@ export function resolveRecipient(
     return { kind: "email", handle, displayName: handle };
   }
 
-  // 2. Phone (E.164 or local)
-  if (PHONE_LIKE_RE.test(trimmed)) {
+  // 2. Phone (E.164, local, or vanity)
+  if (PHONE_LIKE_RE.test(trimmed) || isVanityPhone(trimmed)) {
     const e164 = normalizePhoneToE164(trimmed, ctx.defaultCountry ?? "AU");
     if (e164) {
       return { kind: "phone", handle: e164, displayName: e164 };

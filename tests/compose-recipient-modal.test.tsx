@@ -61,6 +61,63 @@ describe("ComposeRecipientModal — typing surfaces resolution feedback", () => 
   });
 });
 
+describe("ComposeRecipientModal — ambiguous numbered picker", () => {
+  it("renders numbered candidates and the pick-1-9 hint when resolution is ambiguous", async () => {
+    const ambiguous = (): RecipientResolution => ({
+      kind: "ambiguous",
+      query: "brian",
+      candidates: [
+        { kind: "contact", handle: "+61411113227", displayName: "Brian Osborne (+61411113227)" },
+        {
+          kind: "email",
+          handle: "brian@example.com",
+          displayName: "Brian Osborne (brian@example.com)",
+        },
+      ],
+    });
+    const resolve = vi.fn((input: string) =>
+      input.trim() ? ambiguous() : { kind: "error" as const, message: "" },
+    );
+    const { lastFrame, stdin, unmount } = mount({ resolve });
+    stdin.write("b"); // trigger any-input → resolution recomputes
+    // TextInput's internal state update isn't synchronous — give Ink a
+    // tick so the next render reflects the typed character.
+    await new Promise((r) => setTimeout(r, 30));
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("1: Brian Osborne (+61411113227)");
+    expect(frame).toContain("2: Brian Osborne (brian@example.com)");
+    expect(frame).toContain("Press 1-9 to pick a match");
+    unmount();
+  });
+
+  it("picks the candidate when the user presses its number", async () => {
+    const ambiguous = (): RecipientResolution => ({
+      kind: "ambiguous",
+      query: "brian",
+      candidates: [
+        { kind: "contact", handle: "+61411113227", displayName: "Brian Osborne (+61411113227)" },
+        {
+          kind: "email",
+          handle: "brian@example.com",
+          displayName: "Brian Osborne (brian@example.com)",
+        },
+      ],
+    });
+    const resolve = vi.fn((input: string) =>
+      input.trim() ? ambiguous() : { kind: "error" as const, message: "" },
+    );
+    const { stdin, lastFrame, unmount } = mount({ resolve });
+    stdin.write("b"); // any-input
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("2"); // pick candidate #2 (email)
+    await new Promise((r) => setTimeout(r, 30));
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("New message — body");
+    expect(frame).toContain("To: Brian Osborne (brian@example.com)");
+    unmount();
+  });
+});
+
 describe("ComposeRecipientModal — Esc handling", () => {
   it("calls onCancel when Esc is pressed at stage 1", async () => {
     const onCancel = vi.fn();
