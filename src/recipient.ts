@@ -1,0 +1,183 @@
+/**
+ * Recipient normalization — parse free-form user input into a handle the
+ * send_message layer can act on. Handles four input shapes:
+ *
+ *   1. E.164 phone               +61401990797       → kept as-is
+ *   2. Local phone               0401 990 797       → +61401990797 (AU default)
+ *   3. iMessage email            alice@icloud.com   → kept as-is (lowercase)
+ *   4. Contact name (typeahead)  "Brian Osborne"    → resolved via ContactsDB
+ *
+ * Used by:
+ *   - TUI ComposeRecipientModal (recipient picker stage)
+ *   - CLI `imsg send <recipient>` (one-off)
+ *   - MCP `send_message` (agents)
+ *
+ * Contact-name path returns a `disambiguate` result when multiple contacts
+ * match — caller surfaces the contact:N picker (existing P2.7 work).
+ */
+
+import type { Contact } from "./contacts-db.js";
+
+/** A normalised, send-ready handle. */
+export interface ResolvedRecipient {
+  kind: "phone" | "email" | "contact";
+  /** Handle string send_message accepts (E.164 phone OR email OR chatIdentifier). */
+  handle: string;
+  /** Display label for confirmation UX. */
+  displayName: string;
+}
+
+export interface AmbiguousRecipient {
+  kind: "ambiguous";
+  query: string;
+  candidates: ResolvedRecipient[];
+}
+
+export interface RecipientError {
+  kind: "error";
+  message: string;
+}
+
+export type RecipientResolution = ResolvedRecipient | AmbiguousRecipient | RecipientError;
+
+/**
+ * Source of contact lookups. Kept narrow so the function is unit-testable
+ * without spinning up the full ContactsDB.
+ */
+export interface ContactsSource {
+  searchContacts(query: string): Contact[];
+}
+
+/** What we treat as "phone-like" before attempting normalization. */
+const PHONE_LIKE_RE = /^[\d\s()+\-.]+$/;
+
+/**
+ * Pure helper: turn any user-typed phone number into E.164 format if
+ * possible, else return null. Locale: AU default for bare local numbers
+ * (the project's primary user is in AU; this is configurable via the
+ * `defaultCountry` arg).
+ *
+ * Examples (defaultCountry="AU"):
+ *   "+61401990797"     → "+61401990797"
+ *   "+1 555 010 0100"  → "+15550100100"
+ *   "0401 990 797"     → "+61401990797"
+ *   "(02) 9876 5432"   → "+61298765432"
+ *   "555-010-0100"     → "+15550100100"  (when defaultCountry="US")
+ *   "abc"              → null
+ */
+export function normalizePhoneToE164(
+  input: string,
+  defaultCountry: "AU" | "US" = "AU",
+): string | null {
+  const trimmed = input.trim();
+  if (!trimmed || !PHONE_LIKE_RE.test(trimmed)) return null;
+
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length === 0) return null;
+
+  // Already E.164-shaped (starts with `+`)? Strip non-digits and re-prepend.
+  if (trimmed.startsWith("+")) {
+    if (digits.length < 8 || digits.length > 15) return null;
+    return `+${digits}`;
+  }
+
+  // No `+` — interpret based on locale + length.
+  if (defaultCountry === "AU") {
+    // Australian mobiles: 04... (10 digits total)
+    if (digits.length === 10 && digits.startsWith("0")) {
+      return `+61${digits.slice(1)}`;
+    }
+    // Australian without leading 0: 4... (9 digits) — accept e.g. "401990797"
+    if (digits.length === 9 && digits.startsWith("4")) {
+      return `+61${digits}`;
+    }
+    // 11-digit Aussie starting 61: "61401990797"
+    if (digits.length === 11 && digits.startsWith("61")) {
+      return `+${digits}`;
+    }
+  }
+
+  if (defaultCountry === "US") {
+    // US 10-digit
+    if (digits.length === 10) return `+1${digits}`;
+    // US 11-digit starting 1
+    if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  }
+
+  // International-ish but ambiguous: anywhere from 8-15 digits, assume
+  // it's already country-coded.
+  if (digits.length >= 8 && digits.length <= 15) return `+${digits}`;
+
+  return null;
+}
+
+/** Simple email validator — RFC-light, no IDN. */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isLikelyEmail(input: string): boolean {
+  return EMAIL_RE.test(input.trim());
+}
+
+/**
+ * Resolve a free-form input string into a send-ready recipient (or an
+ * ambiguous-contact set / error).
+ */
+export function resolveRecipient(
+  input: string,
+  ctx: { contacts: ContactsSource; defaultCountry?: "AU" | "US" },
+): RecipientResolution {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { kind: "error", message: "Recipient is required." };
+  }
+
+  // 1. Email
+  if (isLikelyEmail(trimmed)) {
+    const handle = trimmed.toLowerCase();
+    return { kind: "email", handle, displayName: handle };
+  }
+
+  // 2. Phone (E.164 or local)
+  if (PHONE_LIKE_RE.test(trimmed)) {
+    const e164 = normalizePhoneToE164(trimmed, ctx.defaultCountry ?? "AU");
+    if (e164) {
+      return { kind: "phone", handle: e164, displayName: e164 };
+    }
+    // Phone-shaped but couldn't normalise — fall through to contact search,
+    // but don't return phone-error yet (might still be a contact name with
+    // digits in it, e.g. "John 2nd").
+  }
+
+  // 3. Contact name typeahead
+  const matches = ctx.contacts.searchContacts(trimmed);
+  const candidates: ResolvedRecipient[] = [];
+  for (const c of matches) {
+    // Each contact may have multiple phones and emails. Normalize each
+    // phone through the E.164 helper so the resulting handle is dial-ready.
+    for (const phone of c.phoneNumbers) {
+      const e164 = normalizePhoneToE164(phone, ctx.defaultCountry ?? "AU");
+      const handle = e164 ?? phone;
+      candidates.push({
+        kind: "contact",
+        handle,
+        displayName: `${c.displayName} (${handle})`,
+      });
+    }
+    for (const email of c.emails) {
+      candidates.push({
+        kind: "email",
+        handle: email.toLowerCase(),
+        displayName: `${c.displayName} (${email})`,
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return {
+      kind: "error",
+      message: `No phone, email, or contact match for "${trimmed}".`,
+    };
+  }
+  if (candidates.length === 1) return candidates[0]!;
+  return { kind: "ambiguous", query: trimmed, candidates };
+}
