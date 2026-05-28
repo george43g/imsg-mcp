@@ -27,12 +27,17 @@ export function DevStats({ stats, width }: Props) {
         </Text>
       </Box>
       <Box flexDirection="column" paddingX={1}>
-        <Box justifyContent="space-between">
-          <Text color={theme.info.label}>Engine</Text>
-          <Text color={engineColor} bold>
-            {stats.engine}
-          </Text>
-        </Box>
+        {/*
+         * Engine row is the only stat whose value ("Rust parser + TS DB") is
+         * wider than the narrow stats column. With `justifyContent="space-between"`
+         * Ink wraps the value mid-string and interleaves it with the label
+         * (showing `EngiRust parser` / `e   + TS DB`). Stack label-above-value
+         * for this row so the value gets the full column width.
+         */}
+        <Text color={theme.info.label}>Engine</Text>
+        <Text color={engineColor} bold>
+          {stats.engine}
+        </Text>
         <Box justifyContent="space-between">
           <Text color={theme.info.label}>CPU</Text>
           <Text color={cpuColor}>{stats.cpuPercent}%</Text>

@@ -18,6 +18,7 @@ import { StatusBar } from "./components/StatusBar.js";
 import { nextGroupBoundary, prevGroupBoundary, ThreadPane } from "./components/ThreadPane.js";
 import { formatJumpTarget, parseUserDate } from "./dateParse.js";
 import { extensionFor, toCSV, toJSON, toMarkdown } from "./exportFormats.js";
+import { firstFilterMatchIndex } from "./filter.js";
 import { useDevStats } from "./hooks/useDevStats.js";
 import { useImsg } from "./hooks/useImsg.js";
 import { useMouse } from "./hooks/useMouse.js";
@@ -229,7 +230,17 @@ export function App() {
 
     // Filter mode
     if (state.mode === "filter") {
-      if (key.escape || key.return) {
+      if (key.return) {
+        // Enter commits the filter: jump cursor to the first matching
+        // conversation, then exit filter. Esc-only path below preserves the
+        // pre-filter cursor (cancel semantics). Previously both keys exited
+        // without navigating, which made the filter feel inert.
+        const matchIdx = firstFilterMatchIndex(state.conversations, state.filterQuery);
+        if (matchIdx !== null) {
+          dispatch({ type: "SELECT", index: matchIdx });
+        }
+        dispatch({ type: "EXIT_FILTER" });
+      } else if (key.escape) {
         dispatch({ type: "EXIT_FILTER" });
       } else if (key.backspace || key.delete) {
         dispatch({ type: "UPDATE_FILTER", query: state.filterQuery.slice(0, -1) });

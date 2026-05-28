@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { useMemo } from "react";
 import type { Conversation } from "../../types.js";
+import { matchesConversationFilter } from "../filter.js";
 import { useTheme } from "../themes/ThemeContext.js";
 import { ConversationItem } from "./ConversationItem.js";
 
@@ -27,12 +28,7 @@ export function Sidebar({
   const filtered = useMemo(() => {
     if (!filterQuery) return conversations;
     const q = filterQuery.toLowerCase();
-    return conversations.filter(
-      (c) =>
-        (c.displayName?.toLowerCase().includes(q) ?? false) ||
-        c.chatIdentifier.toLowerCase().includes(q) ||
-        c.threadSlug.toLowerCase().includes(q),
-    );
+    return conversations.filter((c) => matchesConversationFilter(c, q));
   }, [conversations, filterQuery]);
 
   // Each conversation item takes ~4 rows (name, snippet, slug, separator)
