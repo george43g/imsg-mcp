@@ -37,9 +37,20 @@ export function DateJumpModal({ value, error, onChange, onSubmit }: Props) {
     }
   });
 
+  // Opaque background + flexShrink={0} on every row matches the modal
+  // discipline used by ComposeRecipientModal / SendViaModal — without
+  // these, conversation-list slugs from the sidebar leak through the
+  // modal's interior (visible bug in live tmux tests).
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor={theme.status.accent} paddingX={1}>
-      <Box>
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor={theme.status.accent}
+      backgroundColor={theme.header.dim.bg}
+      paddingX={1}
+      flexShrink={0}
+    >
+      <Box flexShrink={0}>
         <Text color={theme.status.accent} bold>
           Jump to date
         </Text>
@@ -58,8 +69,8 @@ export function DateJumpModal({ value, error, onChange, onSubmit }: Props) {
           }}
         />
       ) : (
-        <Box flexDirection="column">
-          <Box>
+        <Box flexDirection="column" flexShrink={0}>
+          <Box flexShrink={0}>
             <Text color={theme.info.label}>Date: </Text>
             <TextInput
               defaultValue={value}
@@ -68,7 +79,7 @@ export function DateJumpModal({ value, error, onChange, onSubmit }: Props) {
               placeholder="2024-03-15  |  3/15  |  yesterday  |  2 weeks ago  |  1y"
             />
           </Box>
-          <Box>
+          <Box flexShrink={0}>
             <Text color={theme.help.desc}>
               Formats: YYYY-MM-DD · M/D · today · yesterday · N days/weeks/months/years ago · 5d /
               2w / 3m / 1y
@@ -78,12 +89,12 @@ export function DateJumpModal({ value, error, onChange, onSubmit }: Props) {
       )}
 
       {error && (
-        <Box>
+        <Box flexShrink={0}>
           <Text color={theme.edited}>{error}</Text>
         </Box>
       )}
 
-      <Box>
+      <Box flexShrink={0}>
         <Text color={theme.help.desc}>Enter: jump · Esc: cancel · Tab: switch mode</Text>
       </Box>
     </Box>

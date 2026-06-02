@@ -17,18 +17,28 @@ interface Props {
  */
 export function ExportModal({ format, path, rangeSummary, onChangePath, onSubmit }: Props) {
   const theme = useTheme();
+  // Opaque background + flexShrink={0} on every row matches the modal
+  // discipline used by ComposeRecipientModal / SendViaModal — prevents
+  // the sidebar conversation list from leaking through the modal cells.
   return (
-    <Box flexDirection="column" borderStyle="double" borderColor={theme.status.accent} paddingX={1}>
-      <Box>
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor={theme.status.accent}
+      backgroundColor={theme.header.dim.bg}
+      paddingX={1}
+      flexShrink={0}
+    >
+      <Box flexShrink={0}>
         <Text color={theme.status.accent} bold>
           Export messages
         </Text>
       </Box>
-      <Box>
+      <Box flexShrink={0}>
         <Text color={theme.info.label}>Range: </Text>
         <Text color={theme.info.value}>{rangeSummary}</Text>
       </Box>
-      <Box>
+      <Box flexShrink={0}>
         <Text color={theme.info.label}>Format: </Text>
         <Text
           color={format === "markdown" ? theme.status.accent : theme.info.value}
@@ -52,7 +62,7 @@ export function ExportModal({ format, path, rangeSummary, onChangePath, onSubmit
         </Text>
         <Text color={theme.help.desc}> (Tab cycles)</Text>
       </Box>
-      <Box>
+      <Box flexShrink={0}>
         <Text color={theme.info.label}>Path: </Text>
         <TextInput
           defaultValue={path}
@@ -61,7 +71,7 @@ export function ExportModal({ format, path, rangeSummary, onChangePath, onSubmit
           placeholder="/absolute/path/to/file"
         />
       </Box>
-      <Box>
+      <Box flexShrink={0}>
         <Text color={theme.help.desc}>Enter: save Esc: cancel Tab: cycle format</Text>
       </Box>
     </Box>

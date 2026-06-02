@@ -902,9 +902,11 @@ export function App() {
             if (state.selectionAnchor != null) {
               const lo = Math.min(state.selectionAnchor, state.selectedMsgIdx);
               const hi = Math.max(state.selectionAnchor, state.selectedMsgIdx);
-              return `${hi - lo + 1} selected messages`;
+              const n = hi - lo + 1;
+              return `${n} selected message${n === 1 ? "" : "s"}`;
             }
-            return `entire loaded thread (${state.messages.length} messages)`;
+            const m = state.messages.length;
+            return `entire loaded thread (${m} message${m === 1 ? "" : "s"})`;
           })()}
           onChangePath={(p) => dispatch({ type: "SET_EXPORT_PATH", path: p })}
           onSubmit={doExport}
