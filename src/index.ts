@@ -210,8 +210,26 @@ function messageToStructured(msg: Message) {
 /**
  * Sleep utility
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Sleep for `ms`, resolving early if `signal` aborts. The caller is
+ * expected to re-check `signal.aborted` after — sleep just wakes up
+ * promptly so the caller doesn't sit on a 10–60s setTimeout while a
+ * cancellation is already in flight. Without this, `wait_for_reply`
+ * could take up to a full poll interval to honor a cancel.
+ */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function toolText(text: string, structuredContent?: Record<string, unknown>) {
@@ -1007,7 +1025,7 @@ export class IMessageMCPServer {
         });
       }
 
-      await sleep(pollIntervalMs);
+      await sleep(pollIntervalMs, signal);
     }
 
     // Timeout reached
