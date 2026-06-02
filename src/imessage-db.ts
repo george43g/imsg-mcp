@@ -1516,8 +1516,11 @@ export class IMessageDB {
     const sql = `
       SELECT m.ROWID, m.guid, m.text, m.date, m.date_read, m.date_delivered,
              m.is_read, m.is_delivered, m.is_from_me, h.id as handle_id,
+             h.service as handle_service,
              m.cache_has_attachments, m.associated_message_type,
              m.associated_message_guid, m.associated_message_emoji,
+             m.thread_originator_guid, m.thread_originator_part,
+             m.balloon_bundle_id, m.date_edited, m.date_retracted,
              m.item_type, c.chat_identifier
       FROM ${Tables.MESSAGE} m
       LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
@@ -1532,7 +1535,28 @@ export class IMessageDB {
     for (const r of rows) {
       if (isHiddenSystemItem(r.item_type)) continue;
       const text = this.parseMessageText(r);
-      const ext = { item_type: r.item_type };
+      // IMPORTANT: ext must carry every field convertMessage uses to
+      // classify the row (reaction / edit / reply / service / etc.) —
+      // without these, analytics like tapback_summary see every message
+      // as a normal text and return 0 reactions.
+      const ext: ExtendedMessageData = {
+        is_read: r.is_read,
+        date_read: r.date_read,
+        is_delivered: r.is_delivered,
+        date_delivered: r.date_delivered,
+        handle_id: r.handle_id,
+        handle_service: r.handle_service,
+        associated_message_type: r.associated_message_type,
+        associated_message_guid: r.associated_message_guid,
+        associated_message_emoji: r.associated_message_emoji,
+        thread_originator_guid: r.thread_originator_guid,
+        thread_originator_part: r.thread_originator_part,
+        balloon_bundle_id: r.balloon_bundle_id,
+        date_edited: r.date_edited,
+        date_retracted: r.date_retracted,
+        cache_has_attachments: r.cache_has_attachments,
+        item_type: r.item_type,
+      };
       const msg = this.convertMessage(r, text, r.chat_identifier || "", ext);
       out.push(msg);
     }
