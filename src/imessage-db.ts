@@ -43,6 +43,7 @@ import {
   AssociatedMessageType,
   isReactionType,
   MAC_EPOCH_OFFSET,
+  macAutoTimestampToDate,
   NANOS_PER_SECOND,
   OBJECT_REPLACEMENT_CHAR,
   macTimestampToDate as schemaMacTimestampToDate,
@@ -1647,7 +1648,11 @@ export class IMessageDB {
       mimeType: r.mime_type ?? null,
       transferName: r.transfer_name ?? null,
       totalBytes: Number(r.total_bytes) || 0,
-      createdDate: schemaMacTimestampToDate(Number(r.created_date)) ?? new Date(0),
+      // `attachment.created_date` stores seconds since 2001-01-01,
+      // not nanoseconds. The auto-detecting converter handles both
+      // legacy seconds-formatted rows and any modern ns-formatted rows
+      // that may show up in a heterogeneous DB.
+      createdDate: macAutoTimestampToDate(Number(r.created_date)) ?? new Date(0),
       chatId: r.chat_identifier || "",
     }));
     span.end({ count: out.length });

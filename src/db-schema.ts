@@ -63,6 +63,29 @@ export function macTimestampToDate(timestamp: number | null): Date | null {
 }
 
 /**
+ * Convert a macOS timestamp where the storage unit isn't guaranteed.
+ *
+ * `message.date` is nanoseconds on modern macOS, but other columns
+ * (notably `attachment.created_date`) store **seconds** since the
+ * Mac epoch. Same baseline, different magnitude — and the two ranges
+ * don't overlap for any reasonable date:
+ *   - "now" in seconds: ~8 × 10⁸
+ *   - "now" in nanoseconds: ~8 × 10¹⁷
+ *
+ * Anything below `SECONDS_NS_BOUNDARY` (10¹⁵) is treated as seconds;
+ * anything at or above is treated as nanoseconds. Values of 0 or null
+ * return null (no recorded timestamp).
+ */
+export const SECONDS_NS_BOUNDARY = 1e15;
+
+export function macAutoTimestampToDate(timestamp: number | null): Date | null {
+  if (timestamp == null || timestamp === 0) return null;
+  const unitDivisor = timestamp < SECONDS_NS_BOUNDARY ? 1 : NANOS_PER_SECOND;
+  const unixSeconds = timestamp / unitDivisor + MAC_EPOCH_OFFSET;
+  return new Date(unixSeconds * 1000);
+}
+
+/**
  * Parse associated_message_guid to extract target message GUID and part index.
  * Format: "p:PART_INDEX/MESSAGE_GUID"
  */
