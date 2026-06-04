@@ -9,7 +9,7 @@
  * Files in $TMPDIR are cleaned up by the OS automatically.
  */
 
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { freemem, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -236,15 +236,27 @@ export function logShutdown(reason: string): void {
  */
 export function getFileLogLines(tail = 50): string[] {
   try {
-    const { readdirSync, readFileSync } = require("node:fs") as typeof import("node:fs");
+    // Previously this used inline `require("node:fs")`, which throws
+    // ReferenceError under ESM and gets silently swallowed — returning []
+    // even when a 135-line NDJSON sat right next to it. The imports now
+    // live at the top of the file (ESM-correct).
+    //
+    // Strategy: read every PID-tagged file in the log dir so the caller
+    // gets logs from THIS server process even when stale files from prior
+    // crashes / older PIDs sort later. We fall back to the most-recent
+    // file if the current PID isn't present (e.g. file rotated).
     const dir = getLogDir();
+    if (!existsSync(dir)) return [];
     const files = readdirSync(dir)
       .filter((f: string) => f.endsWith(".ndjson"))
-      .sort()
-      .reverse();
+      .sort();
     if (files.length === 0) return [];
 
-    const content = readFileSync(join(dir, files[0]), "utf8");
+    const currentPid = String(process.pid);
+    const mine = files.filter((f: string) => f.includes(`imsg-mcp-${currentPid}-`));
+    const targetFile = mine[mine.length - 1] ?? files[files.length - 1];
+
+    const content = readFileSync(join(dir, targetFile), "utf8");
     const lines = content.trim().split("\n").filter(Boolean);
     return tail > 0 ? lines.slice(-tail) : lines;
   } catch {
