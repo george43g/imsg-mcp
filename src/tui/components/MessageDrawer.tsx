@@ -22,9 +22,20 @@ function formatFullDate(date: Date): string {
   });
 }
 
+/**
+ * Drawer-row label. Wrapped in a flexShrink={0} Box so a sibling
+ * `<Text wrap="truncate">` value (e.g. GUID) doesn't squeeze the label
+ * to zero width — without this, "GUID: 9C768341..." rendered as
+ * "GUID9C768341..." because the truncating value won the row's width
+ * negotiation and the label's colon+space got eaten.
+ */
 function Label({ children }: { children: string }) {
   const theme = useTheme();
-  return <Text color={theme.drawer.label}>{children}: </Text>;
+  return (
+    <Box flexShrink={0}>
+      <Text color={theme.drawer.label}>{children}: </Text>
+    </Box>
+  );
 }
 
 export function MessageDrawer({ message: m, width, height }: Props) {

@@ -85,13 +85,27 @@ export function DevStats({ stats, width }: Props) {
   );
 }
 
-/** Compact inline stats for the status bar (when full panel is hidden) */
+/** Compact inline stats for the status bar (when full panel is hidden).
+ *
+ * Engine label is abbreviated (full "Rust parser + TS DB" → "Rust+TS")
+ * so the bar fits on standard 80-col terminals without colliding with
+ * the left-side service/handle segment. The full panel (toggled with
+ * `d`) keeps the verbose label.
+ *
+ * flexShrink={0} keeps the gap={1} separators intact even when the
+ * parent StatusBar's right-side Box is being squeezed by a long toast
+ * — without it the row would render as "TS0%0MB" instead of "TS 0% 0MB".
+ */
 export function CompactStats({ stats }: { stats: DevStatsData }) {
   const theme = useTheme();
   const engineColor = stats.engine.startsWith("Rust") ? theme.rustEngine : theme.status.accent;
+  const compactEngine = stats.engine
+    .replace("Rust parser + TS DB", "Rust+TS")
+    .replace("Rust parser + Rust DB", "Rust")
+    .replace("TS parser + TS DB", "TS");
   return (
-    <Box gap={1}>
-      <Text color={engineColor}>{stats.engine}</Text>
+    <Box gap={1} flexShrink={0}>
+      <Text color={engineColor}>{compactEngine}</Text>
       <Text color={theme.info.label}>{stats.cpuPercent}%</Text>
       <Text color={theme.info.label}>{stats.memMB}MB</Text>
       <Text color={theme.info.label}>PID:{stats.pid}</Text>
