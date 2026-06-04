@@ -398,7 +398,36 @@ export async function sendAttachment(
  *     return `SMS`.
  *   - Otherwise return `unknown` with a remediation hint.
  */
+/**
+ * Cheap format check used by checkImessageAvailability before invoking
+ * AppleScript. Messages.app's `buddy "..." of account` resolution is
+ * lazy: any string returns a buddy reference, even literal nonsense
+ * ("not-a-handle"). Without this guard the preflight reports
+ * reachable:true for garbage and the caller's send_message later fails.
+ *
+ * Accepts E.164 phones (and digit/separator variants — the broader
+ * recipient normalizer in `recipient.ts` will pick those up downstream)
+ * and properly-shaped emails. Returns null when the handle passes; the
+ * caller should then run the AppleScript probe.
+ */
+export function validateAvailabilityHandle(handle: string): ImessageAvailability | null {
+  const trimmed = handle.trim();
+  const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  const isPhone = /^\+\d{6,15}$/.test(trimmed.replace(/[\s()\-.]/g, ""));
+  if (isEmail || isPhone) return null;
+  return {
+    service: "unknown",
+    reachable: false,
+    hint: "Handle is neither a valid email nor a recognizable phone (expect E.164 like +61401990797).",
+  };
+}
+
 export async function checkImessageAvailability(handle: string): Promise<ImessageAvailability> {
+  // Reject obviously-invalid input first so we don't get false-positive
+  // "reachable: true" from AppleScript's lazy buddy resolution.
+  const formatFail = validateAvailabilityHandle(handle);
+  if (formatFail) return formatFail;
+
   if (MOCK) {
     return { service: "iMessage", reachable: true };
   }
