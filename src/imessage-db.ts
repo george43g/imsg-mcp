@@ -1330,9 +1330,16 @@ export class IMessageDB {
     const rawHandle = raw.is_from_me ? "me" : ext.handle_id || "unknown";
     const displayName = rawHandle === "me" ? undefined : this.contacts.lookupHandle(rawHandle);
 
-    // Parse rich content summary if available
+    // Parse rich content summary if available.
+    //
+    // `message_summary_info` is set on many plain-text messages too
+    // (delivery receipts / typing-indicator metadata, depending on iOS
+    // version). The canonical "this message renders as a rich balloon"
+    // marker is `balloon_bundle_id` — only fall back to parsing the
+    // summary blob when that is set, otherwise we paint a misleading
+    // "[Rich Content]" badge on plain text like "hello world".
     let richContentSummary: string | undefined;
-    if (ext.message_summary_info) {
+    if (ext.balloon_bundle_id && ext.message_summary_info) {
       richContentSummary = this.parseRichContentSummary(ext.message_summary_info);
     }
 
@@ -1514,13 +1521,14 @@ export class IMessageDB {
     const span = perf("getMessagesInWindow");
     const cutoffNanos = Math.floor((cutoffMs / 1000 - MAC_EPOCH_OFFSET) * NANOS_PER_SECOND);
     const sql = `
-      SELECT m.ROWID, m.guid, m.text, m.date, m.date_read, m.date_delivered,
+      SELECT m.ROWID, m.guid, m.text, m.attributedBody, m.date, m.date_read, m.date_delivered,
              m.is_read, m.is_delivered, m.is_from_me, h.id as handle_id,
              h.service as handle_service,
              m.cache_has_attachments, m.associated_message_type,
              m.associated_message_guid, m.associated_message_emoji,
              m.thread_originator_guid, m.thread_originator_part,
-             m.balloon_bundle_id, m.date_edited, m.date_retracted,
+             m.balloon_bundle_id, m.message_summary_info,
+             m.date_edited, m.date_retracted,
              m.item_type, c.chat_identifier
       FROM ${Tables.MESSAGE} m
       LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
@@ -1552,6 +1560,7 @@ export class IMessageDB {
         thread_originator_guid: r.thread_originator_guid,
         thread_originator_part: r.thread_originator_part,
         balloon_bundle_id: r.balloon_bundle_id,
+        message_summary_info: r.message_summary_info,
         date_edited: r.date_edited,
         date_retracted: r.date_retracted,
         cache_has_attachments: r.cache_has_attachments,
