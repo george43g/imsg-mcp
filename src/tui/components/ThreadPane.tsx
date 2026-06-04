@@ -152,22 +152,35 @@ export function ThreadPane({
       borderColor={focused ? theme.header.focused.fg : theme.border}
       overflow="hidden"
     >
-      {/* Header */}
+      {/* Header.
+       * flexShrink discipline: the LEFT side (name) shrinks first; "(N
+       * msgs)" + the right column (identifier + service) keep their
+       * width. Without these, narrowing the pane (e.g. opening dev
+       * stats) wraps the header mid-character — "iMessa\nge". */}
       <Box
         paddingX={1}
         backgroundColor={focused ? theme.header.focused.bg : theme.header.dim.bg}
         justifyContent="space-between"
+        flexShrink={0}
       >
-        <Box>
-          <Text color={focused ? theme.header.focused.fg : theme.header.dim.fg} bold={focused}>
+        <Box flexShrink={1} overflow="hidden">
+          <Text
+            color={focused ? theme.header.focused.fg : theme.header.dim.fg}
+            bold={focused}
+            wrap="truncate"
+          >
             {conversation?.displayName ?? conversation?.chatIdentifier ?? "Thread"}
           </Text>
-          {conversation && <Text color={theme.info.label}> ({messages.length} msgs)</Text>}
+          {conversation && (
+            <Text color={theme.info.label} wrap="truncate">{` (${messages.length} msgs)`}</Text>
+          )}
         </Box>
         {conversation && (
-          <Box gap={1}>
+          <Box gap={1} flexShrink={0}>
             {conversation.displayName && (
-              <Text color={theme.info.label}>{conversation.rawIdentifier}</Text>
+              <Text color={theme.info.label} wrap="truncate">
+                {conversation.rawIdentifier}
+              </Text>
             )}
             <Text color={conversation.serviceType === "SMS" ? theme.sms : theme.info.label}>
               {conversation.serviceType}
