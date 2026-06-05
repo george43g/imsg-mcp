@@ -102,6 +102,37 @@ export function installShutdownHandlers(): void {
     process.on(sig, () => onSignal(sig));
   }
 
+  // Catch-all for stray async errors. Pre-fix, a single unhandled
+  // rejection in a background task (heartbeat / cache sweeper /
+  // contact-sync) would crash the MCP without any trace in the NDJSON
+  // log — the host saw an EPIPE and reconnected with a fresh PID.
+  // We log + record but DO NOT exit; the SDK's per-request error
+  // handler already isolates request failures.
+  process.on("unhandledRejection", (reason) => {
+    try {
+      appendLog("error", "unhandled_rejection", {
+        reason: reason instanceof Error ? reason.message : String(reason),
+        stack: reason instanceof Error ? reason.stack : undefined,
+      });
+    } catch {
+      // Logger may be torn down mid-shutdown; never re-throw from here.
+    }
+  });
+  process.on("uncaughtException", (err) => {
+    try {
+      appendLog("error", "uncaught_exception", {
+        message: err.message,
+        stack: err.stack,
+      });
+    } catch {
+      // Same as above.
+    }
+    // For uncaughtException we DO shutdown — the process is in an
+    // undefined state. Use exit code 70 (EX_SOFTWARE) so the host can
+    // distinguish a logic crash from a graceful exit.
+    shutdown(70);
+  });
+
   // Synchronous last-resort cleanup
   process.on("exit", syncCleanup);
 }
