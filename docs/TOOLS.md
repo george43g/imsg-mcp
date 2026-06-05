@@ -200,6 +200,7 @@ Resolution order: CLI flag → `IMSG_TUI_*` env → config file → defaults.
 | `IMSG_DISABLE_NATIVE` | `0` | Force the TS-only DB parser (debug) |
 | `IMSG_DEFAULT_COUNTRY` | `AU` | Country for normalizing bare local phone numbers (`AU` or `US`). E.g. AU turns `0401 990 797` → `+61401990797`; US turns `555-010-0100` → `+15550100100`. Used by `send_message`, CLI `imsg send`, and the TUI `N` compose modal. |
 | `IMSG_MAX_RSS_MB` | `1024` | Watchdog: kill self when RSS exceeds this |
+| `IMSG_HEAP_WARN_MB` | `256` | Heartbeat: emit `level:warn` "heap exceeds threshold" when heap exceeds this (soft signal, not a kill). |
 | `IMSG_EVENT_LOOP_KILL_MS` | `10000` | Watchdog: kill when p99 event-loop lag > this |
 | `IMSG_EVENT_LOOP_SUSTAINED_MS` | `750` | Watchdog: sustained-lag kill threshold |
 | `IMSG_EVENT_LOOP_SUSTAINED_SAMPLES` | `6` | Consecutive samples before sustained kill |
