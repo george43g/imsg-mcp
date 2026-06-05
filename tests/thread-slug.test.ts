@@ -1,0 +1,192 @@
+/**
+ * Coverage for the pure thread-slug generator. Slugs are used as the
+ * stable, agent-facing handle for every conversation — a regression
+ * here ripples through `list_conversations`, `send_message` (via
+ * `threadSlug`), and every downstream caller that stores or compares
+ * slugs.
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+  generateThreadSlug,
+  isGroupChatIdentifier,
+  isGroupGuid,
+  sanitizeSlugPart,
+  serviceAbbrev,
+  shortHash,
+} from "../src/thread-slug.js";
+
+describe("sanitizeSlugPart", () => {
+  it("lowercases, hyphenates spaces, strips non-alphanumeric", () => {
+    expect(sanitizeSlugPart("Alice Smith")).toBe("alice-smith");
+    expect(sanitizeSlugPart("Weekend Crew!!")).toBe("weekend-crew");
+    expect(sanitizeSlugPart("you & me")).toBe("you-me");
+  });
+
+  it("strips smart apostrophes (curly quotes from macOS)", () => {
+    expect(sanitizeSlugPart("Brian’s Group")).toBe("brians-group");
+    expect(sanitizeSlugPart("dont")).toBe("dont");
+  });
+
+  it("collapses runs of separators to a single hyphen", () => {
+    expect(sanitizeSlugPart("hello___world")).toBe("hello-world");
+    expect(sanitizeSlugPart("a  b\tc")).toBe("a-b-c");
+  });
+
+  it("trims leading/trailing hyphens", () => {
+    expect(sanitizeSlugPart("-hello-")).toBe("hello");
+    expect(sanitizeSlugPart("!!@#$ hello !!")).toBe("hello");
+  });
+
+  it("returns empty string when nothing survives sanitisation", () => {
+    expect(sanitizeSlugPart("!@#$%")).toBe("");
+    expect(sanitizeSlugPart("")).toBe("");
+  });
+});
+
+describe("shortHash", () => {
+  it("returns a 4-char hex string", () => {
+    expect(shortHash("anything")).toMatch(/^[0-9a-f]{4}$/);
+  });
+
+  it("is deterministic", () => {
+    expect(shortHash("foo")).toBe(shortHash("foo"));
+  });
+
+  it("differs for different inputs", () => {
+    expect(shortHash("foo")).not.toBe(shortHash("bar"));
+  });
+});
+
+describe("serviceAbbrev", () => {
+  it("normalizes known services", () => {
+    expect(serviceAbbrev("iMessage")).toBe("imsg");
+    expect(serviceAbbrev("IMESSAGE")).toBe("imsg");
+    expect(serviceAbbrev("SMS")).toBe("sms");
+    expect(serviceAbbrev("sms")).toBe("sms");
+  });
+
+  it("falls back to sanitised input for unknown services", () => {
+    expect(serviceAbbrev("RCS")).toBe("rcs");
+    expect(serviceAbbrev("WhatsApp Bridge")).toBe("whatsapp-bridge");
+  });
+
+  it("returns 'msg' when nothing survives sanitisation", () => {
+    expect(serviceAbbrev("!!")).toBe("msg");
+  });
+});
+
+describe("isGroupChatIdentifier / isGroupGuid", () => {
+  it("detects chat-prefixed identifiers as groups", () => {
+    expect(isGroupChatIdentifier("chat123456")).toBe(true);
+    expect(isGroupChatIdentifier("chat770107254652978061")).toBe(true);
+  });
+
+  it("rejects phone / email as group identifiers", () => {
+    expect(isGroupChatIdentifier("+61401990797")).toBe(false);
+    expect(isGroupChatIdentifier("alice@icloud.com")).toBe(false);
+  });
+
+  it("detects ';+;' guids as groups", () => {
+    expect(isGroupGuid("iMessage;+;chat123456")).toBe(true);
+  });
+
+  it("rejects ';-;' guids as 1-on-1", () => {
+    expect(isGroupGuid("iMessage;-;+61401990797")).toBe(false);
+  });
+});
+
+describe("generateThreadSlug", () => {
+  const baseInput = {
+    chatIdentifier: "+61401990797",
+    guid: "iMessage;-;+61401990797",
+    displayName: null,
+    serviceName: "iMessage",
+    resolvedContactName: null,
+  };
+
+  it("uses resolvedContactName when present (1-on-1)", () => {
+    const slug = generateThreadSlug({ ...baseInput, resolvedContactName: "Alice Smith" });
+    expect(slug).toMatch(/^alice-smith~imsg~[0-9a-f]{4}$/);
+  });
+
+  it("falls back to displayName for 1-on-1 without a resolved contact", () => {
+    const slug = generateThreadSlug({ ...baseInput, displayName: "Alice via WhatsApp" });
+    expect(slug).toMatch(/^alice-via-whatsapp~imsg~[0-9a-f]{4}$/);
+  });
+
+  it("falls back to the bare chat identifier when no name is available", () => {
+    const slug = generateThreadSlug(baseInput);
+    // "+" is stripped per the bare-identifier branch.
+    expect(slug).toMatch(/^61401990797~imsg~[0-9a-f]{4}$/);
+  });
+
+  it("uses the group displayName for named group chats", () => {
+    const slug = generateThreadSlug({
+      ...baseInput,
+      chatIdentifier: "chat123456",
+      guid: "iMessage;+;chat123456",
+      displayName: "Weekend Crew",
+    });
+    expect(slug).toMatch(/^weekend-crew~imsg~[0-9a-f]{4}$/);
+  });
+
+  it("uses the 'group' placeholder for unnamed group chats", () => {
+    const slug = generateThreadSlug({
+      ...baseInput,
+      chatIdentifier: "chat123456",
+      guid: "iMessage;+;chat123456",
+      displayName: null,
+    });
+    expect(slug).toMatch(/^group~imsg~[0-9a-f]{4}$/);
+  });
+
+  it("ignores displayName that looks like the chat id (chat-prefixed)", () => {
+    const slug = generateThreadSlug({
+      ...baseInput,
+      chatIdentifier: "chat123456",
+      guid: "iMessage;+;chat123456",
+      displayName: "chat123456",
+    });
+    expect(slug).toMatch(/^group~/);
+  });
+
+  it("uses sms service abbreviation when serviceName is SMS", () => {
+    const slug = generateThreadSlug({
+      ...baseInput,
+      serviceName: "SMS",
+      guid: "SMS;-;+61401990797",
+      resolvedContactName: "Mum",
+    });
+    expect(slug).toMatch(/^mum~sms~[0-9a-f]{4}$/);
+  });
+
+  it("returns 'unknown' when nothing survives sanitisation", () => {
+    const slug = generateThreadSlug({
+      ...baseInput,
+      chatIdentifier: "!!!",
+      guid: "weird;-;!!!",
+      displayName: null,
+      resolvedContactName: null,
+    });
+    expect(slug).toMatch(/^unknown~imsg~[0-9a-f]{4}$/);
+  });
+
+  it("is deterministic — same guid produces same hash", () => {
+    const a = generateThreadSlug({ ...baseInput, resolvedContactName: "Alice" });
+    const b = generateThreadSlug({ ...baseInput, resolvedContactName: "Alice" });
+    expect(a).toBe(b);
+  });
+
+  it("changes hash when guid changes (separates slugs from the same name)", () => {
+    const a = generateThreadSlug({ ...baseInput, resolvedContactName: "Alice" });
+    const b = generateThreadSlug({
+      ...baseInput,
+      guid: "iMessage;-;alice@example.com",
+      chatIdentifier: "alice@example.com",
+      resolvedContactName: "Alice",
+    });
+    expect(a).not.toBe(b);
+    expect(a.split("~")[0]).toBe(b.split("~")[0]); // same name part
+  });
+});
