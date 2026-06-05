@@ -266,7 +266,19 @@ export function getFileLogLines(tail = 50): string[] {
 
 // ── Heap monitor ───────────────────────────────────────────────────────
 
-const HEAP_WARN_MB = 150;
+/**
+ * Heap warning threshold for the heartbeat monitor. Tunable via
+ * `IMSG_HEAP_WARN_MB` env var. The default of 256 MB is set above the
+ * legitimate working-set for big chat_analytics / large search_messages
+ * sweeps on real Mac DBs (~240 MB at peak). Pre-fix this was 150,
+ * which tripped on every analytic call — agents reading get_logs
+ * saw a wall of false-positive "heap exceeds threshold" warnings on
+ * every healthy invocation.
+ */
+const HEAP_WARN_MB = Math.max(
+  64,
+  Number.parseInt(process.env.IMSG_HEAP_WARN_MB ?? "256", 10) || 256,
+);
 let heapMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
