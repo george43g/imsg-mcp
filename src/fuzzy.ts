@@ -76,6 +76,15 @@ function levenshteinRatio(a: string, b: string): number {
  * 200 chars). For 10,000-row search this is fine in a single sync sweep.
  */
 export function fuzzyScore(query: string, candidate: string): number {
+  // Raw-substring fast path runs BEFORE cleanText so emoji / punctuation
+  // queries still match. `cleanText` strips emoji (good for tokenizing
+  // English text, bad if the query *is* an emoji) — without this branch
+  // a search for "🪦" against "i need a money 🪦" returned 0 because
+  // cleanText("🪦") === "" → score 0 → filtered.
+  if (query && candidate && candidate.toLowerCase().includes(query.toLowerCase())) {
+    return 0.95;
+  }
+
   const q = cleanText(query);
   const c = cleanText(candidate);
   if (!q || !c) return 0;

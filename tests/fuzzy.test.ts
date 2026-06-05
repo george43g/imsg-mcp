@@ -1,6 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { cleanText, fuzzyScore, rankFuzzy } from "../src/fuzzy.js";
 
+describe("fuzzyScore — emoji / punctuation literal substring", () => {
+  // Regression: cleanText strips emoji, so a query like "🪦" used to
+  // become "" → score 0 → filtered. search_messages then returned 0
+  // hits even when the literal emoji existed verbatim in the body.
+  it("scores an emoji query as a verbatim hit when present in the candidate", () => {
+    expect(fuzzyScore("🪦", "i need a money 🪦")).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("scores multi-emoji and emoji+text queries as verbatim hits", () => {
+    expect(fuzzyScore("🎉🎉", "Party 🎉🎉🎉 incoming")).toBeGreaterThanOrEqual(0.95);
+    expect(fuzzyScore("done ✓", "task done ✓ today")).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("is case-insensitive in the raw fast path", () => {
+    expect(fuzzyScore("HELLO", "say hello world")).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("does not false-positive when the query is absent", () => {
+    expect(fuzzyScore("🪦", "no emoji here")).toBeLessThan(0.6);
+  });
+
+  it("rankFuzzy includes emoji-literal hits above the default threshold", () => {
+    const candidates = ["nothing here", "i need a money 🪦", "🪦 only"];
+    const ranked = rankFuzzy("🪦", candidates, (s) => s);
+    expect(ranked).toHaveLength(2);
+    expect(ranked[0].score).toBeGreaterThanOrEqual(0.95);
+  });
+});
+
 describe("cleanText", () => {
   it("lowercases and trims", () => {
     expect(cleanText("  Hello WORLD  ")).toBe("hello world");
