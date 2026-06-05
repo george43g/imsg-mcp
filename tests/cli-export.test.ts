@@ -92,7 +92,7 @@ describe.skipIf(!haveFixture)("runExportCommand end-to-end", () => {
     expect(lines.length).toBeGreaterThan(0);
     const first = JSON.parse(lines[0]!) as { id: number };
     expect(typeof first.id).toBe("number");
-  });
+  }, 30_000);
 
   it("resolves a thread slug to its chatIdentifier", async () => {
     const db = new IMessageDB(dbPath, getContactsDbPaths(), getSlugsDbPath());

@@ -43,10 +43,23 @@ function writeAndDrain(stream: WritableStream, chunk: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (stream.write(chunk)) {
       resolve();
-    } else {
-      stream.once("drain", () => resolve());
-      stream.once("error", reject);
+      return;
     }
+    // Back-pressure path: register both listeners and ensure either side
+    // also removes the OTHER. Pre-fix only the firing side cleaned up
+    // (via .once), so each back-pressure tick leaked a stale "error"
+    // listener — exporting a 26k-msg thread triggered the MaxListeners
+    // warning around the 11th tick.
+    const onDrain = () => {
+      stream.removeListener("error", onError);
+      resolve();
+    };
+    const onError = (err: Error) => {
+      stream.removeListener("drain", onDrain);
+      reject(err);
+    };
+    stream.once("drain", onDrain);
+    stream.once("error", onError);
   });
 }
 

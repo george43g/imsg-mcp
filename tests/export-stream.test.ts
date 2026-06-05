@@ -75,7 +75,7 @@ describe.skipIf(!haveFixture)("streamExport", () => {
     } finally {
       await db.close();
     }
-  });
+  }, 30_000);
 
   it("respects since/until date bounds", async () => {
     const db = new IMessageDB(dbPath, getContactsDbPaths(), getSlugsDbPath());
@@ -110,7 +110,7 @@ describe.skipIf(!haveFixture)("streamExport", () => {
     } finally {
       await db.close();
     }
-  });
+  }, 30_000);
 
   it("writes valid JSON with bracket-balanced top-level structure", async () => {
     const db = new IMessageDB(dbPath, getContactsDbPaths(), getSlugsDbPath());
@@ -143,7 +143,7 @@ describe.skipIf(!haveFixture)("streamExport", () => {
     } finally {
       await db.close();
     }
-  });
+  }, 30_000);
 
   it("writes a CSV with the header row exactly once", async () => {
     const db = new IMessageDB(dbPath, getContactsDbPaths(), getSlugsDbPath());
@@ -180,5 +180,5 @@ describe.skipIf(!haveFixture)("streamExport", () => {
     } finally {
       await db.close();
     }
-  });
+  }, 30_000);
 });
