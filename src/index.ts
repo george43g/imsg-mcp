@@ -44,6 +44,7 @@ import {
   logShutdown,
   logStartup,
   perf,
+  setLastSendError,
   startHeapMonitor,
   stopHeapMonitor,
 } from "./logger.js";
@@ -804,8 +805,17 @@ export class IMessageMCPServer {
   private async handleSendMessage(args: unknown) {
     const { recipient, threadSlug, message, attachments } = SendMessageSchema.parse(args);
 
+    // Wrapper so every validation early-exit also records to
+    // `lastSendError`. Pre-fix, get_last_send_error returned null after
+    // a failed send because validation errors never reached the
+    // AppleScript layer where the only setLastSendError call lived.
+    const failValidation = (msg: string, data: Record<string, unknown> = {}) => {
+      setLastSendError({ message: msg, code: "validation", stderr: undefined, stdout: undefined });
+      return toolError(msg, data);
+    };
+
     if (!recipient && !threadSlug) {
-      return toolError("Either recipient or threadSlug is required.", {});
+      return failValidation("Either recipient or threadSlug is required.", {});
     }
 
     // Pre-validate attachment paths so we fail fast (before sending the
@@ -813,17 +823,19 @@ export class IMessageMCPServer {
     if (attachments?.length) {
       for (const p of attachments) {
         if (!isAbsolute(p)) {
-          return toolError(`Attachment path must be absolute: ${p}`, { attachment: p });
+          return failValidation(`Attachment path must be absolute: ${p}`, { attachment: p });
         }
         if (!existsSync(p)) {
-          return toolError(`Attachment file not found: ${p}`, { attachment: p });
+          return failValidation(`Attachment file not found: ${p}`, { attachment: p });
         }
       }
     }
 
     const available = await checkMessagesAvailable();
     if (!available) {
-      return toolError("Messages.app is not running or accessible.", { messagesAvailable: false });
+      return failValidation("Messages.app is not running or accessible.", {
+        messagesAvailable: false,
+      });
     }
 
     let result: { success: boolean; error?: string; timestamp?: Date };
@@ -841,14 +853,14 @@ export class IMessageMCPServer {
         defaultCountry: defaultCountryFromEnv(),
       });
       if (resolution.kind === "error") {
-        return toolError(resolution.message, { recipient });
+        return failValidation(resolution.message, { recipient });
       }
       if (resolution.kind === "ambiguous") {
         // Surface the same disambiguation list the contact:N selector uses.
         const lines = resolution.candidates
           .map((c, i) => `  contact:${i + 1}  ${c.displayName}  →  ${c.handle}`)
           .join("\n");
-        return toolError(
+        return failValidation(
           `Ambiguous recipient "${recipient}" — multiple matches:\n${lines}\n\nCall again with one of the contact:N labels.`,
           {
             recipient,
@@ -863,7 +875,7 @@ export class IMessageMCPServer {
     if (threadSlug) {
       const slugRecord = this.db.getSlugRecord(threadSlug);
       if (!slugRecord) {
-        return toolError(
+        return failValidation(
           `Unknown thread slug: ${threadSlug}. Use list_conversations to see available slugs.`,
           {
             threadSlug,
