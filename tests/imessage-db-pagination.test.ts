@@ -101,7 +101,15 @@ describe.skipIf(!haveFixture)("getMessagesForChat pagination", () => {
         const boundary = incoming[0].id;
         const after = await db.getMessagesAfter(c.chatIdentifier, boundary);
         expect(after.every((m) => !m.isFromMe && m.id > boundary)).toBe(true);
-        expect(after.map((m) => m.id)).toEqual([...after.map((m) => m.id)].sort((a, b) => a - b));
+        // The DB returns rows date-ascending. ROWID and date generally
+        // correlate but not perfectly — messages received offline can
+        // land with a low ROWID and a later date. Assert by date order
+        // (which is what `getMessagesForChat` actually guarantees)
+        // rather than ROWID — pre-fix this test was brittle on real
+        // chat.db data and only passed against the synthetic fixture
+        // where ROWID == date order.
+        const dates = after.map((m) => m.date.getTime());
+        expect(dates).toEqual([...dates].sort((a, b) => a - b));
         return;
       }
     } finally {
