@@ -102,6 +102,19 @@ describe("prependCached", () => {
     prependCached("c", [fakeMsg(1, "a-dup"), fakeMsg(2, "b-dup")]);
     expect(getCached("c")!.messages.length).toBe(before);
   });
+
+  it("survives a very large fresh batch (no Math.min spread crash)", () => {
+    // Pre-fix the implementation did `Math.min(entry.oldestId, ...fresh.map(...))`
+    // which throws "Maximum call stack size exceeded" past ~125k spread
+    // args. A 200k-message older-load batch (reachable via the bounded
+    // cap or aggressive paginate) would crash the cache update.
+    setCached("c", [fakeMsg(1_000_000, "tail")], 1_000_000);
+    const huge = Array.from({ length: 200_000 }, (_, i) => fakeMsg(i + 1, `m${i}`));
+    expect(() => prependCached("c", huge)).not.toThrow();
+    const entry = getCached("c");
+    expect(entry?.oldestId).toBe(1);
+    expect(entry?.messages.length).toBe(200_001);
+  }, 15_000);
 });
 
 describe("ttlSweep", () => {

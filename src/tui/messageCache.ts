@@ -82,7 +82,15 @@ export function prependCached(chatIdentifier: string, olderMessages: Message[]):
   if (fresh.length === 0) return;
   const merged = [...fresh, ...entry.messages].sort((a, b) => a.date.getTime() - b.date.getTime());
   entry.messages = merged;
-  entry.oldestId = Math.min(entry.oldestId, ...fresh.map((m) => m.id));
+  // Reduce instead of `Math.min(entry.oldestId, ...fresh.map(...))`. The
+  // spread form throws `RangeError: Maximum call stack size exceeded`
+  // somewhere above ~125k arguments — reachable via batched older-load
+  // on threads with huge history.
+  let minFresh = fresh[0].id;
+  for (let i = 1; i < fresh.length; i++) {
+    if (fresh[i].id < minFresh) minFresh = fresh[i].id;
+  }
+  entry.oldestId = Math.min(entry.oldestId, minFresh);
   entry.lastAccess = Date.now();
   entry.bytesEstimate = estimateBytes(merged);
 }
