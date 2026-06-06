@@ -68,7 +68,16 @@ export function lookupCache(
   // Invalidate if the underlying DB has new messages OR the cache is stale.
   if (row.max_rowid !== maxRowId) return null;
   if (Date.now() - row.computed_at > DEFAULT_TTL_MS) return null;
-  return { data: JSON.parse(row.data_json), computedAt: row.computed_at };
+  // Guard the JSON.parse. We wrote the value ourselves so it should be
+  // valid, but if a previous version of the server (or a file-system
+  // corruption) ever leaves a malformed row behind, an unguarded throw
+  // here would crash the entire chat_analytics tool call instead of
+  // gracefully falling through to a fresh compute.
+  try {
+    return { data: JSON.parse(row.data_json), computedAt: row.computed_at };
+  } catch {
+    return null;
+  }
 }
 
 export function storeCache(
