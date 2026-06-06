@@ -6,6 +6,7 @@ import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { LocalMcpClient } from "./mcp-client.js";
 import { APP_VERSION } from "./meta.js";
 import { installShutdownHandlers, registerCleanup } from "./shutdown.js";
+import { looksLikeThreadSlug } from "./thread-slug.js";
 
 // ── Colour helpers ─────────────────────────────────────────────────────
 
@@ -30,10 +31,6 @@ function log(message: string, style: "dim" | "ok" | "warn" | "err" = "dim") {
 }
 
 // ── MCP client helpers ─────────────────────────────────────────────────
-
-function looksLikeThreadSlug(value: string | undefined): boolean {
-  return Boolean(value?.includes("~"));
-}
 
 async function withClient<T>(run: (client: LocalMcpClient) => Promise<T>): Promise<T> {
   const client = new LocalMcpClient((line) => process.stderr.write(color.dim(`[server] ${line}`)));

@@ -39,6 +39,24 @@ export function isGroupGuid(guid: string): boolean {
   return guid.includes(";+;");
 }
 
+/**
+ * True if `value` matches the `name~service~hash` slug shape generated
+ * above. Used by the CLI to decide whether `imsg send <target>` should
+ * treat the target as a slug or as a recipient handle.
+ *
+ * Specifically distinguishes slugs from:
+ *   - emails — `~` is legal in the local-part (`user~beta@example.com`),
+ *     but slugs never have `@`
+ *   - phone numbers — never have `~`
+ *   - contact names — typed names don't use `~`
+ */
+export function looksLikeThreadSlug(value: string | undefined): boolean {
+  if (!value) return false;
+  if (value.includes("@")) return false;
+  const parts = value.split("~");
+  return parts.length === 3 && parts.every((p) => p.length > 0);
+}
+
 export interface SlugInput {
   chatIdentifier: string;
   guid: string;

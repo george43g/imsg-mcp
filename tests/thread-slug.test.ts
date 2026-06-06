@@ -11,6 +11,7 @@ import {
   generateThreadSlug,
   isGroupChatIdentifier,
   isGroupGuid,
+  looksLikeThreadSlug,
   sanitizeSlugPart,
   serviceAbbrev,
   shortHash,
@@ -93,6 +94,46 @@ describe("isGroupChatIdentifier / isGroupGuid", () => {
 
   it("rejects ';-;' guids as 1-on-1", () => {
     expect(isGroupGuid("iMessage;-;+61401990797")).toBe(false);
+  });
+});
+
+describe("looksLikeThreadSlug", () => {
+  it("accepts the canonical name~service~hash shape", () => {
+    expect(looksLikeThreadSlug("alice~imsg~a3f2")).toBe(true);
+    expect(looksLikeThreadSlug("weekend-crew~imsg~d4e5")).toBe(true);
+    expect(looksLikeThreadSlug("61401990797~sms~b7c1")).toBe(true);
+  });
+
+  it("rejects phone numbers", () => {
+    expect(looksLikeThreadSlug("+61401990797")).toBe(false);
+    expect(looksLikeThreadSlug("0401 990 797")).toBe(false);
+    expect(looksLikeThreadSlug("415-555-0100")).toBe(false);
+  });
+
+  it("rejects emails (even ones with ~ in local-part)", () => {
+    // Pre-fix bug: `value.includes("~")` would route `user~beta@example.com`
+    // as a thread slug.
+    expect(looksLikeThreadSlug("alice@icloud.com")).toBe(false);
+    expect(looksLikeThreadSlug("user~beta@example.com")).toBe(false);
+    expect(looksLikeThreadSlug("a~b~c@example.com")).toBe(false);
+  });
+
+  it("rejects contact names", () => {
+    expect(looksLikeThreadSlug("Alice Smith")).toBe(false);
+    expect(looksLikeThreadSlug("brian")).toBe(false);
+  });
+
+  it("rejects malformed slugs (wrong segment count or empty segments)", () => {
+    expect(looksLikeThreadSlug("alice~imsg")).toBe(false); // 2 parts
+    expect(looksLikeThreadSlug("alice~imsg~a3f2~extra")).toBe(false); // 4 parts
+    expect(looksLikeThreadSlug("~imsg~a3f2")).toBe(false); // empty name
+    expect(looksLikeThreadSlug("alice~~a3f2")).toBe(false); // empty service
+    expect(looksLikeThreadSlug("alice~imsg~")).toBe(false); // empty hash
+  });
+
+  it("returns false for undefined / empty input", () => {
+    expect(looksLikeThreadSlug(undefined)).toBe(false);
+    expect(looksLikeThreadSlug("")).toBe(false);
   });
 });
 
