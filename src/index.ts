@@ -772,7 +772,11 @@ export class IMessageMCPServer {
 
   private async handleGetUnreadMessages(args: unknown) {
     const { limit } = GetUnreadMessagesSchema.parse(args ?? {});
-    const resolvedLimit = resolveLimit(limit, 100);
+    // 2000 hard cap on `limit:0`. A user with 5000+ pending unread (real
+    // case after a long offline) would otherwise serialise ~1.5MB into
+    // the MCP response and overflow the host's token budget.
+    const HARD_CAP = 2_000;
+    const resolvedLimit = Math.min(resolveLimit(limit, 100), HARD_CAP);
     const messages = await this.db.getUnreadMessages(resolvedLimit + 1);
     const hasMore = messages.length > resolvedLimit;
     const results = messages.slice(0, resolvedLimit);
@@ -1055,7 +1059,14 @@ export class IMessageMCPServer {
 
   private async handleListConversations(args: unknown) {
     const { limit } = ListConversationsSchema.parse(args);
-    const resolvedLimit = resolveLimit(limit);
+    // Sane upper cap on `0 = unlimited`. A user with 5000+ chats sees
+    // each conversation row serialise to ~400 bytes of JSON, so the
+    // unbounded response was hitting 1.8MB — well past most MCP host
+    // token caps and useless to an agent. 500 is plenty for any
+    // realistic agent-driven browse pattern and the response stays
+    // under ~200KB. Callers that genuinely need more can paginate.
+    const HARD_CAP = 500;
+    const resolvedLimit = Math.min(resolveLimit(limit), HARD_CAP);
     const limited = await this.db.listConversations(resolvedLimit + 1);
     const hasMore = limited.length > resolvedLimit;
     const results = limited.slice(0, resolvedLimit);
@@ -1206,9 +1217,14 @@ export class IMessageMCPServer {
 
   private async handleSearchContacts(args: unknown) {
     const { query, limit } = SearchContactsSchema.parse(args);
-    const resolvedLimit = resolveLimit(limit);
+    // 1000 hard cap on `limit:0`. A pathological broad query (e.g. "")
+    // matching every contact would otherwise serialise the entire
+    // address book into the response — same UX failure as the
+    // unbounded list_conversations path.
+    const HARD_CAP = 1_000;
+    const resolvedLimit = Math.min(resolveLimit(limit), HARD_CAP);
     const all = this.db.contacts.searchContacts(query);
-    const results = resolvedLimit === Number.MAX_SAFE_INTEGER ? all : all.slice(0, resolvedLimit);
+    const results = all.slice(0, resolvedLimit);
 
     if (results.length === 0) {
       return toolText(`No contacts match "${query}".`, {
