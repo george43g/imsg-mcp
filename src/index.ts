@@ -728,7 +728,7 @@ export class IMessageMCPServer {
       chatIdentifier || threadSlug
         ? `\n_Pagination: oldestMessageId=${oldestId}, hasMore=${hasMore}${wasCapped ? ` (capped at ${HARD_PAGE_CAP} per call — use beforeMessageId or export_messages)` : ""}_`
         : "";
-    const perfLine = `\n_Engine: TS | Query: ${durMs.toFixed(0)}ms | Messages: ${messages.length}_`;
+    const perfLine = `\n_Engine: ${engineLabel()} | Query: ${durMs.toFixed(0)}ms | Messages: ${messages.length}_`;
     return toolText(
       `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${paginationLine}${perfLine}`,
       {
