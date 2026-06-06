@@ -56,8 +56,8 @@ imsg export <slug-or-handle>
 | Tool | Required args | Key options |
 |---|---|---|
 | `get_messages` | — | `chatIdentifier` / `threadSlug`, `limit` (default 20, `0`=unlimited up to 5000/page), `beforeMessageId` (pagination cursor) |
-| `get_unread_messages` | — | `limit` (default 100) |
-| `list_conversations` | — | `limit` (default 20) |
+| `get_unread_messages` | — | `limit` (default 100, `0`=unlimited capped at 2000 — paginate via repeated reads after marking read) |
+| `list_conversations` | — | `limit` (default 20, `0`=unlimited capped at 500 — paginate via slug-keyed offsets) |
 | `search_messages` | `query` | `limit` (default 20). Fuzzy + literal hybrid. |
 
 `get_messages` response footer includes `oldestMessageId` + `hasMore`. To page deeper, pass `oldestMessageId` as `beforeMessageId` in the next call. Hard cap of 5000 messages per call to prevent OOM — use `export_messages` for larger ranges.
@@ -84,12 +84,12 @@ imsg export <slug-or-handle>
 
 ### Contacts
 
-| Tool | Required args |
-|---|---|
-| `list_contacts` | — |
-| `search_contacts` | `query` |
-| `get_contact` | `handle` |
-| `resolve_handle` | `handle` |
+| Tool | Required args | Key options |
+|---|---|---|
+| `list_contacts` | — | `limit` (default 20, internal safety cap 5000), `offset` for paging |
+| `search_contacts` | `query` | `limit` (default 20, `0`=unlimited capped at 1000) |
+| `get_contact` | `handle` | — |
+| `resolve_handle` | `handle` | — |
 
 `contact:N` selector: when a search has multiple matches, the result lists numbered candidates. Subsequent tool calls can pass `contact:1` / `contact:2` / etc. (process-wide LRU; resets on server restart).
 
