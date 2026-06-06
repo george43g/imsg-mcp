@@ -678,7 +678,8 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "search_messages",
-    description: "Search message text across all conversations.",
+    description:
+      "Search message text across all conversations. Default mode is fuzzy (token-based with typo tolerance + emoji/literal substring); 'literal' = strict LIKE substring.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -686,6 +687,21 @@ export const TOOLS: Tool[] = [
       properties: {
         query: { type: "string", description: "Search query" },
         limit: { type: "number", default: 20, description: "Number of results. 0 = unlimited." },
+        mode: {
+          type: "string",
+          enum: ["literal", "fuzzy"],
+          default: "fuzzy",
+          description:
+            "'literal' = SQL LIKE substring match. 'fuzzy' = token-based scoring with typo tolerance plus a raw-substring fast path that matches emoji + punctuation queries verbatim.",
+        },
+        minScore: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          default: 0.6,
+          description:
+            "Fuzzy mode: minimum normalized score (0-1) for a match to be returned. Lower = more results, more noise. Ignored in literal mode.",
+        },
       },
     },
     // @ts-expect-error
