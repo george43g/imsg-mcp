@@ -7,7 +7,7 @@ import {
   type RecipientResolution,
   resolveRecipient,
 } from "../../recipient.js";
-import type { Conversation, Message } from "../../types.js";
+import { type Conversation, type Message, minMessageId } from "../../types.js";
 import { getCached, isFresh, prependCached, setCached } from "../messageCache.js";
 
 export function useImsg() {
@@ -36,7 +36,7 @@ export function useImsg() {
       const messages = await getDb().getMessagesForChat(chatIdentifier, 200, {
         includeReactionDetails: true,
       });
-      const oldestId = messages.length > 0 ? Math.min(...messages.map((m) => m.id)) : 0;
+      const oldestId = minMessageId(messages) ?? 0;
       setCached(chatIdentifier, messages, oldestId);
       return messages;
     },

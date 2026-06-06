@@ -6,6 +6,7 @@ import { useScreenSize } from "fullscreen-ink";
 import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { registerCleanup } from "../shutdown.js";
+import { minMessageId } from "../types.js";
 import { getInstalledChatApps } from "../url-schemes.js";
 import { ComposeRecipientModal } from "./components/ComposeRecipientModal.js";
 import { DateJumpModal } from "./components/DateJumpModal.js";
@@ -125,7 +126,7 @@ export function App() {
       dispatch({ type: "PREPEND_MESSAGES", data: [], oldestId: -1 });
       return;
     }
-    const newOldestId = Math.min(...olderMsgs.map((m) => m.id));
+    const newOldestId = minMessageId(olderMsgs) ?? -1;
     dispatch({ type: "PREPEND_MESSAGES", data: olderMsgs, oldestId: newOldestId });
   }, [imsg, selected, state.messageLoadingOlder, state.messageOldestLoadedId]);
 
@@ -647,7 +648,7 @@ export function App() {
           state.messageOldestLoadedId,
         );
         if (older.length === 0) break;
-        const newOldestId = Math.min(...older.map((m) => m.id));
+        const newOldestId = minMessageId(older) ?? -1;
         dispatch({ type: "PREPEND_MESSAGES", data: older, oldestId: newOldestId });
         batches++;
         // Yield to render between batches

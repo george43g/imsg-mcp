@@ -1,4 +1,4 @@
-import type { Conversation, Message } from "../types.js";
+import { type Conversation, type Message, minMessageId } from "../types.js";
 
 export type FocusPane = "sidebar" | "thread";
 export type Mode =
@@ -298,7 +298,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const lastIdx = Math.max(0, msgs.length - 1);
       // Set threadScroll high so the view shows the bottom
       const scrollToEnd = Math.max(0, msgs.length);
-      const oldestId = msgs.length > 0 ? Math.min(...msgs.map((m) => m.id)) : null;
+      const oldestId = minMessageId(msgs);
       return {
         ...state,
         messages: msgs,

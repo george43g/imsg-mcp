@@ -158,3 +158,21 @@ export interface ConversationThread {
   lastReceivedFromThem: Message | null;
   awaitingReply: boolean;
 }
+
+/**
+ * Lowest message id in an array — safe for arbitrarily large inputs.
+ *
+ * `Math.min(...messages.map(m => m.id))` throws
+ * "RangeError: Maximum call stack size exceeded" past ~125k spread args.
+ * Callers shouldn't have to remember that — this helper does the loop.
+ * Returns `null` for empty input so the caller can decide on the
+ * fallback id explicitly.
+ */
+export function minMessageId(messages: Pick<Message, "id">[]): number | null {
+  if (messages.length === 0) return null;
+  let lo = messages[0].id;
+  for (let i = 1; i < messages.length; i++) {
+    if (messages[i].id < lo) lo = messages[i].id;
+  }
+  return lo;
+}

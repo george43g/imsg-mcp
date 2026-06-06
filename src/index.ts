@@ -86,7 +86,7 @@ import {
   shutdown,
 } from "./shutdown.js";
 import { parseUserDate } from "./tui/dateParse.js";
-import type { Message } from "./types.js";
+import { type Message, minMessageId } from "./types.js";
 import { installWatchdog, noteActivity, readWatchdogState } from "./watchdog.js";
 
 const execFileAsync = promisify(execFile);
@@ -687,7 +687,7 @@ export class IMessageMCPServer {
     }
 
     const formatted = messages.map((m) => formatMessage(m)).join("\n");
-    const oldestId = Math.min(...messages.map((m) => m.id));
+    const oldestId = minMessageId(messages) ?? 0;
     const hasMore = messages.length === limit; // heuristic — full page suggests more
     const paginationLine =
       chatIdentifier || threadSlug

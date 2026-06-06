@@ -16,6 +16,7 @@
 import { createWriteStream, statSync } from "node:fs";
 import type { IMessageDB } from "./imessage-db.js";
 import { toCSV, toMarkdown, toNDJSONLine } from "./tui/exportFormats.js";
+import { minMessageId } from "./types.js";
 
 export interface ExportOptions {
   db: IMessageDB;
@@ -158,7 +159,7 @@ export async function streamExport(opts: ExportOptions): Promise<ExportResult> {
       count += filtered.length;
 
       // Advance cursor — next page is older than the current oldest
-      const pageOldestId = Math.min(...page.map((m) => m.id));
+      const pageOldestId = minMessageId(page) ?? 0;
       if (page.length < pageSize) break; // last page
       if (since && oldest && oldest <= since) break; // crossed lower bound
       beforeMessageId = pageOldestId;
