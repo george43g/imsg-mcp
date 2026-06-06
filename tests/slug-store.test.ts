@@ -58,4 +58,177 @@ describe("SlugStore", () => {
       store.close();
     }
   });
+
+  it("isGroup round-trips as a boolean (was stored as 0/1)", () => {
+    const store = makeStore();
+    try {
+      store.upsert({
+        slug: "crew~imsg~aaaa",
+        chatGuid: "iMessage;+;chat999",
+        chatIdentifier: "chat999",
+        displayName: "Crew",
+        service: "iMessage",
+        isGroup: true,
+        participants: "+15550000001,+15550000002",
+        updatedAt: 1,
+      });
+      const r = store.lookupBySlug("crew~imsg~aaaa");
+      expect(r?.isGroup).toBe(true);
+      expect(typeof r?.isGroup).toBe("boolean");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("lookupByChatIdentifier finds the row by chat_identifier", () => {
+    const store = makeStore();
+    try {
+      store.upsert({
+        slug: "alice~imsg~bbbb",
+        chatGuid: "iMessage;-;+15550000010",
+        chatIdentifier: "+15550000010",
+        displayName: "Alice",
+        service: "iMessage",
+        isGroup: false,
+        participants: "+15550000010",
+        updatedAt: 1,
+      });
+      expect(store.lookupByChatIdentifier("+15550000010")?.slug).toBe("alice~imsg~bbbb");
+      expect(store.lookupByChatIdentifier("+15550000099")).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("all() returns rows ordered by updatedAt DESC", () => {
+    const store = makeStore();
+    try {
+      store.upsert({
+        slug: "old~imsg~1111",
+        chatGuid: "iMessage;-;+15550000020",
+        chatIdentifier: "+15550000020",
+        displayName: null,
+        service: "iMessage",
+        isGroup: false,
+        participants: "+15550000020",
+        updatedAt: 100,
+      });
+      store.upsert({
+        slug: "new~imsg~2222",
+        chatGuid: "iMessage;-;+15550000021",
+        chatIdentifier: "+15550000021",
+        displayName: null,
+        service: "iMessage",
+        isGroup: false,
+        participants: "+15550000021",
+        updatedAt: 200,
+      });
+      const records = store.all();
+      expect(records.map((r) => r.slug)).toEqual(["new~imsg~2222", "old~imsg~1111"]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("upsertMany commits atomically across many rows", () => {
+    const store = makeStore();
+    try {
+      const records = Array.from({ length: 50 }, (_, i) => ({
+        slug: `bulk~imsg~${i.toString().padStart(4, "0")}`,
+        chatGuid: `iMessage;-;+1555000${i.toString().padStart(4, "0")}`,
+        chatIdentifier: `+1555000${i.toString().padStart(4, "0")}`,
+        displayName: `Person ${i}`,
+        service: "iMessage",
+        isGroup: false,
+        participants: `+1555000${i.toString().padStart(4, "0")}`,
+        updatedAt: 1000 + i,
+      }));
+      store.upsertMany(records);
+      expect(store.all()).toHaveLength(50);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("prune removes only rows whose chat_guid is missing from the valid set", () => {
+    const store = makeStore();
+    try {
+      const keepGuid = "iMessage;-;+15550000030";
+      const dropGuid = "iMessage;-;+15550000031";
+      store.upsert({
+        slug: "keep~imsg~aaaa",
+        chatGuid: keepGuid,
+        chatIdentifier: "+15550000030",
+        displayName: null,
+        service: "iMessage",
+        isGroup: false,
+        participants: "+15550000030",
+        updatedAt: 1,
+      });
+      store.upsert({
+        slug: "drop~imsg~bbbb",
+        chatGuid: dropGuid,
+        chatIdentifier: "+15550000031",
+        displayName: null,
+        service: "iMessage",
+        isGroup: false,
+        participants: "+15550000031",
+        updatedAt: 2,
+      });
+      const dropped = store.prune(new Set([keepGuid]));
+      expect(dropped).toBe(1);
+      expect(store.lookupBySlug("keep~imsg~aaaa")).not.toBeNull();
+      expect(store.lookupBySlug("drop~imsg~bbbb")).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("prune returns 0 when the valid set covers every row", () => {
+    const store = makeStore();
+    try {
+      const guid = "iMessage;-;+15550000040";
+      store.upsert({
+        slug: "k~imsg~aaaa",
+        chatGuid: guid,
+        chatIdentifier: "+15550000040",
+        displayName: null,
+        service: "iMessage",
+        isGroup: false,
+        participants: "+15550000040",
+        updatedAt: 1,
+      });
+      expect(store.prune(new Set([guid]))).toBe(0);
+      expect(store.lookupBySlug("k~imsg~aaaa")).not.toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("survives a process restart by re-opening the same db path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "imsg-slug-restart-"));
+    tempDirs.push(dir);
+    const path = join(dir, "slugs.db");
+    const store1 = new SlugStore(path);
+    store1.upsert({
+      slug: "persist~imsg~aaaa",
+      chatGuid: "iMessage;-;+15550000050",
+      chatIdentifier: "+15550000050",
+      displayName: "Persisted",
+      service: "iMessage",
+      isGroup: false,
+      participants: "+15550000050",
+      updatedAt: 1,
+    });
+    store1.close();
+
+    // Re-open
+    const store2 = new SlugStore(path);
+    try {
+      const r = store2.lookupBySlug("persist~imsg~aaaa");
+      expect(r?.displayName).toBe("Persisted");
+    } finally {
+      store2.close();
+    }
+  });
 });
