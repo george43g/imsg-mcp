@@ -240,6 +240,36 @@ function toolText(text: string, structuredContent?: Record<string, unknown>) {
   };
 }
 
+/**
+ * Format an error from the tool dispatcher into a single human-readable
+ * line. Zod's `.message` is a JSON-stringified array of issues by
+ * default — fine for logs, awful for agent-facing responses. We extract
+ * just the first issue's path + message so the result reads like
+ * `"handle: String must contain at least 1 character(s)"`.
+ */
+function formatToolError(error: unknown): string {
+  if (error == null) return "Unknown error";
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message: unknown }).message)
+      : String(error);
+  // Detect Zod-style "[\n  {\"code\":..." prefix.
+  if (message.trim().startsWith("[")) {
+    try {
+      const parsed = JSON.parse(message) as Array<{ message?: string; path?: unknown[] }>;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const issue = parsed[0];
+        const pathStr =
+          Array.isArray(issue.path) && issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
+        return `${pathStr}${issue.message ?? "validation failed"}`;
+      }
+    } catch {
+      // Not real JSON; fall through to the raw message.
+    }
+  }
+  return message;
+}
+
 function toolError(text: string, _structuredContent?: Record<string, unknown>) {
   return {
     ...toolText(text),
@@ -331,15 +361,20 @@ export class IMessageMCPServer {
         return stampMeta(await withTimeout(name, () => this.dispatchTool(name, args, signal)));
       } catch (error: any) {
         const isTimeout = error instanceof ToolTimeoutError;
+        // Format Zod schema errors as a flat human-readable string
+        // instead of the default JSON-stringified issues array. Pre-fix,
+        // `resolve_handle({handle: ""})` returned the entire Zod issue
+        // object as the error message — agents couldn't easily parse it.
+        const friendly = formatToolError(error);
         appendLog(isTimeout ? "warn" : "error", isTimeout ? "Tool timed out" : "Tool error", {
           tool: name,
-          error: error.message || String(error),
+          error: friendly,
         });
         if (!isTimeout) this.recentErrorCount++;
         return stampMeta(
-          toolError(`Error: ${error.message || String(error)}`, {
+          toolError(`Error: ${friendly}`, {
             tool: name,
-            error: error.message || String(error),
+            error: friendly,
             timedOut: isTimeout,
           }),
         );
