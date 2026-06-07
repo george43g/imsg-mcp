@@ -188,28 +188,43 @@ export function App() {
     const text = state.composeText.trim();
     dispatch({ type: "ADD_PENDING", msg: { text, sentAt: new Date(), status: "sending" } });
 
-    const result = await imsg.send(selected.threadSlug, text);
-    if (!result.success) {
-      dispatch({ type: "FAIL_PENDING", text });
-      return;
-    }
-
-    let attempt = 0;
-    const poll = async () => {
-      // Check if we are still polling for this request (unmounted or cancelled)
-      if (!pollTimerRef.current) return;
-      attempt++;
-      const msgs = await imsg.loadMessages(selected.chatIdentifier);
-      const found = msgs.some((m) => m.isFromMe && m.text?.includes(text));
-      if (found) {
-        dispatch({ type: "SET_MESSAGES", data: msgs });
-        dispatch({ type: "RESOLVE_PENDING", text });
-      } else if (attempt < 7) {
-        pollTimerRef.current = setTimeout(poll, 1500);
+    // Wrap the entire send + poll setup so any thrown error surfaces as a
+    // FAIL_PENDING in the UI rather than escaping as an unhandled rejection.
+    // Pre-fix, an osascript / DB exception here would log silently and the
+    // pending bubble would just sit in "sending" forever, which read as
+    // "the tool exited" when combined with a phantom watchdog kill.
+    try {
+      const result = await imsg.send(selected.threadSlug, text);
+      if (!result.success) {
+        dispatch({ type: "FAIL_PENDING", text });
+        return;
       }
-    };
-    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-    pollTimerRef.current = setTimeout(poll, 1500);
+
+      let attempt = 0;
+      const poll = async () => {
+        // Check if we are still polling for this request (unmounted or cancelled)
+        if (!pollTimerRef.current) return;
+        attempt++;
+        try {
+          const msgs = await imsg.loadMessages(selected.chatIdentifier);
+          const found = msgs.some((m) => m.isFromMe && m.text?.includes(text));
+          if (found) {
+            dispatch({ type: "SET_MESSAGES", data: msgs });
+            dispatch({ type: "RESOLVE_PENDING", text });
+          } else if (attempt < 7) {
+            pollTimerRef.current = setTimeout(poll, 1500);
+          }
+        } catch {
+          // Poll iteration failed (DB locked, transient I/O); drop the
+          // pending state rather than spin forever or leak the rejection.
+          dispatch({ type: "FAIL_PENDING", text });
+        }
+      };
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = setTimeout(poll, 1500);
+    } catch {
+      dispatch({ type: "FAIL_PENDING", text });
+    }
   }, [selected, state.composeText, imsg]);
 
   // ── Vim number prefix helper ───────────────────────────────────────

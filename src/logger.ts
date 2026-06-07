@@ -46,16 +46,29 @@ const MAX_LOG_LINES = 500;
 const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB rotation
 
 /**
- * File logging is opt-in via IMSG_DEV=1. End users running the published
- * `imsg mcp` bin don't get NDJSON files in $TMPDIR. The in-memory ring buffer
- * still works (it's bounded to 500 lines) so a dev who opts in can still hit
- * the `get_logs` MCP tool — but that tool itself is also gated on IMSG_DEV.
+ * File logging is opt-in via IMSG_DEV=1 OR a programmatic `enableFileLogging()`
+ * call. End users running the published `imsg mcp` bin don't get NDJSON files
+ * in $TMPDIR by default. The TUI flips this on unconditionally so a future
+ * crash leaves a postmortem trail — without it, the user's "tool exited on its
+ * own" report has nothing to investigate. The in-memory ring buffer (500
+ * lines) still works either way.
  *
  * Checked at call time, not module-load time, so tests can flip the flag
  * without needing to re-import the module.
  */
+let fileLoggingForced = false;
+
+/**
+ * Force file logging on regardless of `IMSG_DEV`. Called by long-running
+ * interactive entry points (TUI) where a postmortem trail justifies the
+ * disk usage (file is 10 MB capped). Idempotent. No way to disable once on.
+ */
+export function enableFileLogging(): void {
+  fileLoggingForced = true;
+}
+
 function isFileLoggingEnabled(): boolean {
-  return process.env.IMSG_DEV === "1";
+  return fileLoggingForced || process.env.IMSG_DEV === "1";
 }
 
 function isVerboseLogging(): boolean {

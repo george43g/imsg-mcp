@@ -82,11 +82,27 @@ function syncCleanup(): void {
   }
 }
 
+export interface ShutdownOpts {
+  /**
+   * Whether to call `shutdown(70)` on `uncaughtException`. Defaults to
+   * `true` — correct for MCP / one-shot CLI where an uncaught error means
+   * undefined state and a clean restart is the right answer.
+   *
+   * **Set to `false` for the TUI**, where killing a long-running interactive
+   * session over a transient render or async error wastes the user's work
+   * and feels like a phantom crash. The TUI keeps running; the error is
+   * still recorded via `appendLog("error", "uncaught_exception", …)` so the
+   * postmortem trail is intact.
+   */
+  exitOnUncaughtException?: boolean;
+}
+
 /**
  * Install signal handlers and orphan detection.
  * Call once at process startup.
  */
-export function installShutdownHandlers(): void {
+export function installShutdownHandlers(opts: ShutdownOpts = {}): void {
+  const exitOnUncaught = opts.exitOnUncaughtException ?? true;
   // Signal handlers — log the signal name before cleanup so the post-mortem
   // NDJSON tells us *why* the process ended (e.g. host sent SIGTERM at $time).
   const onSignal = (signal: string) => {
@@ -127,10 +143,11 @@ export function installShutdownHandlers(): void {
     } catch {
       // Same as above.
     }
-    // For uncaughtException we DO shutdown — the process is in an
-    // undefined state. Use exit code 70 (EX_SOFTWARE) so the host can
-    // distinguish a logic crash from a graceful exit.
-    shutdown(70);
+    // MCP / CLI policy: shutdown on uncaughtException — state is undefined,
+    // a restart is the right answer. TUI policy (opt-in): log + keep
+    // running so a transient React/Ink error doesn't kill the user's
+    // session mid-compose.
+    if (exitOnUncaught) shutdown(70);
   });
 
   // Synchronous last-resort cleanup

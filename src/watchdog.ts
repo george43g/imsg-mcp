@@ -121,10 +121,25 @@ export function onMemorySample(cb: MemorySampleCallback): () => void {
   };
 }
 
+export interface WatchdogOpts {
+  /**
+   * Whether to run the 24h idle-restart monitor. Defaults to `true` —
+   * correct for the MCP server (host respawns a clean instance after an
+   * idle restart).
+   *
+   * **Set to `false` for the TUI**, where the user IS the parent process
+   * and a 24h restart would silently kill an active interactive session
+   * (and lose the user's compose state) the moment uptime crosses the
+   * threshold. The TUI's lifecycle is "user runs it until they quit".
+   */
+  idleRestart?: boolean;
+}
+
 /** Install all three monitors. Idempotent — safe to call multiple times. */
-export function installWatchdog(): void {
+export function installWatchdog(opts: WatchdogOpts = {}): void {
   if (installed) return;
   installed = true;
+  const idleRestartEnabled = opts.idleRestart ?? true;
 
   // 1. Event-loop lag monitor
   eventLoopHistogram = monitorEventLoopDelay({ resolution: 20 });
@@ -262,16 +277,19 @@ export function installWatchdog(): void {
   }, MEMORY_SAMPLE_MS);
   memoryTimer.unref();
 
-  // 3. Idle / uptime monitor — kill if uptime > N AND no recent activity
-  idleTimer = setInterval(() => {
-    if (isShuttingDown()) return;
-    const uptimeMs = Date.now() - state.startedAt;
-    const idleMs = Date.now() - state.lastActivityTs;
-    if (uptimeMs >= IDLE_RESTART_AFTER_MS && idleMs >= IDLE_RESTART_QUIET_MS) {
-      triggerKill("idle_restart", { uptime_ms: uptimeMs, idle_ms: idleMs });
-    }
-  }, IDLE_CHECK_MS);
-  idleTimer.unref();
+  // 3. Idle / uptime monitor — kill if uptime > N AND no recent activity.
+  //    Skipped entirely for the TUI (see WatchdogOpts.idleRestart docs).
+  if (idleRestartEnabled) {
+    idleTimer = setInterval(() => {
+      if (isShuttingDown()) return;
+      const uptimeMs = Date.now() - state.startedAt;
+      const idleMs = Date.now() - state.lastActivityTs;
+      if (uptimeMs >= IDLE_RESTART_AFTER_MS && idleMs >= IDLE_RESTART_QUIET_MS) {
+        triggerKill("idle_restart", { uptime_ms: uptimeMs, idle_ms: idleMs });
+      }
+    }, IDLE_CHECK_MS);
+    idleTimer.unref();
+  }
 
   registerCleanup(() => {
     if (eventLoopHistogram) {

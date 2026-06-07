@@ -2,7 +2,14 @@ import { parseArgs } from "node:util";
 import { withFullScreen } from "fullscreen-ink";
 import { checkLocalAccess, formatAccessReport } from "../access-check.js";
 import { detectNerdFont } from "../font-detect.js";
-import { enableOrphanWatchdog, installShutdownHandlers, registerCleanup } from "../shutdown.js";
+import {
+  enableFileLogging,
+  logShutdown,
+  logStartup,
+  startHeapMonitor,
+  stopHeapMonitor,
+} from "../logger.js";
+import { installShutdownHandlers, registerCleanup } from "../shutdown.js";
 import { resolveTuiConfig } from "../tui-config.js";
 import { installWatchdog } from "../watchdog.js";
 import { App } from "./App.js";
@@ -83,15 +90,35 @@ export async function runTui(): Promise<void> {
 
   const theme = makeTheme({ preset: cfg.theme, accent: cfg.accentColor });
 
-  // Install shutdown handlers + watchdog before starting TUI
-  installShutdownHandlers();
-  enableOrphanWatchdog();
-  installWatchdog();
+  // Install shutdown handlers + watchdog before starting TUI.
+  //
+  // Three TUI-specific lifecycle choices vs the MCP path:
+  //
+  // 1. `enableFileLogging()` — flip file logging on regardless of IMSG_DEV.
+  //    Without this the TUI is opaque on crash: "tool exited on its own"
+  //    leaves no postmortem trail in `$TMPDIR/imsg-mcp/`.
+  // 2. `installShutdownHandlers({ exitOnUncaughtException: false })` — log
+  //    uncaught exceptions but DO NOT kill. The MCP-style hard-exit policy
+  //    would terminate the user's session over any stray React render or
+  //    background-task error.
+  // 3. We deliberately skip `enableOrphanWatchdog()`. The orphan watchdog
+  //    kills on `ppid !== originalParentPid`, which is correct for an MCP
+  //    stdio child but is a phantom-exit landmine in a TUI: terminal
+  //    multiplexers (tmux), shell job-control, and even some IDEs reparent
+  //    the process during their lifetime — none of which mean the user
+  //    walked away. The terminal will SIGHUP us on a real disconnect.
+  enableFileLogging();
+  installShutdownHandlers({ exitOnUncaughtException: false });
+  installWatchdog({ idleRestart: false });
   installCacheSweepers();
+  startHeapMonitor();
+  logStartup("tui");
 
   registerCleanup(() => {
     stopCacheSweepers();
     clearCache();
+    stopHeapMonitor();
+    logShutdown("normal");
   });
 
   const screen = withFullScreen(
