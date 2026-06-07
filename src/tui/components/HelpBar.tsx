@@ -7,6 +7,8 @@ interface Props {
   focus?: FocusPane;
 }
 
+const PALETTE_HINT: [string, string] = ["^P", "palette"];
+
 const SIDEBAR_KEYS = [
   ["j/k", "move"],
   ["#j/k", "jump"],
@@ -18,6 +20,7 @@ const SIDEBAR_KEYS = [
   ["/", "filter"],
   ["d", "stats"],
   ["r", "refresh"],
+  PALETTE_HINT,
   ["q", "quit"],
 ];
 
@@ -34,8 +37,15 @@ const THREAD_KEYS = [
   ["O", "open in Msgs"],
   ["S", "send-via"],
   ["c", "compose"],
-  ["d", "stats"],
+  PALETTE_HINT,
   ["Tab", "→list"],
+];
+
+const PALETTE_KEYS = [
+  ["type", "filter"],
+  ["↑↓", "move"],
+  ["Enter", "run"],
+  ["Esc", "close"],
 ];
 
 const SEND_VIA_KEYS = [
@@ -97,6 +107,7 @@ export function HelpBar({ mode, focus }: Props) {
   else if (mode === "export") keys = EXPORT_KEYS;
   else if (mode === "date-jump") keys = DATE_JUMP_KEYS;
   else if (mode === "send-via") keys = SEND_VIA_KEYS;
+  else if (mode === "palette") keys = PALETTE_KEYS;
   else keys = focus === "thread" ? THREAD_KEYS : SIDEBAR_KEYS;
 
   return (

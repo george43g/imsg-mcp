@@ -1,4 +1,5 @@
 import { type Conversation, type Message, minMessageId } from "../types.js";
+import type { ModuleInstance } from "./modules/types.js";
 
 export type FocusPane = "sidebar" | "thread";
 export type Mode =
@@ -11,7 +12,8 @@ export type Mode =
   | "select"
   | "export"
   | "date-jump"
-  | "send-via";
+  | "send-via"
+  | "palette";
 
 export interface PendingMessage {
   text: string;
@@ -56,6 +58,16 @@ export interface AppState {
   // Date-jump modal state
   dateJumpInput: string;
   dateJumpError: string;
+
+  // Module instances rendered as virtual rows at the top of the sidebar.
+  // The sidebar cursor traverses [...moduleInstances, ...conversations].
+  moduleInstances: ModuleInstance[];
+  /** Index into `moduleInstances` when a virtual row is selected; null when a real conversation is selected. */
+  selectedModuleIdx: number | null;
+
+  // Command palette state
+  paletteQuery: string;
+  paletteCursor: number;
 }
 
 export type Action =
@@ -101,7 +113,16 @@ export type Action =
   | { type: "ENTER_COMPOSE_NEW" }
   | { type: "EXIT_COMPOSE_NEW" }
   | { type: "SET_DATE_JUMP_INPUT"; value: string }
-  | { type: "SET_DATE_JUMP_ERROR"; error: string };
+  | { type: "SET_DATE_JUMP_ERROR"; error: string }
+  | { type: "OPEN_PALETTE" }
+  | { type: "CLOSE_PALETTE" }
+  | { type: "SET_PALETTE_QUERY"; query: string }
+  | { type: "MOVE_PALETTE_CURSOR"; delta: number }
+  | { type: "SET_PALETTE_CURSOR"; index: number }
+  | { type: "OPEN_MODULE_INSTANCE"; instance: ModuleInstance }
+  | { type: "CLOSE_MODULE_INSTANCE"; instanceId: string }
+  | { type: "UPDATE_MODULE_INSTANCE_STATE"; instanceId: string; state: unknown }
+  | { type: "SELECT_MODULE"; index: number; visibleCount?: number };
 
 export const initialState: AppState = {
   conversations: [],
@@ -130,6 +151,10 @@ export const initialState: AppState = {
   exportStatus: "",
   dateJumpInput: "",
   dateJumpError: "",
+  moduleInstances: [],
+  selectedModuleIdx: null,
+  paletteQuery: "",
+  paletteCursor: 0,
 };
 
 /** Clamp message cursor and ensure it's visible by adjusting scroll */
@@ -272,6 +297,24 @@ export function ensureVisibleScroll(
   return Math.max(0, Math.min(currentScroll, Math.max(0, totalCount - visibleCount)));
 }
 
+/**
+ * Total number of selectable rows in the sidebar — module instances stacked
+ * on top of conversations. Used by the unified cursor model.
+ */
+export function sidebarRowCount(state: AppState): number {
+  return state.moduleInstances.length + state.conversations.length;
+}
+
+/**
+ * Combined sidebar cursor index ([0..moduleInstances.length-1] = modules,
+ * [moduleInstances.length..] = conversations). Used to drive global j/k
+ * navigation in the sidebar.
+ */
+export function combinedSidebarIndex(state: AppState): number {
+  if (state.selectedModuleIdx != null) return state.selectedModuleIdx;
+  return state.moduleInstances.length + state.selectedIdx;
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "SET_CONVERSATIONS":
@@ -370,13 +413,15 @@ export function reducer(state: AppState, action: Action): AppState {
       const idx = Math.max(0, Math.min(action.index, Math.max(0, state.conversations.length - 1)));
       const sidebarScroll = action.visibleCount
         ? ensureVisibleScroll(
-            idx,
+            // The visible row index is offset by the module rows above.
+            idx + state.moduleInstances.length,
             state.sidebarScroll,
             action.visibleCount,
-            state.conversations.length,
+            sidebarRowCount(state),
           )
         : state.sidebarScroll;
-      return { ...state, selectedIdx: idx, sidebarScroll };
+      // Selecting a real conversation always clears module focus.
+      return { ...state, selectedIdx: idx, sidebarScroll, selectedModuleIdx: null };
     }
     case "SELECT_MSG": {
       const c = clampMsg(state, action.index);
@@ -431,6 +476,70 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, numBuffer: action.value };
     case "TOGGLE_DEV_STATS":
       return { ...state, showDevStats: !state.showDevStats };
+
+    // ── Command palette ────────────────────────────────────────────────
+    case "OPEN_PALETTE":
+      return { ...state, mode: "palette", paletteQuery: "", paletteCursor: 0 };
+    case "CLOSE_PALETTE":
+      return { ...state, mode: "browse" };
+    case "SET_PALETTE_QUERY":
+      // Reset cursor to the top so the highlighted row is always the best
+      // match for the freshest query.
+      return { ...state, paletteQuery: action.query, paletteCursor: 0 };
+    case "MOVE_PALETTE_CURSOR":
+      return { ...state, paletteCursor: Math.max(0, state.paletteCursor + action.delta) };
+    case "SET_PALETTE_CURSOR":
+      return { ...state, paletteCursor: Math.max(0, action.index) };
+
+    // ── Module instances ───────────────────────────────────────────────
+    case "OPEN_MODULE_INSTANCE": {
+      // Prepend so newest is at the top of the sidebar, then focus it.
+      const moduleInstances = [action.instance, ...state.moduleInstances];
+      return {
+        ...state,
+        mode: "browse",
+        moduleInstances,
+        selectedModuleIdx: 0,
+        focus: "sidebar",
+      };
+    }
+    case "CLOSE_MODULE_INSTANCE": {
+      const idx = state.moduleInstances.findIndex((i) => i.id === action.instanceId);
+      if (idx === -1) return state;
+      const moduleInstances = state.moduleInstances.filter((_, i) => i !== idx);
+      // If the removed instance was selected, fall focus back to the first
+      // real conversation (or the first remaining module, if any).
+      let selectedModuleIdx: number | null = state.selectedModuleIdx;
+      let selectedIdx = state.selectedIdx;
+      if (state.selectedModuleIdx === idx) {
+        if (moduleInstances.length > 0) {
+          selectedModuleIdx = Math.min(idx, moduleInstances.length - 1);
+        } else {
+          selectedModuleIdx = null;
+          selectedIdx = 0;
+        }
+      } else if (state.selectedModuleIdx != null && state.selectedModuleIdx > idx) {
+        selectedModuleIdx = state.selectedModuleIdx - 1;
+      }
+      return { ...state, moduleInstances, selectedModuleIdx, selectedIdx };
+    }
+    case "UPDATE_MODULE_INSTANCE_STATE":
+      return {
+        ...state,
+        moduleInstances: state.moduleInstances.map((i) =>
+          i.id === action.instanceId ? { ...i, state: action.state } : i,
+        ),
+      };
+    case "SELECT_MODULE": {
+      const idx = Math.max(
+        0,
+        Math.min(action.index, Math.max(0, state.moduleInstances.length - 1)),
+      );
+      const sidebarScroll = action.visibleCount
+        ? ensureVisibleScroll(idx, state.sidebarScroll, action.visibleCount, sidebarRowCount(state))
+        : state.sidebarScroll;
+      return { ...state, selectedModuleIdx: idx, sidebarScroll };
+    }
     default:
       return state;
   }
