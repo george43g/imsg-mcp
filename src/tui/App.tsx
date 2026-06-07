@@ -304,15 +304,19 @@ export function App() {
     }
 
     // Module pane mode — when a module instance is selected and thread pane is
-    // focused, let the pane's own useInput handle keys (Tab/[/]/Esc). We still
-    // want sidebar focus to fall through to conversation-list navigation.
+    // focused, the pane's own useInput owns everything (Tab cycles type, [/]
+    // cycles range, Esc closes). Tab MUST NOT be intercepted here: the pane
+    // advertises "Tab:type" in its footer and the PR contract documents Tab as
+    // the type-cycle key. Previously this branch dispatched FOCUS:sidebar on
+    // Tab, which silently overrode the pane's handler.
     if (selectedModule && state.focus === "thread" && state.mode === "browse") {
-      // Tab still toggles focus back to sidebar.
-      if (key.tab) {
+      // Shift-Tab returns focus to the sidebar so the user can navigate to
+      // another conversation without closing the module. Regular Tab and
+      // every other key falls through to the pane's own useInput.
+      if (key.shift && key.tab) {
         dispatch({ type: "FOCUS", pane: "sidebar" });
         return;
       }
-      // Ctrl-P palette already handled above. Everything else: defer to pane.
       return;
     }
 

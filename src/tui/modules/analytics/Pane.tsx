@@ -4,7 +4,7 @@
  * `src/analytics.ts`. Owns its own keyboard handlers via `useInput`.
  */
 import { Box, Text, useInput } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AnalyticType } from "../../../analytics.js";
 import {
   type DoubleTextResult,
@@ -67,21 +67,22 @@ export function AnalyticsPane({
   const theme = useTheme();
   const state = instance.state as AnalyticsState;
   const [messages, setMessages] = useState<Message[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ data: unknown } | null>(null);
 
-  // Load + reload when the cutoff window changes.
+  // Load messages whenever the range cutoff changes.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setResult(null);
     const cutoff = rangeCutoff(state.range);
     imsg
       .loadMessagesInWindow(cutoff)
       .then((m) => {
         if (cancelled) return;
         setMessages(m);
-        setLoading(false);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -92,6 +93,33 @@ export function AnalyticsPane({
       cancelled = true;
     };
   }, [state.range, imsg]);
+
+  // Compute the analytic OUT of the render path. `dispatchAnalytic` on
+  // 30 days of messages takes 1-3 seconds — running it in a useMemo blocked
+  // the render so "Loading…" never appeared and the pane sat empty during
+  // the wait. Deferring via `setTimeout(0)` lets React paint loading state
+  // before the heavy compute starts on the next macrotask.
+  useEffect(() => {
+    if (!messages) return;
+    let cancelled = false;
+    setLoading(true);
+    const handle = setTimeout(() => {
+      if (cancelled) return;
+      try {
+        const { data } = dispatchAnalytic(state.type, messages);
+        setResult({ data });
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setResult(null);
+      }
+      setLoading(false);
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [messages, state.type]);
 
   // Keyboard: Tab cycles analytic type, [/] cycles range, Esc closes.
   useInput(
@@ -122,15 +150,6 @@ export function AnalyticsPane({
     },
     { isActive: focused },
   );
-
-  const result = useMemo(() => {
-    if (!messages) return null;
-    try {
-      return dispatchAnalytic(state.type, messages);
-    } catch (e) {
-      return { type: state.type, data: null, error: e instanceof Error ? e.message : String(e) };
-    }
-  }, [messages, state.type]);
 
   return (
     <Box
