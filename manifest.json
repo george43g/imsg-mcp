@@ -1,6 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/dxt-manifest.schema.json",
-  "dxt_version": "0.3",
+  "manifest_version": "0.3",
   "name": "imsg-mcp",
   "version": "1.0.0",
   "description": "iMessage / SMS MCP for macOS — read, search, send, attach.",
@@ -14,7 +13,6 @@
   "support": "https://github.com/george43g/imsg-mcp/issues",
   "license": "MIT",
   "keywords": ["imessage", "sms", "messages", "macos", "mcp", "applescript"],
-  "icon": "icon.png",
   "server": {
     "type": "node",
     "entry_point": "dist/cli.js",

@@ -58,6 +58,9 @@ jobs:
       - name: Test (Rust native)
         run: pnpm test:rust
 
+      - name: Pack Claude Desktop bundle (.mcpb)
+        run: pnpm pack:mcpb
+
       - name: Run semantic-release
         env:
           # OIDC: npmjs.com Trusted Publisher is configured for this repo + workflow.

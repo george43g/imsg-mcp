@@ -20,7 +20,10 @@
     [
       "@semantic-release/github",
       {
-        "assets": [{ "path": "release/*.tgz", "label": "npm tarball" }]
+        "assets": [
+          { "path": "release/*.tgz", "label": "npm tarball" },
+          { "path": "release/imsg-mcp.mcpb", "label": "Claude Desktop bundle (.mcpb)" }
+        ]
       }
     ],
     [

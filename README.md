@@ -15,11 +15,9 @@
 
 ## Install
 
-### Claude Desktop (one-click)
+### Canonical: `npx -y` (works in every MCP host)
 
-Download `imsg-mcp.mcpb` from [the latest release](https://github.com/george43g/imsg-mcp/releases/latest) and double-click. See [llms-install.md](llms-install.md) for the agent-narrated install flow.
-
-### Any MCP host (npx, one-liner)
+Drop this into your MCP host config — `claude_desktop_config.json` (Claude Desktop), `mcp.json` (Cursor / Warp), or any host that supports stdio MCP:
 
 ```json
 {
@@ -32,7 +30,11 @@ Download `imsg-mcp.mcpb` from [the latest release](https://github.com/george43g/
 }
 ```
 
-Drop into `claude_desktop_config.json` (Claude Desktop) or `mcp.json` (Cursor / Warp). Bun users: `bunx imsg-mcp mcp` is ~10× faster cold-start.
+This is the form Anthropic recommends for MCP servers and the one most likely to "just work" — `npx` is on the system PATH that MCP hosts inherit, while user-installed binaries (`pnpm i -g`, `nvm`-installed node, etc.) frequently aren't. Bun users: `bunx imsg-mcp mcp` is ~10× faster cold-start.
+
+### Claude Desktop (one-click bundle)
+
+Prefer the canonical `npx -y` config above. If you'd rather install the MCPB extension: download `imsg-mcp.mcpb` from [the latest release](https://github.com/george43g/imsg-mcp/releases/latest) and double-click it. See [llms-install.md](llms-install.md) for the agent-narrated install flow.
 
 ### Autodetect everything
 

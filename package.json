@@ -58,7 +58,7 @@
     "screenshots:native": "for f in scripts/screenshots/native/*.sh; do echo \"→ $f\"; bash \"$f\" || echo \"  (script failed; continuing)\"; done",
     "hook:install": "git config core.hooksPath .githooks && echo '✓ pre-push hook installed (regenerates screenshots before push on macOS)'",
     "prepare": "pnpm build && pnpm fixtures:if-missing",
-    "pack:mcpb": "pnpm build && rm -rf release/mcpb && mkdir -p release/mcpb && cp -R dist dxt-manifest.json release/mcpb/ && (cd release/mcpb && zip -r ../imsg-mcp.mcpb . -x '*.DS_Store') && echo 'Built release/imsg-mcp.mcpb'",
+    "pack:mcpb": "pnpm build && rm -rf release/mcpb-stage release/imsg-mcp.mcpb && mkdir -p release/mcpb-stage/native && cp -R dist release/mcpb-stage/ && cp manifest.json package.json release/mcpb-stage/ && cp native/index.js native/index.d.ts release/mcpb-stage/native/ && (ls native/imsg-native.*.node 2>/dev/null | xargs -I{} cp {} release/mcpb-stage/native/ || true) && (cd release/mcpb-stage && npm install --omit=dev --omit=optional --ignore-scripts --no-audit --no-fund --no-package-lock) && mcpb pack release/mcpb-stage release/imsg-mcp.mcpb",
     "fixtures:if-missing": "node -e \"if(!require('fs').existsSync('fixtures/chat.db')){require('child_process').execSync('pnpm fixtures', {stdio:'inherit'})}\"",
     "rebuild": "pnpm rebuild better-sqlite3",
     "native:build": "cd native && napi build --platform --release",
@@ -101,13 +101,13 @@
     "bplist-parser": "^0.3.2",
     "commander": "^14.0.3",
     "fullscreen-ink": "^0.1.0",
-    "imsg-mcp": "link:",
     "ink": "^7.0.1",
     "react": "^19.2.5",
     "zod": "^3.23.0",
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@biomejs/biome": "^2.0.0",
     "@napi-rs/cli": "^3.6.2",
     "@semantic-release/changelog": "^6.0.3",
