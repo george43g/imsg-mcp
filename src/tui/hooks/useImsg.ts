@@ -56,6 +56,17 @@ export function useImsg() {
     [getDb],
   );
 
+  /**
+   * Load every message newer than the given Date — used by analytics panes
+   * that compute over a time window rather than a single thread.
+   */
+  const loadMessagesInWindow = useCallback(
+    async (since: Date): Promise<Message[]> => {
+      return getDb().getMessagesInWindow(since.getTime());
+    },
+    [getDb],
+  );
+
   const resolveNames = useCallback(
     (handles: string[]): string[] => {
       return getDb().resolveParticipantNames(handles);
@@ -132,6 +143,7 @@ export function useImsg() {
     loadConversations,
     loadMessages,
     loadOlderMessages,
+    loadMessagesInWindow,
     resolveNames,
     send,
     sendToRecipient,

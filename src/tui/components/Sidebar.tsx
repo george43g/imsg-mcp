@@ -2,12 +2,18 @@ import { Box, Text } from "ink";
 import { useMemo } from "react";
 import type { Conversation } from "../../types.js";
 import { matchesConversationFilter } from "../filter.js";
+import { findModule } from "../modules/registry.js";
+import type { ModuleInstance } from "../modules/types.js";
 import { useTheme } from "../themes/ThemeContext.js";
 import { ConversationItem } from "./ConversationItem.js";
+import { DefaultModuleSidebarItem } from "./DefaultModuleSidebarItem.js";
 
 interface Props {
   conversations: Conversation[];
+  moduleInstances: ModuleInstance[];
   selectedIdx: number;
+  /** Index into `moduleInstances` when a virtual row is selected; null otherwise. */
+  selectedModuleIdx: number | null;
   scrollOffset: number;
   filterQuery: string;
   focused: boolean;
@@ -17,7 +23,9 @@ interface Props {
 
 export function Sidebar({
   conversations,
+  moduleInstances,
   selectedIdx,
+  selectedModuleIdx,
   scrollOffset,
   filterQuery,
   focused,
@@ -31,12 +39,26 @@ export function Sidebar({
     return conversations.filter((c) => matchesConversationFilter(c, q));
   }, [conversations, filterQuery]);
 
-  // Each conversation item takes ~4 rows (name, snippet, slug, separator)
+  // Each row takes ~4 rows (3 content + 1 separator). Module rows match this
+  // rhythm so the cursor math in App.tsx doesn't need a per-row height table.
   const itemHeight = 4;
   const headerH = 1 + (filterQuery ? 1 : 0);
   const borderH = 2;
   const visibleCount = Math.floor((height - headerH - borderH) / itemHeight);
-  const visible = filtered.slice(scrollOffset, scrollOffset + visibleCount);
+
+  // Combined visible list: [...moduleInstances, ...conversations].
+  // The scrollOffset is an index into the combined list.
+  const combined: Array<
+    { kind: "module"; instance: ModuleInstance } | { kind: "conv"; conv: Conversation }
+  > = [
+    ...moduleInstances.map((instance) => ({ kind: "module" as const, instance })),
+    ...filtered.map((conv) => ({ kind: "conv" as const, conv })),
+  ];
+  const visible = combined.slice(scrollOffset, scrollOffset + visibleCount);
+  const moduleCount = moduleInstances.length;
+
+  // The displayed cursor index in the combined list.
+  const combinedCursor = selectedModuleIdx != null ? selectedModuleIdx : moduleCount + selectedIdx;
 
   return (
     <Box
@@ -49,7 +71,8 @@ export function Sidebar({
     >
       <Box paddingX={1} backgroundColor={focused ? theme.header.focused.bg : theme.header.dim.bg}>
         <Text color={focused ? theme.header.focused.fg : theme.header.dim.fg} bold={focused}>
-          Conversations ({filtered.length})
+          Conversations ({filtered.length}
+          {moduleCount > 0 ? ` + ${moduleCount} tool${moduleCount === 1 ? "" : "s"}` : ""})
         </Text>
       </Box>
 
@@ -66,20 +89,37 @@ export function Sidebar({
             <Text color={theme.sidebar.snippet}>No conversations</Text>
           </Box>
         ) : (
-          visible.map((conv, i) => {
+          visible.map((row, i) => {
             const realIdx = scrollOffset + i;
-            const relNum =
-              realIdx === selectedIdx ? `${realIdx}` : `${Math.abs(realIdx - selectedIdx)}`;
+            const selected = realIdx === combinedCursor;
+            const relNum = selected ? `${realIdx}` : `${Math.abs(realIdx - combinedCursor)}`;
+            const isLast = i === visible.length - 1;
+
+            if (row.kind === "module") {
+              const mod = findModule(row.instance.moduleId);
+              const ItemComponent = mod?.SidebarItem ?? DefaultModuleSidebarItem;
+              return (
+                <ItemComponent
+                  key={row.instance.id}
+                  instance={row.instance}
+                  selected={selected}
+                  focused={!!focused}
+                  width={width - 2}
+                  lineNum={relNum}
+                  isLast={isLast}
+                />
+              );
+            }
 
             return (
               <ConversationItem
-                key={conv.threadSlug}
-                conversation={conv}
-                selected={realIdx === selectedIdx}
+                key={row.conv.threadSlug}
+                conversation={row.conv}
+                selected={selected}
                 width={width - 2}
                 lineNum={relNum}
                 focused={focused}
-                isLast={i === visible.length - 1}
+                isLast={isLast}
               />
             );
           })

@@ -4,10 +4,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { useScreenSize } from "fullscreen-ink";
 import { Box, useApp, useInput } from "ink";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { registerCleanup } from "../shutdown.js";
 import { minMessageId } from "../types.js";
 import { getInstalledChatApps } from "../url-schemes.js";
+import { CommandPalette } from "./components/CommandPalette.js";
 import { ComposeRecipientModal } from "./components/ComposeRecipientModal.js";
 import { DateJumpModal } from "./components/DateJumpModal.js";
 import { CompactStats, DevStats } from "./components/DevStats.js";
@@ -24,7 +25,8 @@ import { firstFilterMatchIndex } from "./filter.js";
 import { useDevStats } from "./hooks/useDevStats.js";
 import { useImsg } from "./hooks/useImsg.js";
 import { useMouse } from "./hooks/useMouse.js";
-import { initialState, reducer } from "./types.js";
+import { allCommands, findModule } from "./modules/registry.js";
+import { initialState, reducer, sidebarRowCount } from "./types.js";
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -53,10 +55,18 @@ export function App() {
     1,
   );
 
-  const selected = state.conversations[state.selectedIdx];
+  const selected =
+    state.selectedModuleIdx == null ? state.conversations[state.selectedIdx] : undefined;
+  const selectedModule =
+    state.selectedModuleIdx != null ? state.moduleInstances[state.selectedModuleIdx] : undefined;
   const totalUnread = state.conversations.reduce((s, c) => s + c.unreadCount, 0);
   const resolvedNames = selected ? imsg.resolveNames(selected.participants) : [];
   const selectedMsg = state.selectedMsgIdx >= 0 ? state.messages[state.selectedMsgIdx] : undefined;
+
+  // Commands list for the palette — recomputed on state change so `when`
+  // gates and module command lists stay in sync.
+  const commands = useMemo(() => allCommands(state), [state]);
+  const commandCtx = useMemo(() => ({ state, dispatch, imsg }), [state, imsg]);
 
   // ── Data loading ───────────────────────────────────────────────────
 
@@ -227,6 +237,36 @@ export function App() {
     }
   }, [selected, state.composeText, imsg]);
 
+  /**
+   * Move the sidebar cursor to a combined index that spans
+   * [modules..., conversations...]. Dispatches to the right reducer action
+   * based on which region the target lands in, and only fires `loadMessages`
+   * when a real conversation is selected.
+   */
+  const selectSidebarCombined = useCallback(
+    (combinedIdx: number) => {
+      const moduleCount = state.moduleInstances.length;
+      if (combinedIdx < moduleCount) {
+        dispatch({
+          type: "SELECT_MODULE",
+          index: combinedIdx,
+          visibleCount: sidebarVisibleCount,
+        });
+        return;
+      }
+      const convIdx = combinedIdx - moduleCount;
+      dispatch({ type: "SELECT", index: convIdx, visibleCount: sidebarVisibleCount });
+      // Debounce message loading (matches existing behaviour).
+      if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
+      const target = convIdx;
+      moveDebounceRef.current = setTimeout(() => {
+        moveDebounceRef.current = null;
+        loadMessages(target);
+      }, 80);
+    },
+    [state.moduleInstances.length, sidebarVisibleCount, loadMessages],
+  );
+
   // ── Vim number prefix helper ───────────────────────────────────────
 
   const getCount = useCallback((): number => {
@@ -242,6 +282,41 @@ export function App() {
     if (key.ctrl && input === "c") {
       await imsg.close();
       exit();
+      return;
+    }
+
+    // Palette mode — owns its own useInput (inside CommandPalette).
+    // Skip all App-level handling so navigation keys don't double-fire.
+    if (state.mode === "palette") {
+      return;
+    }
+
+    // Ctrl-P opens the palette from anywhere outside an active modal.
+    if (key.ctrl && input === "p" && (state.mode === "browse" || state.mode === "select")) {
+      dispatch({ type: "OPEN_PALETTE" });
+      return;
+    }
+
+    // `?` from browse mode opens the palette as a keybinding cheat sheet.
+    if (input === "?" && !key.ctrl && !key.meta && state.mode === "browse") {
+      dispatch({ type: "OPEN_PALETTE" });
+      return;
+    }
+
+    // Module pane mode — when a module instance is selected and thread pane is
+    // focused, the pane's own useInput owns everything (Tab cycles type, [/]
+    // cycles range, Esc closes). Tab MUST NOT be intercepted here: the pane
+    // advertises "Tab:type" in its footer and the PR contract documents Tab as
+    // the type-cycle key. Previously this branch dispatched FOCUS:sidebar on
+    // Tab, which silently overrode the pane's handler.
+    if (selectedModule && state.focus === "thread" && state.mode === "browse") {
+      // Shift-Tab returns focus to the sidebar so the user can navigate to
+      // another conversation without closing the module. Regular Tab and
+      // every other key falls through to the pane's own useInput.
+      if (key.shift && key.tab) {
+        dispatch({ type: "FOCUS", pane: "sidebar" });
+        return;
+      }
       return;
     }
 
@@ -487,8 +562,7 @@ export function App() {
       if (input === "0" && !state.numBuffer) {
         // '0' alone: go to first item (like vim)
         if (state.focus === "sidebar") {
-          dispatch({ type: "SELECT", index: 0, visibleCount: sidebarVisibleCount });
-          loadMessages(0);
+          selectSidebarCombined(0);
         } else {
           dispatch({ type: "SELECT_MSG", index: 0 });
         }
@@ -499,7 +573,7 @@ export function App() {
     }
 
     if (state.focus === "sidebar") {
-      // Copy thread slug to clipboard
+      // Copy thread slug to clipboard (only meaningful for real conversations)
       if (input === "y" && selected) {
         try {
           execSync("pbcopy", { input: `~${selected.threadSlug}` });
@@ -512,14 +586,20 @@ export function App() {
       }
 
       const count = getCount();
+      const totalRows = sidebarRowCount(state);
+      const lastIdx = Math.max(0, totalRows - 1);
+      const curIdx =
+        state.selectedModuleIdx != null
+          ? state.selectedModuleIdx
+          : state.moduleInstances.length + state.selectedIdx;
       let next: number | null = null;
 
       if (input === "j" || key.downArrow) {
-        next = Math.min(state.selectedIdx + count, state.conversations.length - 1);
+        next = Math.min(curIdx + count, lastIdx);
       } else if (input === "k" || key.upArrow) {
-        next = Math.max(state.selectedIdx - count, 0);
+        next = Math.max(curIdx - count, 0);
       } else if (input === "G") {
-        next = state.conversations.length - 1;
+        next = lastIdx;
       } else if (input === "g") {
         // Handle gg (go to top)
         if (ggPendingRef.current) {
@@ -536,41 +616,23 @@ export function App() {
           return;
         }
       } else if (key.ctrl && input === "d") {
-        // Half page down
-        next = Math.min(
-          state.selectedIdx + Math.floor(bodyHeight / 2),
-          state.conversations.length - 1,
-        );
+        next = Math.min(curIdx + Math.floor(bodyHeight / 2), lastIdx);
       } else if (key.ctrl && input === "u") {
-        // Half page up
-        next = Math.max(state.selectedIdx - Math.floor(bodyHeight / 2), 0);
+        next = Math.max(curIdx - Math.floor(bodyHeight / 2), 0);
       } else if ((key.ctrl && input === "f") || key.pageDown) {
-        next = Math.min(state.selectedIdx + bodyHeight, state.conversations.length - 1);
+        next = Math.min(curIdx + bodyHeight, lastIdx);
       } else if ((key.ctrl && input === "b") || key.pageUp) {
-        next = Math.max(state.selectedIdx - bodyHeight, 0);
+        next = Math.max(curIdx - bodyHeight, 0);
       } else if (input === "H") {
-        // High - first visible
         next = state.sidebarScroll;
       } else if (input === "M") {
-        // Middle
-        next = Math.min(
-          state.sidebarScroll + Math.floor(bodyHeight / 2),
-          state.conversations.length - 1,
-        );
+        next = Math.min(state.sidebarScroll + Math.floor(bodyHeight / 2), lastIdx);
       } else if (input === "L") {
-        // Low - last visible
-        next = Math.min(state.sidebarScroll + bodyHeight - 1, state.conversations.length - 1);
+        next = Math.min(state.sidebarScroll + bodyHeight - 1, lastIdx);
       }
 
-      if (next !== null && next !== state.selectedIdx) {
-        dispatch({ type: "SELECT", index: next, visibleCount: sidebarVisibleCount });
-        // Debounce message loading
-        if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
-        const target = next;
-        moveDebounceRef.current = setTimeout(() => {
-          moveDebounceRef.current = null;
-          loadMessages(target);
-        }, 80);
+      if (next !== null && next !== curIdx) {
+        selectSidebarCombined(next);
       }
     } else {
       // Thread focus — message cursor movement
@@ -790,10 +852,11 @@ export function App() {
       if (event.type === "click") {
         if (event.x <= sidebarWidth) {
           dispatch({ type: "FOCUS", pane: "sidebar" });
-          const convIdx = Math.floor((event.y - 2 + state.sidebarScroll * 3) / 3);
-          if (convIdx >= 0 && convIdx < state.conversations.length) {
-            dispatch({ type: "SELECT", index: convIdx, visibleCount: sidebarVisibleCount });
-            loadMessages(convIdx);
+          // Combined index covers [...moduleInstances, ...conversations].
+          const combinedIdx = Math.floor((event.y - 2 + state.sidebarScroll * 3) / 3);
+          const moduleCount = state.moduleInstances.length;
+          if (combinedIdx >= 0 && combinedIdx < moduleCount + state.conversations.length) {
+            selectSidebarCombined(combinedIdx);
           }
         } else {
           dispatch({ type: "FOCUS", pane: "thread" });
@@ -819,8 +882,8 @@ export function App() {
       sidebarWidth,
       state.sidebarScroll,
       state.conversations.length,
-      loadMessages,
-      sidebarVisibleCount,
+      state.moduleInstances.length,
+      selectSidebarCombined,
     ],
   );
 
@@ -838,35 +901,65 @@ export function App() {
 
   // ── Render ─────────────────────────────────────────────────────────
 
+  // Resolve the module + its pane renderer when a virtual row is selected.
+  const selectedModuleDef = selectedModule ? findModule(selectedModule.moduleId) : undefined;
+  const ModulePane = selectedModuleDef?.Pane;
+
   return (
     <Box flexDirection="column" height={rows} width={columns}>
       {/* Main layout */}
       <Box flexGrow={1} height={bodyHeight}>
         <Sidebar
           conversations={state.conversations}
+          moduleInstances={state.moduleInstances}
           selectedIdx={state.selectedIdx}
+          selectedModuleIdx={state.selectedModuleIdx}
           scrollOffset={state.sidebarScroll}
           filterQuery={state.filterQuery}
           focused={state.focus === "sidebar"}
           width={sidebarWidth}
           height={bodyHeight}
         />
-        <ThreadPane
-          conversation={selected}
-          messages={state.messages}
-          pending={state.pending}
-          resolvedNames={resolvedNames}
-          scrollOffset={state.threadScroll}
-          selectedMsgIdx={state.selectedMsgIdx}
-          selectionAnchor={state.selectionAnchor}
-          gapMarkers={state.gapMarkers}
-          focused={state.focus === "thread"}
-          width={threadWidth}
-          height={bodyHeight}
-          mode={state.mode}
-          onChangeCompose={(text) => dispatch({ type: "UPDATE_COMPOSE", text })}
-          onSubmitCompose={(text) => text.trim() && dispatch({ type: "CONFIRM_SEND" })}
-        />
+        {selectedModule && ModulePane ? (
+          <ModulePane
+            instance={selectedModule}
+            imsg={imsg}
+            width={threadWidth}
+            height={bodyHeight}
+            focused={state.focus === "thread"}
+            onUpdateState={(next) =>
+              dispatch({
+                type: "UPDATE_MODULE_INSTANCE_STATE",
+                instanceId: selectedModule.id,
+                state: next,
+              })
+            }
+            onClose={() =>
+              dispatch({ type: "CLOSE_MODULE_INSTANCE", instanceId: selectedModule.id })
+            }
+            setStatus={(s) => {
+              dispatch({ type: "SET_STATUS", status: s });
+              setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 2500);
+            }}
+          />
+        ) : (
+          <ThreadPane
+            conversation={selected}
+            messages={state.messages}
+            pending={state.pending}
+            resolvedNames={resolvedNames}
+            scrollOffset={state.threadScroll}
+            selectedMsgIdx={state.selectedMsgIdx}
+            selectionAnchor={state.selectionAnchor}
+            gapMarkers={state.gapMarkers}
+            focused={state.focus === "thread"}
+            width={threadWidth}
+            height={bodyHeight}
+            mode={state.mode}
+            onChangeCompose={(text) => dispatch({ type: "UPDATE_COMPOSE", text })}
+            onSubmitCompose={(text) => text.trim() && dispatch({ type: "CONFIRM_SEND" })}
+          />
+        )}
         {state.mode === "drawer" && selectedMsg && (
           <MessageDrawer message={selectedMsg} width={drawerWidth} height={bodyHeight} />
         )}
@@ -926,6 +1019,22 @@ export function App() {
           })()}
           onChangePath={(p) => dispatch({ type: "SET_EXPORT_PATH", path: p })}
           onSubmit={doExport}
+        />
+      )}
+
+      {/* Command palette — overlay modal, Ctrl-P / ? from browse mode. */}
+      {state.mode === "palette" && (
+        <CommandPalette
+          commands={commands}
+          query={state.paletteQuery}
+          cursor={state.paletteCursor}
+          width={columns}
+          height={rows}
+          ctx={commandCtx}
+          onQueryChange={(q) => dispatch({ type: "SET_PALETTE_QUERY", query: q })}
+          onCursorMove={(d) => dispatch({ type: "MOVE_PALETTE_CURSOR", delta: d })}
+          onSelectCursor={(i) => dispatch({ type: "SET_PALETTE_CURSOR", index: i })}
+          onClose={() => dispatch({ type: "CLOSE_PALETTE" })}
         />
       )}
 
