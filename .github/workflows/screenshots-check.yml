@@ -15,6 +15,15 @@ jobs:
   verify:
     runs-on: macos-14
     timeout-minutes: 15
+    # vhs + font rendering is non-deterministic at the byte level — running
+    # `pnpm screenshots:check` twice in a row on the same machine produces
+    # drift in the resulting PNGs. The check is useful as a "did the TUI
+    # surface change?" signal, but cannot be a hard gate without a tolerant
+    # image-diff (pixelmatch / ImageMagick `compare -metric AE`). Mark the
+    # job as informational so it surfaces drift in the PR status without
+    # blocking merge. Track a follow-up: replace byte-equality with a
+    # threshold-based pixel diff.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
