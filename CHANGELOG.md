@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.2.0](https://github.com/george43g/imsg-mcp/compare/v1.1.1...v1.2.0) (2026-06-07)
+
+
+### Bug Fixes
+
+* **tui:** module-pane Tab cycles type; defer compute so Loading paints ([a69539a](https://github.com/george43g/imsg-mcp/commit/a69539ae6271dc6623dcfe9663728a760cc4fade))
+
+
+### Features
+
+* **tui:** command palette + feature module system ([59d5628](https://github.com/george43g/imsg-mcp/commit/59d5628238fefc65d6806ad9969716fa508ea2c7))
+
 ## [1.1.1](https://github.com/george43g/imsg-mcp/compare/v1.1.0...v1.1.1) (2026-06-07)
 
 
