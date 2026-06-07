@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.1](https://github.com/george43g/imsg-mcp/compare/v1.1.0...v1.1.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **tui:** stop MCP-shaped shutdown policies from killing user sessions ([f92a92c](https://github.com/george43g/imsg-mcp/commit/f92a92cfb40e463b752a68664b74c7d3efe48909))
+
 # [1.1.0](https://github.com/george43g/imsg-mcp/compare/v1.0.0...v1.1.0) (2026-06-07)
 
 
