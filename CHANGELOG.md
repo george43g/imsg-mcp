@@ -3,6 +3,48 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.1.0](https://github.com/george43g/imsg-mcp/compare/v1.0.0...v1.1.0) (2026-06-07)
+
+
+### Bug Fixes
+
+* **analytics:** guard JSON.parse in lookupCache + add coverage ([b097196](https://github.com/george43g/imsg-mcp/commit/b097196627bba7918ffb9658efa0d452f1de384b))
+* **analytics:** populate ext object in getMessagesInWindow ([ffab0ad](https://github.com/george43g/imsg-mcp/commit/ffab0adcce8485a1e89f5ce74a2921bbc1dd867c))
+* **cache:** prependCached survives huge fresh batches (no Math.min spread crash) ([c6e4557](https://github.com/george43g/imsg-mcp/commit/c6e45570d55e4fd0c2b593f679753eae1017784d))
+* **cli:** tighter looksLikeThreadSlug — no email misroute ([7de6788](https://github.com/george43g/imsg-mcp/commit/7de67883103dcbf9ca0715417322d97256d2625b))
+* **db:** attachment.created_date is seconds, not nanoseconds ([ace4ef3](https://github.com/george43g/imsg-mcp/commit/ace4ef3daf83c80492b7803fd50da6b0c5694d19))
+* **db:** only set richContentSummary when balloon_bundle_id is non-NULL ([3ce6eab](https://github.com/george43g/imsg-mcp/commit/3ce6eab38064ffa4c390da4119422f678a58a1df))
+* **export:** writeAndDrain cleans up cross-listener on back-pressure path ([63fb41a](https://github.com/george43g/imsg-mcp/commit/63fb41a93ae6ae626ca9e920f5c263cf59f0c13a))
+* **logger:** get_logs(source:file) actually reads the NDJSON ([9e29680](https://github.com/george43g/imsg-mcp/commit/9e29680b3e611415b7220a1f2f5eec6f7c812a9e))
+* **logger:** heap warn threshold env-configurable, bumped default to 256MB ([69ff195](https://github.com/george43g/imsg-mcp/commit/69ff19548e2ec2c6a6629f693248c09998b2dcf7))
+* **mcp:** friendlier tool error messages from Zod validation ([7126993](https://github.com/george43g/imsg-mcp/commit/71269932be80eab53888fa6ea62683fed55a47ae))
+* **mcp:** get_messages engine label reflects runtime, not hardcoded "TS" ([a623e5b](https://github.com/george43g/imsg-mcp/commit/a623e5bfda8ddb37fe779553bee0a6d24dd228db))
+* **mcp:** hard-cap list_conversations / search_contacts / get_unread_messages ([e8cf2c7](https://github.com/george43g/imsg-mcp/commit/e8cf2c7ebff1121213dd4da1530a8ff92b3cecd1))
+* **mcp:** surface search_messages mode + minScore in the public schema ([aaa93bc](https://github.com/george43g/imsg-mcp/commit/aaa93bc91c5d6929f7be8155e838e2be982f7cb9))
+* **mcp:** wait_for_reply cancellation honors signal during sleep ([ceaf1d5](https://github.com/george43g/imsg-mcp/commit/ceaf1d5d6f07fb6cf8115db18f2939977da2bd65))
+* **parser:** structured NSString parse in Rust eliminates length-byte prefix ([44c2440](https://github.com/george43g/imsg-mcp/commit/44c2440b538af0641e15deb7588e714d9a69ace9))
+* **reliability:** handle unhandled rejections + uncaught exceptions ([f2bb242](https://github.com/george43g/imsg-mcp/commit/f2bb2424c17cc78699d9fb3500d9f487ffbf0352))
+* **search:** emoji + punctuation queries match via raw substring fast path ([b6c1472](https://github.com/george43g/imsg-mcp/commit/b6c1472622c2df38040a975b2ba7af31bd64f1b5))
+* **send:** check_imessage_availability rejects malformed handles ([6458d68](https://github.com/george43g/imsg-mcp/commit/6458d6818598649fb9fe486e05ccde27dec3319b))
+* **send:** validation failures populate get_last_send_error too ([e0991b5](https://github.com/george43g/imsg-mcp/commit/e0991b56d518749d298aad932a104bf2570607f2))
+* **tui:** drawer Label colon + status bar overflow + compact engine label ([121d789](https://github.com/george43g/imsg-mcp/commit/121d789edc1bc87315ee1b8bb6e46c9c5a20deb3))
+* **tui:** emoji-safe truncation in ConversationItem (no mid-surrogate splits) ([a1f20af](https://github.com/george43g/imsg-mcp/commit/a1f20af7482d1d730c76ac38a666a1e13494c98c))
+* **tui:** live audit pass — DevStats wrap, filter Enter, send-via collapse ([fb87da8](https://github.com/george43g/imsg-mcp/commit/fb87da8cef22d8fc301b34250ffdac995985111f))
+* **tui:** opaque DateJumpModal + ExportModal, pluralize selection summary ([fb4a16f](https://github.com/george43g/imsg-mcp/commit/fb4a16f00ef612bd298655da4fec6914c287cd87))
+* **tui:** preserve prefix chars on overflow rows (HelpBar + MessageBubble) ([8988e55](https://github.com/george43g/imsg-mcp/commit/8988e55138862902c494804264e85731d2128a84))
+* **tui:** ThreadPane header truncates instead of wrapping mid-word ([c400ca6](https://github.com/george43g/imsg-mcp/commit/c400ca6f29ed2d48f0f0a5effde60e55bb518390))
+
+
+### Features
+
+* o-key toast, gg debounce tightening, IMSG_DEFAULT_COUNTRY env ([4197e22](https://github.com/george43g/imsg-mcp/commit/4197e2216466e76a04070a1af1471706f1210f82))
+* **recipient:** normalize 4 input forms into send-ready handles ([e8a73e4](https://github.com/george43g/imsg-mcp/commit/e8a73e47747fb593f3884a1ff61efe29282affd6))
+* **release:** migrate DXT → MCPB bundle format, attach to GitHub release ([b76111b](https://github.com/george43g/imsg-mcp/commit/b76111beb083dd334df66a9d1ce2bd8674e45b44))
+* **tui:** compose-to-new-thread surface (N key + ComposeRecipientModal) ([8fb65ad](https://github.com/george43g/imsg-mcp/commit/8fb65adcae1a9e940137e979f5ecdce614d5751c))
+* **tui:** transparency badge — show normalized recipient handle ([5403eac](https://github.com/george43g/imsg-mcp/commit/5403eac05a0c6b4e3277630e4f4fbe26bec0013f))
+* **tui:** warn at startup when powerline theme has no Nerd Font ([824e9c7](https://github.com/george43g/imsg-mcp/commit/824e9c77c6142b28547fa5e4054752d8b4120ebd))
+* vanity-letter phone parsing + ambiguous-contact numbered picker ([d7b3529](https://github.com/george43g/imsg-mcp/commit/d7b352936b5c2c925f9e400cc4a6605d87f8bb1b))
+
 # 1.0.0 (2026-05-25)
 
 
