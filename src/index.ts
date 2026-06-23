@@ -787,22 +787,27 @@ export class IMessageMCPServer {
     });
     const durMs = span.end({ format, count: result.count, sizeBytes: result.sizeBytes });
 
-    return toolText(
-      [
-        `Exported ${result.count} message(s) to ${result.savedTo}`,
-        `Format: ${format}`,
-        `Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
-        `Size: ${(result.sizeBytes / 1024).toFixed(1)} KB`,
-        `_Took ${durMs.toFixed(0)}ms_`,
-      ].join("\n"),
-      {
-        ...result,
-        format,
-        oldest: result.oldest?.toISOString() ?? null,
-        newest: result.newest?.toISOString() ?? null,
-        durationMs: durMs,
-      },
-    );
+    const lines = [
+      `Exported ${result.count} message(s) to ${result.savedTo}`,
+      `Format: ${format}`,
+      `Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
+      `Size: ${(result.sizeBytes / 1024).toFixed(1)} KB`,
+    ];
+    if (result.unmergedSiblings.length > 0) {
+      const which = result.unmergedSiblings.map((s) => s.chatIdentifier).join(", ");
+      lines.push(
+        `⚠️ ${result.unmergedSiblings.length} other chat(s) (${which}) share this contact's identity but were not merged — history may be incomplete.`,
+      );
+    }
+    lines.push(`_Took ${durMs.toFixed(0)}ms_`);
+
+    return toolText(lines.join("\n"), {
+      ...result,
+      format,
+      oldest: result.oldest?.toISOString() ?? null,
+      newest: result.newest?.toISOString() ?? null,
+      durationMs: durMs,
+    });
   }
 
   private async handleGetUnreadMessages(args: unknown) {

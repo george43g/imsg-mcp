@@ -39,6 +39,7 @@ Stable, human-readable IDs for conversations: `{name}~{service}~{4-hex}` (e.g. `
 - `list_conversations` returns `threadSlug` per row
 - `send_message` accepts `threadSlug` or `recipient`
 - `wait_for_reply` accepts `threadSlug` or `chatIdentifier`
+- **Per-identity, not per-chat:** all legs of one contact (phone + email, SMS + iMessage) share ONE slug (hashes the identity merge key, not the chat guid). Contacts merge across the local + iCloud Address Books — see **`docs/CONTACT_MERGE_AND_SLUGS.md`** (build contacts via `getContactsDbPaths()`, never a single path, or exports undercount).
 - See `src/thread-slug.ts`, `src/slug-store.ts`
 
 ## Binaries

@@ -174,65 +174,141 @@ export class ContactsDB {
       .all() as any[];
 
     for (const row of contacts) {
-      const globalId = this.nextContactId++;
-      const contact: Contact = {
-        id: globalId,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        middleName: row.middleName,
-        nickname: row.nickname,
-        organization: row.organization,
-        displayName: this.buildDisplayName(row),
-        phoneNumbers: [],
-        emails: [],
-      };
-
       const localId = row.localId as number;
 
-      const phones = db
-        .prepare(`
+      const phones = (
+        db
+          .prepare(`
         SELECT ZFULLNUMBER as number, ZLABEL as label
         FROM ZABCDPHONENUMBER
         WHERE ZOWNER = ? OR Z22_OWNER = ?
       `)
-        .all(localId, localId) as any[];
+          .all(localId, localId) as any[]
+      ).filter((p) => p.number);
 
-      for (const phone of phones) {
-        if (phone.number) {
-          contact.phoneNumbers.push(phone.number);
-          const lookup: ContactLookup = {
-            contactId: contact.id,
-            displayName: contact.displayName,
-            label: phone.label,
-          };
-          for (const variant of normalizedPhoneVariants(phone.number)) {
-            this.phoneMap.set(variant, lookup);
-          }
-        }
-      }
-
-      const emails = db
-        .prepare(`
+      const emails = (
+        db
+          .prepare(`
         SELECT ZADDRESS as email, ZLABEL as label
         FROM ZABCDEMAILADDRESS
         WHERE ZOWNER = ? OR Z22_OWNER = ?
       `)
-        .all(localId, localId) as any[];
+          .all(localId, localId) as any[]
+      ).filter((e) => e.email);
+
+      // Cross-source dedup + union: if any handle already resolves to a contact
+      // loaded from an earlier source DB, reuse that contact instead of minting
+      // a new id. Otherwise a person split across a local card (phone) and an
+      // iCloud card (email) gets two ids and their chats never merge.
+      //
+      // A single card can bridge MULTIPLE previously-separate ids (its phone hit
+      // contact X, its email hit contact Y) — in that case union them all into
+      // one identity so "wherever a contact's handles are found, they merge".
+      const existingIds = this.findExistingContactIds(
+        phones.map((p) => p.number as string),
+        emails.map((e) => e.email as string),
+      );
+      let contact: Contact;
+      if (existingIds.length === 0) {
+        contact = {
+          id: this.nextContactId++,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          middleName: row.middleName,
+          nickname: row.nickname,
+          organization: row.organization,
+          displayName: this.buildDisplayName(row),
+          phoneNumbers: [],
+          emails: [],
+        };
+      } else {
+        const survivorId = existingIds[0];
+        for (let i = 1; i < existingIds.length; i++) {
+          this.mergeContacts(survivorId, existingIds[i]);
+        }
+        contact = this.contactCache.get(survivorId) as Contact;
+      }
+
+      for (const phone of phones) {
+        if (!contact.phoneNumbers.includes(phone.number)) contact.phoneNumbers.push(phone.number);
+        const lookup: ContactLookup = {
+          contactId: contact.id,
+          displayName: contact.displayName,
+          label: phone.label,
+        };
+        for (const variant of normalizedPhoneVariants(phone.number)) {
+          this.phoneMap.set(variant, lookup);
+        }
+      }
 
       for (const email of emails) {
-        if (email.email) {
-          contact.emails.push(email.email);
-          const normalized = normalizeEmail(email.email);
-          this.emailMap.set(normalized, {
-            contactId: contact.id,
-            displayName: contact.displayName,
-            label: email.label,
-          });
-        }
+        if (!contact.emails.includes(email.email)) contact.emails.push(email.email);
+        this.emailMap.set(normalizeEmail(email.email), {
+          contactId: contact.id,
+          displayName: contact.displayName,
+          label: email.label,
+        });
       }
 
       this.contactCache.set(contact.id, contact);
     }
+  }
+
+  /**
+   * Probe the already-loaded lookup maps for every existing contactId that
+   * shares any of these handles (loaded from earlier source DBs). Returns the
+   * distinct ids in first-seen order; the caller treats the first as the
+   * survivor and unions the rest. Empty when none match.
+   */
+  private findExistingContactIds(phones: string[], emails: string[]): number[] {
+    const ids: number[] = [];
+    const seen = new Set<number>();
+    const add = (id: number) => {
+      if (!seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    };
+    for (const number of phones) {
+      for (const variant of normalizedPhoneVariants(number)) {
+        const hit = this.phoneMap.get(variant);
+        if (hit) add(hit.contactId);
+      }
+    }
+    for (const email of emails) {
+      const hit = this.emailMap.get(normalizeEmail(email));
+      if (hit) add(hit.contactId);
+    }
+    return ids;
+  }
+
+  /**
+   * Fold contact `dropId` into `keepId`: union their phone/email lists and
+   * re-point every lookup-map entry (preserving labels) from the dropped id to
+   * the survivor, then forget the dropped id. Used when one card bridges two
+   * previously-separate identities.
+   */
+  private mergeContacts(keepId: number, dropId: number): void {
+    if (keepId === dropId) return;
+    const keep = this.contactCache.get(keepId);
+    const drop = this.contactCache.get(dropId);
+    if (!keep || !drop) return;
+
+    for (const p of drop.phoneNumbers)
+      if (!keep.phoneNumbers.includes(p)) keep.phoneNumbers.push(p);
+    for (const e of drop.emails) if (!keep.emails.includes(e)) keep.emails.push(e);
+
+    for (const [key, lookup] of this.phoneMap) {
+      if (lookup.contactId === dropId) {
+        this.phoneMap.set(key, { ...lookup, contactId: keepId, displayName: keep.displayName });
+      }
+    }
+    for (const [key, lookup] of this.emailMap) {
+      if (lookup.contactId === dropId) {
+        this.emailMap.set(key, { ...lookup, contactId: keepId, displayName: keep.displayName });
+      }
+    }
+    this.contactCache.delete(dropId);
   }
 
   /**

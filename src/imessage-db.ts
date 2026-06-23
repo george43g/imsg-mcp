@@ -32,6 +32,23 @@ export interface MessageRow {
   cache_has_attachments: number;
 }
 
+export interface MessageExportCursor {
+  date: number;
+  rowid: number;
+}
+
+export interface MessageExportPage {
+  messages: Message[];
+  nextCursor: MessageExportCursor | null;
+  rawCount: number;
+}
+
+/** A chat that appears to be the same person as the exported conversation but was not merged into it. */
+export interface UnmergedSiblingChat {
+  chatIdentifier: string;
+  reason: string;
+}
+
 import { extractAttributedBodyText } from "./attributed-body-text.js";
 import { ContactsDB } from "./contacts-db.js";
 import {
@@ -152,6 +169,10 @@ function getRichContentType(balloonBundleId: string | null): RichContentType | u
 /** Use schema helper for Mac epoch timestamps. */
 const macTimestampToDate = schemaMacTimestampToDate;
 
+function dateToMacTimestamp(date: Date): number {
+  return Math.floor((date.getTime() / 1000 - MAC_EPOCH_OFFSET) * NANOS_PER_SECOND);
+}
+
 export class IMessageDB {
   private raw: Database.Database;
   private dbPath: string;
@@ -162,6 +183,8 @@ export class IMessageDB {
   private slugMap = new Map<string, ChatWithLastDate>();
   /** In-memory chat guid -> slug for stable per-chat slug lookups. */
   private guidToSlug = new Map<string, string>();
+  /** Per-sync canonical service per identity key (prefer iMessage) for slugs. */
+  private identityServiceMap: Map<string, "iMessage" | "SMS"> | null = null;
 
   // ── TTL caches ───────────────────────────────────────────────────────
   private static readonly CACHE_TTL_MS = 30_000;
@@ -171,8 +194,17 @@ export class IMessageDB {
   private cachedParticipants = new Map<number, string[]>();
   private cachedMergeKeys = new Map<string, string>();
   private cachedSnippets = new Map<number, string | null>();
+  /**
+   * Per-chat reaction map (guid → reactions), TTL-cached. A large export pages
+   * the same merged chats dozens of times; without this, every page re-scanned
+   * each chat's full reaction set — O(pages × chats) — which dominated big
+   * exports and spiked event-loop lag.
+   */
+  private cachedReactionsByChat = new Map<number, { data: Map<string, Reaction[]>; ts: number }>();
   private backgroundSyncNeeded = true;
   private backgroundRefreshScheduled = false;
+  /** Set on close() so background chunked work stops touching a closed DB. */
+  private closed = false;
 
   constructor(dbPath?: string, contactsDbPaths?: string | string[], slugStorePath?: string) {
     const span = perf("IMessageDB.constructor");
@@ -200,9 +232,12 @@ export class IMessageDB {
    */
   private loadCachedSlugs(): void {
     const span = perf("loadCachedSlugs");
+    // One slug can cover many chat legs — map every guid to its slug.
+    for (const link of this.slugStore.guidLinks()) {
+      this.guidToSlug.set(link.chatGuid, link.slug);
+    }
     const records = this.slugStore.all();
     for (const r of records) {
-      this.guidToSlug.set(r.chatGuid, r.slug);
       this.slugMap.set(r.slug, {
         ROWID: 0, // placeholder -- will be filled on full sync
         guid: r.chatGuid,
@@ -221,12 +256,27 @@ export class IMessageDB {
     const resolvedName =
       !isGroup && chat.chat_identifier ? this.contacts.lookupHandle(chat.chat_identifier) : null;
 
+    // Identity key: every chat leg of one contact (phone + email, SMS +
+    // iMessage) shares this, so they collapse to ONE stable slug. Groups stay
+    // per-guid. Mirrors getConversationMergeKey so the slug tracks the merge.
+    const identityKey = isGroup
+      ? `group:${chat.guid}`
+      : this.getConversationMergeKey(chat.chat_identifier, chat.guid, false);
+
+    // Canonical service for the slug must be identity-wide (prefer iMessage),
+    // not the leg's own service — otherwise the SMS leg and iMessage leg of one
+    // contact would produce `…~sms~h` and `…~imsg~h`, i.e. two slugs.
+    const canonicalService = isGroup
+      ? this.detectServiceForChat(chat)
+      : (this.identityServiceMap?.get(identityKey) ?? this.detectServiceForChat(chat));
+
     const slug = generateThreadSlug({
       chatIdentifier: chat.chat_identifier,
       guid: chat.guid,
       displayName: chat.display_name,
-      serviceName: chat.service_name ?? null,
+      serviceName: canonicalService,
       resolvedContactName: resolvedName !== chat.chat_identifier ? resolvedName : null,
+      identityKey,
     });
 
     const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [chat.chat_identifier];
@@ -236,7 +286,7 @@ export class IMessageDB {
       chatGuid: chat.guid,
       chatIdentifier: chat.chat_identifier,
       displayName: resolvedName !== chat.chat_identifier ? resolvedName : chat.display_name || null,
-      service: this.detectServiceForChat(chat),
+      service: canonicalService,
       isGroup,
       participants: participants.join(","),
       updatedAt: Date.now(),
@@ -257,12 +307,25 @@ export class IMessageDB {
 
     const span = perf("backgroundSlugSync");
     const chats = this.getAllChatsWithLastDate();
+
+    // Precompute one canonical service per identity (prefer iMessage) so every
+    // leg of a contact hashes into the SAME slug regardless of SMS/iMessage.
+    const identityService = new Map<string, "iMessage" | "SMS">();
+    for (const c of chats) {
+      if (isGroupGuid(c.guid) || isGroupChatIdentifier(c.chat_identifier)) continue;
+      const key = this.getConversationMergeKey(c.chat_identifier, c.guid, false);
+      const svc = this.detectServiceForChat(c);
+      if (svc === "iMessage" || !identityService.has(key)) identityService.set(key, svc);
+    }
+    this.identityServiceMap = identityService;
+
     const validGuids = new Set<string>();
     let index = 0;
     let synced = 0;
     const CHUNK = 100;
 
     const processChunk = () => {
+      if (this.closed) return; // DB closed mid-sync (e.g. shutdown) — stop cleanly.
       const end = Math.min(index + CHUNK, chats.length);
       for (; index < end; index++) {
         const chat = chats[index];
@@ -468,6 +531,158 @@ export class IMessageDB {
       .slice(-limit);
     span.end({ limit, chats: chats.length, returned: sorted.length });
     return sorted;
+  }
+  /**
+   * Get one chronological export page for a conversation.
+   *
+   * This deliberately does not use getMessagesForChat's ROWID-only
+   * beforeMessageId contract. Exports need to walk the whole conversation in
+   * display order across every chat row that resolves to the same visible
+   * thread, dedupe messages linked to multiple chats before applying LIMIT,
+   * and avoid letting reaction/system rows consume page slots.
+   */
+  async getMessagesForChatExportPage(
+    chatIdentifier: string,
+    limit: number = 1000,
+    options: {
+      includeReactions?: boolean;
+      includeReactionDetails?: boolean;
+      afterCursor?: MessageExportCursor | null;
+      since?: Date | null;
+      until?: Date | null;
+    } = {},
+  ): Promise<MessageExportPage> {
+    const span = perf("getMessagesForChatExportPage");
+    const {
+      includeReactions = false,
+      includeReactionDetails = false,
+      afterCursor,
+      since,
+      until,
+    } = options;
+    const pageLimit = Math.max(1, limit);
+    const chats = this.resolveChatsForConversation(chatIdentifier);
+    if (chats.length === 0) {
+      span.end({ limit: pageLimit, returned: 0 });
+      return { messages: [], nextCursor: null, rawCount: 0 };
+    }
+
+    const chatIds = chats.map((chat) => chat.ROWID);
+    const chatPlaceholders = chatIds.map(() => "?").join(",");
+    const conditions: string[] = [
+      `cmj.chat_id IN (${chatPlaceholders})`,
+      "COALESCE(m.item_type, 0) = 0",
+    ];
+    const params: unknown[] = [...chatIds];
+
+    if (!includeReactions) {
+      conditions.push(`COALESCE(m.associated_message_type, 0) = ${AssociatedMessageType.NORMAL}`);
+    }
+    if (afterCursor) {
+      conditions.push("(m.date > ? OR (m.date = ? AND m.ROWID > ?))");
+      params.push(afterCursor.date, afterCursor.date, afterCursor.rowid);
+    }
+    if (since) {
+      conditions.push("m.date >= ?");
+      params.push(dateToMacTimestamp(since));
+    }
+    if (until) {
+      conditions.push("m.date <= ?");
+      params.push(dateToMacTimestamp(until));
+    }
+    params.push(pageLimit);
+
+    const stmt = this.raw.prepare(`
+      WITH target_messages AS (
+        SELECT
+          m.ROWID,
+          m.date,
+          MIN(c.chat_identifier) as chat_identifier
+        FROM ${Tables.MESSAGE} m
+        JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+        JOIN ${Tables.CHAT} c ON c.ROWID = cmj.chat_id
+        WHERE ${conditions.join("\n          AND ")}
+        GROUP BY m.ROWID, m.date
+        ORDER BY m.date ASC, m.ROWID ASC
+        LIMIT ?
+      )
+      SELECT
+        m.ROWID,
+        m.guid,
+        m.text,
+        m.attributedBody,
+        m.date,
+        m.is_from_me,
+        h.id as handle_id,
+        h.service as handle_service,
+        m.cache_has_attachments,
+        tm.chat_identifier,
+        m.is_read,
+        m.date_read,
+        m.is_delivered,
+        m.date_delivered,
+        m.associated_message_type,
+        m.associated_message_guid,
+        m.associated_message_emoji,
+        m.thread_originator_guid,
+        m.thread_originator_part,
+        m.balloon_bundle_id,
+        m.item_type,
+        m.date_edited,
+        m.date_retracted,
+        m.message_summary_info,
+        m.payload_data
+      FROM target_messages tm
+      JOIN ${Tables.MESSAGE} m ON m.ROWID = tm.ROWID
+      LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+      ORDER BY tm.date ASC, tm.ROWID ASC
+    `);
+
+    const rows = stmt.all(...params) as (MessageRow &
+      ExtendedMessageData & { chat_identifier: string | null })[];
+    const reactionsByGuid = new Map<string, Reaction[]>();
+    if (includeReactionDetails) {
+      for (const chat of chats) {
+        for (const [guid, reactions] of this.fetchReactionsForChat(chat.ROWID)) {
+          const existing = reactionsByGuid.get(guid);
+          if (existing) existing.push(...reactions);
+          else reactionsByGuid.set(guid, [...reactions]);
+        }
+      }
+    }
+
+    const messages: Message[] = [];
+    for (const row of rows) {
+      const text = this.parseMessageText(row);
+      if (isHiddenSystemItem(row.item_type)) continue;
+      const converted = this.convertMessage(
+        row,
+        text,
+        row.chat_identifier ?? chatIdentifier,
+        row,
+        false,
+      );
+      if (!includeReactions && converted.isReaction) continue;
+
+      if (includeReactionDetails && !converted.isReaction) {
+        const reactions = reactionsByGuid.get(row.guid);
+        if (reactions && reactions.length > 0) {
+          converted.reactions = this.consolidateReactions(reactions);
+          if (converted.reactions.length === 0) converted.reactions = undefined;
+        }
+      }
+      messages.push(converted);
+    }
+
+    const lastRow = rows[rows.length - 1];
+    const nextCursor = lastRow ? { date: lastRow.date, rowid: lastRow.ROWID } : null;
+    span.end({
+      limit: pageLimit,
+      chats: chats.length,
+      rows: rows.length,
+      returned: messages.length,
+    });
+    return { messages, nextCursor, rawCount: rows.length };
   }
 
   /**
@@ -988,6 +1203,91 @@ export class IMessageDB {
   }
 
   /**
+   * Completeness diagnostic for exports. Finds non-group chats that belong to
+   * the same identity as the exported conversation but that the merge-key logic
+   * did NOT fold in — e.g. a contact whose phone and email landed on separate
+   * Address Book cards, or chats Apple linked via `person_centric_id`.
+   *
+   * Two independent signals, unioned and deduped by chat ROWID:
+   *  1. **contactId invariant** (primary): any non-group chat whose handle
+   *     resolves (via the loaded Address Books, incl. iCloud sources) to the
+   *     same contactId as the merged set but wasn't merged. Catches merge
+   *     regressions and normalization gaps.
+   *  2. **person_centric_id** (fallback): Apple's own cross-handle link. Still
+   *     fires when the contact isn't in any Address Book — but note this column
+   *     is NULL on many real chat.dbs, so signal (1) is the dependable one.
+   *
+   * Inherent limit: a contact in NO Address Book *and* with a NULL
+   * person_centric_id cannot be linked from data alone — that case is guarded
+   * by the cross-source merge tests, not this diagnostic. Read-only.
+   */
+  findUnmergedSiblingChats(chatIdentifier: string): UnmergedSiblingChat[] {
+    const merged = this.resolveChatsForConversation(chatIdentifier);
+    if (merged.length === 0) return [];
+
+    const mergedIds = new Set(merged.map((c) => c.ROWID));
+    const siblings = new Map<number, UnmergedSiblingChat>();
+
+    const isGroupChat = (guid: string, ident: string | null): boolean =>
+      isGroupGuid(guid) || isGroupChatIdentifier(ident ?? "");
+
+    // ── Signal 1: same resolved contactId, not merged ──
+    const mergedContactIds = new Set<number>();
+    for (const chat of merged) {
+      const contact = this.contacts.lookupContact(chat.chat_identifier);
+      if (contact) mergedContactIds.add(contact.contactId);
+    }
+    if (mergedContactIds.size > 0) {
+      for (const chat of this.getAllChatsWithLastDate()) {
+        if (mergedIds.has(chat.ROWID)) continue;
+        if (isGroupChat(chat.guid, chat.chat_identifier)) continue;
+        const contact = this.contacts.lookupContact(chat.chat_identifier);
+        if (contact && mergedContactIds.has(contact.contactId)) {
+          siblings.set(chat.ROWID, {
+            chatIdentifier: chat.chat_identifier,
+            reason: "resolves to the same contact but was not merged",
+          });
+        }
+      }
+    }
+
+    // ── Signal 2: shared person_centric_id, not merged ──
+    const mergedIdList = [...mergedIds];
+    const placeholders = mergedIdList.map(() => "?").join(",");
+    const rows = this.raw
+      .prepare(`
+        SELECT DISTINCT c.ROWID as rowid, c.guid, c.chat_identifier
+        FROM ${Tables.CHAT} c
+        JOIN ${Tables.CHAT_HANDLE_JOIN} chj ON chj.chat_id = c.ROWID
+        JOIN ${Tables.HANDLE} h ON h.ROWID = chj.handle_id
+        WHERE c.ROWID NOT IN (${placeholders})
+          AND h.person_centric_id IN (
+            SELECT DISTINCT h2.person_centric_id
+            FROM ${Tables.CHAT_HANDLE_JOIN} chj2
+            JOIN ${Tables.HANDLE} h2 ON h2.ROWID = chj2.handle_id
+            WHERE chj2.chat_id IN (${placeholders})
+              AND h2.person_centric_id IS NOT NULL
+              AND h2.person_centric_id != ''
+          )
+      `)
+      .all(...mergedIdList, ...mergedIdList) as {
+      rowid: number;
+      guid: string;
+      chat_identifier: string | null;
+    }[];
+    for (const row of rows) {
+      if (isGroupChat(row.guid, row.chat_identifier)) continue;
+      if (siblings.has(row.rowid)) continue;
+      siblings.set(row.rowid, {
+        chatIdentifier: row.chat_identifier ?? row.guid,
+        reason: "shares this contact's identity (person_centric_id) but was not merged",
+      });
+    }
+
+    return [...siblings.values()];
+  }
+
+  /**
    * Get all chats with their last message date in one join query.
    * Used to resolve the correct chat for a contact when multiple chats exist (e.g. same number).
    * Results are suitable for filtering by handle/identifier then sorting by last_date descending.
@@ -1414,6 +1714,7 @@ export class IMessageDB {
         this.cachedAllChats = null;
         this.cachedLastByChat = null;
         this.cachedUnreadByChat = null;
+        this.cachedReactionsByChat.clear();
         // Pre-warm the cache
         this.getAllChatsWithLastDate();
         // Sync any new slugs
@@ -1433,6 +1734,7 @@ export class IMessageDB {
    * Close database connections
    */
   async close(): Promise<void> {
+    this.closed = true;
     this.raw.close();
     this.contacts.close();
     this.slugStore.close();
@@ -1712,6 +2014,10 @@ export class IMessageDB {
    * One query replaces N individual LIKE queries (the main perf bottleneck).
    */
   private fetchReactionsForChat(chatRowId: number): Map<string, Reaction[]> {
+    const cached = this.cachedReactionsByChat.get(chatRowId);
+    if (cached && Date.now() - cached.ts < IMessageDB.CACHE_TTL_MS) {
+      return cached.data;
+    }
     const stmt = this.raw.prepare(`
       SELECT
         m.associated_message_type,
@@ -1752,6 +2058,7 @@ export class IMessageDB {
       else result.set(targetGuid, [reaction]);
     }
 
+    this.cachedReactionsByChat.set(chatRowId, { data: result, ts: Date.now() });
     return result;
   }
 
