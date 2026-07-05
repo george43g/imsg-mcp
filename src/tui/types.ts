@@ -463,9 +463,27 @@ export function reducer(state: AppState, action: Action): AppState {
     case "SET_STATUS":
       return { ...state, status: action.status };
     case "ENTER_FILTER":
-      return { ...state, mode: "filter", filterQuery: "", focus: "sidebar" };
+      // Reset cursor + scroll to the top: the filtered list shrinks, and a
+      // stale scroll offset (e.g. after `G`) would slice past every match and
+      // render "No conversations" despite the header showing a non-zero count.
+      return {
+        ...state,
+        mode: "filter",
+        filterQuery: "",
+        focus: "sidebar",
+        selectedIdx: 0,
+        selectedModuleIdx: null,
+        sidebarScroll: 0,
+      };
     case "UPDATE_FILTER":
-      return { ...state, filterQuery: action.query };
+      // Each keystroke re-filters; keep the top matches in view.
+      return {
+        ...state,
+        filterQuery: action.query,
+        selectedIdx: 0,
+        selectedModuleIdx: null,
+        sidebarScroll: 0,
+      };
     case "EXIT_FILTER":
       return { ...state, mode: "browse", filterQuery: "" };
     case "OPEN_DRAWER":

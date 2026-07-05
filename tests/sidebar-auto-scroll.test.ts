@@ -89,3 +89,34 @@ describe("SELECT reducer auto-scroll", () => {
     expect(next.selectedIdx).toBe(9);
   });
 });
+
+describe("filter resets cursor + scroll (so matches are never sliced out of view)", () => {
+  it("ENTER_FILTER zeroes selectedIdx and sidebarScroll", () => {
+    const state = {
+      ...initialState,
+      conversations: fakeConversations(300),
+      selectedIdx: 199,
+      sidebarScroll: 190,
+      selectedModuleIdx: 2,
+    };
+    const next = reducer(state, { type: "ENTER_FILTER" });
+    expect(next.mode).toBe("filter");
+    expect(next.selectedIdx).toBe(0);
+    expect(next.sidebarScroll).toBe(0);
+    expect(next.selectedModuleIdx).toBeNull();
+  });
+
+  it("UPDATE_FILTER keeps the top matches in view on every keystroke", () => {
+    const state = {
+      ...initialState,
+      mode: "filter" as const,
+      conversations: fakeConversations(300),
+      selectedIdx: 199,
+      sidebarScroll: 190,
+    };
+    const next = reducer(state, { type: "UPDATE_FILTER", query: "naomi" });
+    expect(next.filterQuery).toBe("naomi");
+    expect(next.selectedIdx).toBe(0);
+    expect(next.sidebarScroll).toBe(0);
+  });
+});
