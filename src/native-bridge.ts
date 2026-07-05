@@ -10,22 +10,13 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/**
+ * The native module accelerates exactly two things — attributedBody blob
+ * parsing and Address Book contact resolution. Conversation/message listing,
+ * cross-handle merge, and slugs live in the TypeScript `IMessageDB` (the single
+ * source of truth); the engine label is "Rust parser + TS DB" to match.
+ */
 export interface NativeModule {
-  listConversations(
-    dbPath: string,
-    contactsMainPath: string,
-    contactsSourcesDir: string | null,
-    slugsDbPath: string,
-    limit?: number | null,
-  ): Promise<NativeConversation[]>;
-
-  getMessages(
-    dbPath: string,
-    chatIdentifier: string,
-    limit?: number | null,
-    includeReactionDetails?: boolean | null,
-  ): Promise<NativeMessage[]>;
-
   parseAttributedBody(blob: Buffer): string | null;
 
   resolveContacts(
@@ -33,41 +24,6 @@ export interface NativeModule {
     contactsSourcesDir: string | null,
     handles: string[],
   ): Promise<Record<string, string>>;
-}
-
-export interface NativeConversation {
-  chatId: string;
-  chatIdentifier: string;
-  displayName?: string;
-  rawIdentifier: string;
-  participants: string[];
-  lastMessageDate?: number;
-  lastMessageSnippet?: string;
-  unreadCount: number;
-  threadSlug: string;
-  isGroupChat: boolean;
-  serviceType: string;
-}
-
-export interface NativeMessage {
-  id: number;
-  guid: string;
-  text?: string;
-  handle: string;
-  displayName?: string;
-  isFromMe: boolean;
-  date: number;
-  dateRead?: number;
-  dateDelivered?: number;
-  isRead: boolean;
-  isDelivered: boolean;
-  chatId: string;
-  service: string;
-  isReaction: boolean;
-  isReply: boolean;
-  replyToText?: string;
-  replyToGuid?: string;
-  hasAttachments: boolean;
 }
 
 let _native: NativeModule | null | undefined;
