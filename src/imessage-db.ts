@@ -250,34 +250,67 @@ export class IMessageDB {
     span.end({ loaded: records.length });
   }
 
-  /** Generate and cache a slug for a single chat. */
-  private syncSlugForChat(chat: ChatWithLastDate): string {
+  /**
+   * Compute the canonical slug for a chat without persisting anything.
+   *
+   * Identity key: every chat leg of one contact (phone + email, SMS +
+   * iMessage) shares this, so they collapse to ONE stable slug. Groups stay
+   * per-guid. Mirrors getConversationMergeKey so the slug tracks the merge.
+   * The service segment is identity-wide (prefer iMessage) — otherwise the
+   * SMS leg and iMessage leg of one contact would produce `…~sms~h` and
+   * `…~imsg~h`, i.e. two slugs.
+   */
+  private computeSlugForChat(chat: ChatWithLastDate): {
+    slug: string;
+    isGroup: boolean;
+    resolvedName: string | null;
+    canonicalService: "iMessage" | "SMS";
+  } {
     const isGroup = isGroupGuid(chat.guid) || isGroupChatIdentifier(chat.chat_identifier);
-    const resolvedName =
-      !isGroup && chat.chat_identifier ? this.contacts.lookupHandle(chat.chat_identifier) : null;
 
-    // Identity key: every chat leg of one contact (phone + email, SMS +
-    // iMessage) shares this, so they collapse to ONE stable slug. Groups stay
-    // per-guid. Mirrors getConversationMergeKey so the slug tracks the merge.
-    const identityKey = isGroup
+    // Merge key groups legs within a session; the service map is keyed on it.
+    const mergeKey = isGroup
       ? `group:${chat.guid}`
       : this.getConversationMergeKey(chat.chat_identifier, chat.guid, false);
 
-    // Canonical service for the slug must be identity-wide (prefer iMessage),
-    // not the leg's own service — otherwise the SMS leg and iMessage leg of one
-    // contact would produce `…~sms~h` and `…~imsg~h`, i.e. two slugs.
     const canonicalService = isGroup
       ? this.detectServiceForChat(chat)
-      : (this.identityServiceMap?.get(identityKey) ?? this.detectServiceForChat(chat));
+      : (this.identityServiceMap?.get(mergeKey) ?? this.detectServiceForChat(chat));
+
+    // The persisted slug hash must NOT embed the session contactId (ids are
+    // assigned in Address Book load order and renumber when any card changes).
+    // Anchor on the contact's smallest normalized handle instead, and use the
+    // identity-level (contact card) name so every leg of a union produces the
+    // same name part even when per-handle display names differ.
+    let identityKey = mergeKey;
+    let resolvedName: string | null = null;
+    if (!isGroup && chat.chat_identifier) {
+      const lookup = this.contacts.lookupContact(chat.chat_identifier);
+      if (lookup) {
+        const anchor = this.contacts.stableAnchor(lookup.contactId);
+        if (anchor) identityKey = `contact:${anchor}`;
+        resolvedName =
+          this.contacts.getContact(lookup.contactId)?.displayName ?? lookup.displayName;
+      } else {
+        const fallback = this.contacts.lookupHandle(chat.chat_identifier);
+        resolvedName = fallback !== chat.chat_identifier ? fallback : null;
+      }
+    }
 
     const slug = generateThreadSlug({
       chatIdentifier: chat.chat_identifier,
       guid: chat.guid,
       displayName: chat.display_name,
       serviceName: canonicalService,
-      resolvedContactName: resolvedName !== chat.chat_identifier ? resolvedName : null,
+      resolvedContactName: resolvedName,
       identityKey,
     });
+    return { slug, isGroup, resolvedName, canonicalService };
+  }
+
+  /** Generate and cache a slug for a single chat. */
+  private syncSlugForChat(chat: ChatWithLastDate): string {
+    const { slug, isGroup, resolvedName, canonicalService } = this.computeSlugForChat(chat);
 
     const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [chat.chat_identifier];
 
@@ -285,7 +318,7 @@ export class IMessageDB {
       slug,
       chatGuid: chat.guid,
       chatIdentifier: chat.chat_identifier,
-      displayName: resolvedName !== chat.chat_identifier ? resolvedName : chat.display_name || null,
+      displayName: resolvedName ?? chat.display_name ?? null,
       service: canonicalService,
       isGroup,
       participants: participants.join(","),
@@ -330,13 +363,17 @@ export class IMessageDB {
       for (; index < end; index++) {
         const chat = chats[index];
         validGuids.add(chat.guid);
-        if (!this.guidToSlug.has(chat.guid)) {
+        // Self-heal: re-sync not only unknown guids but any guid whose expected
+        // canonical slug changed (contact data or merge policy changed since it
+        // was stored — e.g. a false contact union corrected). The store's
+        // guid→slug upsert remaps the leg; prune sweeps orphaned slug rows.
+        const expected = this.computeSlugForChat(chat).slug;
+        if (this.guidToSlug.get(chat.guid) !== expected) {
           this.syncSlugForChat(chat);
           synced++;
         } else {
           // Update the in-memory map with fresh data (ROWID, last_date)
-          const existingSlug = this.guidToSlug.get(chat.guid)!;
-          this.slugMap.set(existingSlug, chat);
+          this.slugMap.set(expected, chat);
         }
       }
       if (index < chats.length) {

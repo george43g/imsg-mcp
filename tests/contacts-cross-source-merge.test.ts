@@ -28,7 +28,15 @@ function newDir(): string {
 /** Build an Address Book DB with one card carrying the given phone/email handles. */
 function makeAddressBook(
   path: string,
-  card: { firstName: string; lastName: string; phone?: string; email?: string },
+  card: {
+    firstName: string;
+    lastName: string;
+    nickname?: string;
+    organization?: string;
+    phone?: string;
+    email?: string;
+    emails?: string[];
+  },
 ): void {
   const ab = new Database(path);
   ab.exec(`
@@ -43,20 +51,25 @@ function makeAddressBook(
       Z_PK INTEGER PRIMARY KEY, ZADDRESS TEXT, ZLABEL TEXT, ZOWNER INTEGER, Z22_OWNER INTEGER
     );
   `);
-  ab.prepare("INSERT INTO ZABCDRECORD (Z_PK, ZFIRSTNAME, ZLASTNAME) VALUES (1, ?, ?)").run(
-    card.firstName,
-    card.lastName,
+  ab.prepare(
+    "INSERT INTO ZABCDRECORD (Z_PK, ZFIRSTNAME, ZLASTNAME, ZNICKNAME, ZORGANIZATION) VALUES (1, ?, ?, ?, ?)",
+  ).run(
+    card.firstName || null,
+    card.lastName || null,
+    card.nickname ?? null,
+    card.organization ?? null,
   );
   if (card.phone) {
     ab.prepare(
       "INSERT INTO ZABCDPHONENUMBER (Z_PK, ZFULLNUMBER, ZLABEL, ZOWNER) VALUES (1, ?, '_$!<Mobile>!$_', 1)",
     ).run(card.phone);
   }
-  if (card.email) {
+  const allEmails = [...(card.email ? [card.email] : []), ...(card.emails ?? [])];
+  allEmails.forEach((email, i) => {
     ab.prepare(
-      "INSERT INTO ZABCDEMAILADDRESS (Z_PK, ZADDRESS, ZLABEL, ZOWNER) VALUES (1, ?, '_$!<Home>!$_', 1)",
-    ).run(card.email);
-  }
+      "INSERT INTO ZABCDEMAILADDRESS (Z_PK, ZADDRESS, ZLABEL, ZOWNER) VALUES (?, ?, '_$!<Home>!$_', 1)",
+    ).run(i + 1, email);
+  });
   ab.close();
 }
 
@@ -86,22 +99,22 @@ describe("ContactsDB cross-source dedup", () => {
     expect(byPhone?.contactId).toBe(byEmail?.contactId);
   });
 
-  it("unions two previously-separate contacts when a later card bridges them", () => {
+  it("unions two previously-separate SAME-NAME contacts when a later card bridges them", () => {
     const dir = newDir();
     const phone = "+15550000077";
     const email = "bridge@example.com";
 
     // Source 1: a card with ONLY the phone -> contact X.
     const db1 = join(dir, "AddressBook-v22.abcddb");
-    makeAddressBook(db1, { firstName: "Phone", lastName: "Only", phone });
+    makeAddressBook(db1, { firstName: "Alex", lastName: "Export", phone });
 
-    // Source 2: a DIFFERENT card with ONLY the email -> contact Y (separate id).
+    // Source 2: the same person's card with ONLY the email -> contact Y.
     const db2 = join(dir, "AddressBook-v22-source2.abcddb");
-    makeAddressBook(db2, { firstName: "Email", lastName: "Only", email });
+    makeAddressBook(db2, { firstName: "Alex", lastName: "Export", email });
 
-    // Source 3: a card carrying BOTH handles -> must union X and Y into one id.
+    // Source 3: a card carrying BOTH handles (same name) -> unions X and Y.
     const db3 = join(dir, "AddressBook-v22-source3.abcddb");
-    makeAddressBook(db3, { firstName: "Bridge", lastName: "Card", phone, email });
+    makeAddressBook(db3, { firstName: "Alex", lastName: "Export", phone, email });
 
     const contacts = new ContactsDB([db1, db2, db3]);
     contacts.initialize();
@@ -120,6 +133,76 @@ describe("ContactsDB cross-source dedup", () => {
       .listContacts(0, 0)
       .contacts.filter((c) => c.phoneNumbers.includes(phone) || c.emails.includes(email));
     expect(totalWithHandles).toHaveLength(1);
+  });
+
+  it("does NOT union differently-named cards that share one handle (org + person)", () => {
+    // Real-world shape: a person's card and their business's org card both
+    // carry the same info@ email. They are different entities — the phone of
+    // each must keep resolving to ITS card's name, and their contactIds must
+    // stay separate (else their conversations/slugs would wrongly merge).
+    const dir = newDir();
+    const orgPhone = "+15550000060";
+    const personPhone = "+15550000061";
+    const sharedEmail = "info@acme.example.com";
+    const personalEmail = "sam@personal.example.com";
+
+    const db1 = join(dir, "AddressBook-v22.abcddb");
+    makeAddressBook(db1, {
+      firstName: "",
+      lastName: "",
+      organization: "Acme VR",
+      phone: orgPhone,
+      email: sharedEmail,
+    });
+    const db2 = join(dir, "AddressBook-v22-source2.abcddb");
+    makeAddressBook(db2, {
+      firstName: "Sam",
+      lastName: "Smith",
+      nickname: "Dad",
+      phone: personPhone,
+      emails: [personalEmail, sharedEmail],
+    });
+
+    const contacts = new ContactsDB([db1, db2]);
+    contacts.initialize();
+
+    // Per-handle names: each phone resolves to the card that declares it —
+    // nickname-first for the person ("Dad", like Messages.app shows).
+    expect(contacts.lookupContact(orgPhone)?.displayName).toBe("Acme VR");
+    expect(contacts.lookupContact(personPhone)?.displayName).toBe("Dad");
+    expect(contacts.lookupContact(personalEmail)?.displayName).toBe("Dad");
+
+    // Separate identities despite the shared email.
+    expect(contacts.lookupContact(orgPhone)?.contactId).not.toBe(
+      contacts.lookupContact(personPhone)?.contactId,
+    );
+
+    // The shared handle stays with its first claimant (the org card).
+    expect(contacts.lookupContact(sharedEmail)?.displayName).toBe("Acme VR");
+  });
+
+  it("unions a nicknamed card with a full-name card for the same person", () => {
+    // Name-candidate matching: {nickname, "first last"} — a card carrying only
+    // the nickname of another card's full name is still the same person.
+    const dir = newDir();
+    const phone = "+15550000062";
+    const email = "sam.smith@example.com";
+
+    const db1 = join(dir, "AddressBook-v22.abcddb");
+    makeAddressBook(db1, { firstName: "Sam", lastName: "Smith", phone });
+    const db2 = join(dir, "AddressBook-v22-source2.abcddb");
+    makeAddressBook(db2, {
+      firstName: "Sam",
+      lastName: "Smith",
+      nickname: "Sammy",
+      phone,
+      email,
+    });
+
+    const contacts = new ContactsDB([db1, db2]);
+    contacts.initialize();
+
+    expect(contacts.lookupContact(phone)?.contactId).toBe(contacts.lookupContact(email)?.contactId);
   });
 });
 
@@ -319,6 +402,80 @@ describe("cross-handle conversation merge (number + email across sources)", () =
       const record = db.getSlugRecord(slug);
       expect(record).not.toBeNull();
       expect(record?.chatIdentifier).toBe(phone); // phone preferred as canonical handle
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("keeps slugs stable when Address Book load order renumbers contact ids", async () => {
+    // Contact ids are ephemeral (assigned in load order). The slug hash must
+    // key off the contact's stable handle anchor, so inserting an unrelated
+    // card ahead of ours — which shifts every contactId — must NOT change the
+    // slug (with self-heal, an id-keyed hash would churn every slug).
+    const { chatDb, contactDbs, slugsDb } = buildFixture({ withContactCard: true });
+
+    const db1 = new IMessageDB(chatDb, contactDbs, slugsDb);
+    let firstSlug: string | null = null;
+    try {
+      db1.scheduleBackgroundSlugSync();
+      await flush();
+      firstSlug = db1.getSlugForChatGuid(`iMessage;-;${phone}`);
+      expect(looksLikeThreadSlug(firstSlug ?? undefined)).toBe(true);
+    } finally {
+      await db1.close();
+    }
+
+    // Second session: an unrelated card now loads FIRST (new source DB path
+    // sorts ahead), renumbering all contact ids.
+    const dir = tempDirs[tempDirs.length - 1];
+    const extraDb = join(dir, "AddressBook-v22-aaa-first.abcddb");
+    makeAddressBook(extraDb, {
+      firstName: "Aaron",
+      lastName: "Aardvark",
+      phone: "+15550000001",
+    });
+
+    const db2 = new IMessageDB(chatDb, [extraDb, ...contactDbs], slugsDb);
+    try {
+      db2.scheduleBackgroundSlugSync();
+      await flush();
+      expect(db2.getSlugForChatGuid(`iMessage;-;${phone}`)).toBe(firstSlug);
+    } finally {
+      await db2.close();
+    }
+  });
+
+  it("self-heals a stale slug when the canonical slug for a guid changes", async () => {
+    const { chatDb, contactDbs, slugsDb } = buildFixture({ withContactCard: true });
+
+    // Seed the slug store with a WRONG slug for the phone's iMessage leg —
+    // simulates a slug minted under an earlier bug (e.g. false contact union).
+    const { SlugStore } = await import("../src/slug-store.js");
+    const seed = new SlugStore(slugsDb);
+    seed.upsert({
+      slug: "wrong-name~imsg~dead",
+      chatGuid: `iMessage;-;${phone}`,
+      chatIdentifier: phone,
+      displayName: "Wrong Name",
+      service: "iMessage",
+      isGroup: false,
+      participants: phone,
+      updatedAt: 1,
+    });
+    seed.close();
+
+    const db = new IMessageDB(chatDb, contactDbs, slugsDb);
+    try {
+      db.scheduleBackgroundSlugSync();
+      await flush();
+
+      const healed = db.getSlugForChatGuid(`iMessage;-;${phone}`);
+      expect(healed).not.toBe("wrong-name~imsg~dead");
+      expect(looksLikeThreadSlug(healed ?? undefined)).toBe(true);
+      // ...and it converges with every other leg of the identity.
+      expect(db.getSlugForChatGuid(`SMS;-;${email}`)).toBe(healed);
+      // The orphaned wrong slug row was pruned.
+      expect(db.getSlugRecord("wrong-name~imsg~dead")).toBeNull();
     } finally {
       await db.close();
     }
