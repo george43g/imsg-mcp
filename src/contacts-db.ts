@@ -48,8 +48,11 @@ function normalizePhoneNumber(phone: string): string {
 /**
  * All normalized forms to use when storing a number in the map,
  * so lookups by +61..., 04..., 0... all hit.
+ *
+ * Exported for handle→chat matching too: Address Book cards often store local
+ * formats ("0408 315 498") while chat identifiers are E.164 ("+61408315498").
  */
-function normalizedPhoneVariants(phone: string): string[] {
+export function normalizedPhoneVariants(phone: string): string[] {
   const normalized = normalizePhoneNumber(phone);
   const variants = new Set<string>([normalized]);
 

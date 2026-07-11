@@ -30,6 +30,7 @@ import {
 } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
+import { normalizedPhoneVariants } from "./contacts-db.js";
 import { streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
 import { IMessageDB } from "./imessage-db.js";
@@ -1327,11 +1328,21 @@ export class IMessageMCPServer {
     // Contact → conversations: map each handle to its thread slug so agents can
     // go straight from a contact search to send_message/get_messages. Resolved
     // guid-level via findChatByHandle so every leg of a merged identity reports
-    // the canonical slug (identifier-level lookup misses email legs).
+    // the canonical slug (identifier-level lookup misses email legs). Cards
+    // often store phones in local format ("0408 315 498") while chat
+    // identifiers are E.164 — try each normalized variant until one matches.
+    const resolveThreadSlug = async (handle: string): Promise<string | null> => {
+      const candidates = handle.includes("@") ? [handle] : normalizedPhoneVariants(handle);
+      for (const candidate of candidates) {
+        const conv = await this.db.findChatByHandle(candidate);
+        if (conv?.threadSlug) return conv.threadSlug;
+      }
+      return null;
+    };
     const threads = await Promise.all(
       [...contact.phoneNumbers, ...contact.emails].map(async (h) => ({
         handle: h,
-        threadSlug: (await this.db.findChatByHandle(h))?.threadSlug ?? null,
+        threadSlug: await resolveThreadSlug(h),
       })),
     );
     const withThreads = threads.filter((t) => t.threadSlug);
