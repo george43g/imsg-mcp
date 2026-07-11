@@ -245,3 +245,40 @@ describe("streamExport pagination", () => {
     }
   });
 });
+
+describe("getMessagesForChat beforeMessageId pagination", () => {
+  it("reaches every message with no skips or duplicates when ROWID order ≠ date order", async () => {
+    const { chatDb, contactDb, slugsDb } = makeSplitContactExportFixture();
+    const db = new IMessageDB(chatDb, [contactDb], slugsDb);
+
+    try {
+      // Walk older via beforeMessageId = the oldest id of the previous page,
+      // exactly as the MCP get_messages handler does.
+      const seen = new Set<number>();
+      let dupes = 0;
+      let before: number | undefined;
+      for (let i = 0; i < 20; i++) {
+        const msgs = await db.getMessagesForChat(
+          "+15550000088",
+          2,
+          before != null ? { beforeMessageId: before } : {},
+        );
+        if (msgs.length === 0) break;
+        for (const m of msgs) {
+          if (seen.has(m.id)) dupes++;
+          else seen.add(m.id);
+        }
+        const oldest = msgs[0].id; // getMessagesForChat returns date-ascending
+        if (before === oldest) break; // no progress → done
+        before = oldest;
+      }
+
+      // All 5 normal messages across both merged chats (reaction m104 excluded),
+      // reached with zero duplicates. The old ROWID-only bound reached ~2 of 5.
+      expect([...seen].sort((a, b) => a - b)).toEqual([1, 100, 101, 102, 103]);
+      expect(dupes).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+});

@@ -1,7 +1,10 @@
 /**
  * Pagination contract: getMessagesForChat with `beforeMessageId` returns
- * messages strictly older than the boundary (lower ROWID), and paginated
- * calls cover the whole history with no gaps and no duplicates.
+ * messages strictly older than the boundary in (date, ROWID) order — NOT by
+ * ROWID alone. Restored/merged threads reorder ROWIDs, so an older-date message
+ * can have a higher ROWID; paginating by the cursor's date is what covers the
+ * whole history with no gaps and no duplicates. The cursor is the oldest id of
+ * the previous page (getMessagesForChat returns date-ascending, so page[0]).
  *
  * Uses the env-data fixture (committed chat.db). Skips gracefully if the
  * fixture isn't available (e.g. fresh clone without LFS pull).
@@ -16,7 +19,7 @@ const dbPath = getImsgDbPath();
 const haveFixture = existsSync(dbPath);
 
 describe.skipIf(!haveFixture)("getMessagesForChat pagination", () => {
-  it("returns messages with id strictly less than beforeMessageId", async () => {
+  it("returns messages strictly older (by date, ROWID) than the boundary", async () => {
     const db = new IMessageDB(dbPath, getContactsDbPaths(), getSlugsDbPath());
     try {
       const convs = await db.listConversations(50);
@@ -32,15 +35,18 @@ describe.skipIf(!haveFixture)("getMessagesForChat pagination", () => {
       expect(target, "no conversation in fixture has ≥50 messages").not.toBeNull();
       if (!target) return;
 
-      // Take the most recent 30; pick the boundary as the oldest of those
+      // Take the most recent 30; the boundary is the oldest of those (page[0],
+      // since results are date-ascending) — that's the pagination cursor.
       const recent = await db.getMessagesForChat(target, 30);
-      const oldestRecentId = Math.min(...recent.map((m) => m.id));
+      const boundary = recent[0];
 
-      // Now fetch with beforeMessageId — must strictly precede that id
-      const older = await db.getMessagesForChat(target, 30, { beforeMessageId: oldestRecentId });
+      const older = await db.getMessagesForChat(target, 30, { beforeMessageId: boundary.id });
       expect(older.length).toBeGreaterThan(0);
       for (const m of older) {
-        expect(m.id).toBeLessThan(oldestRecentId);
+        const strictlyOlder =
+          m.date.getTime() < boundary.date.getTime() ||
+          (m.date.getTime() === boundary.date.getTime() && m.id < boundary.id);
+        expect(strictlyOlder).toBe(true);
       }
     } finally {
       await db.close();
@@ -62,8 +68,9 @@ describe.skipIf(!haveFixture)("getMessagesForChat pagination", () => {
       if (!target) return;
 
       const page1 = await db.getMessagesForChat(target, 20);
-      const oldestPage1 = Math.min(...page1.map((m) => m.id));
-      const page2 = await db.getMessagesForChat(target, 20, { beforeMessageId: oldestPage1 });
+      // Cursor = oldest by date (page[0]), the value the handler paginates with.
+      const cursor = page1[0].id;
+      const page2 = await db.getMessagesForChat(target, 20, { beforeMessageId: cursor });
 
       const idsPage1 = new Set(page1.map((m) => m.id));
       for (const m of page2) {
@@ -74,16 +81,23 @@ describe.skipIf(!haveFixture)("getMessagesForChat pagination", () => {
     }
   });
 
-  it("returns an empty array when beforeMessageId is past the start of history", async () => {
+  it("returns an empty array when paginating before the oldest message", async () => {
     const db = new IMessageDB(dbPath, getContactsDbPaths(), getSlugsDbPath());
     try {
-      const convs = await db.listConversations(5);
-      if (convs.length === 0) return;
-      const target = convs[0].chatIdentifier;
-
-      // Use 1 as the lower bound — no message has ROWID < 1
-      const older = await db.getMessagesForChat(target, 50, { beforeMessageId: 1 });
-      expect(older.length).toBe(0);
+      const convs = await db.listConversations(50);
+      // Find a conversation small enough to fetch whole, so page[0] is the TRUE
+      // oldest by date (not just the oldest of a capped window).
+      const LIM = 5000;
+      for (const c of convs) {
+        const all = await db.getMessagesForChat(c.chatIdentifier, LIM);
+        if (all.length === 0 || all.length >= LIM) continue;
+        const oldest = all[0]; // date-ascending → global oldest
+        const older = await db.getMessagesForChat(c.chatIdentifier, 50, {
+          beforeMessageId: oldest.id,
+        });
+        expect(older.length).toBe(0);
+        return;
+      }
     } finally {
       await db.close();
     }

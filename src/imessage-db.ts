@@ -483,6 +483,16 @@ export class IMessageDB {
     }
 
     const perChatLimit = Math.max(limit * 2, 50);
+    // The pagination cursor is an id, but ordering is by date — resolve the
+    // cursor's date so paging bounds messages by the composite (date, ROWID).
+    const beforeDate =
+      beforeMessageId != null
+        ? (
+            this.raw
+              .prepare(`SELECT date FROM ${Tables.MESSAGE} WHERE ROWID = ?`)
+              .get(beforeMessageId) as { date: number } | undefined
+          )?.date
+        : undefined;
     const result = new Map<number, Message>();
     for (const chat of chats) {
       const rows = this.fetchMessagesForChatRowId(
@@ -490,6 +500,7 @@ export class IMessageDB {
         perChatLimit,
         beforeMessageId,
         afterMessageId,
+        beforeDate,
       );
       const extBatch = this.fetchExtendedMessageDataBatch(rows.map((r) => r.ROWID));
 
@@ -1430,7 +1441,28 @@ export class IMessageDB {
     limit: number,
     beforeMessageId?: number,
     afterMessageId?: number,
+    beforeDate?: number,
   ): MessageRow[] {
+    if (beforeMessageId != null && beforeDate != null && afterMessageId == null) {
+      // History pagination: bound by the composite (date, ROWID) cursor of the
+      // beforeMessageId message. Filtering on ROWID alone while ordering by date
+      // skips older-date/higher-ROWID messages (restored/merged threads reorder
+      // ROWIDs) and re-shows newer-date/lower-ROWID ones — paginating a real
+      // thread this way reached only ~47% of it.
+      const stmt = this.raw.prepare(`
+        SELECT
+          m.ROWID, m.guid, m.text, m.attributedBody, m.date,
+          m.is_from_me, h.id as handle_id, m.cache_has_attachments
+        FROM ${Tables.MESSAGE} m
+        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
+        LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+        WHERE cmj.chat_id = ?
+          AND (m.date < ? OR (m.date = ? AND m.ROWID < ?))
+        ORDER BY m.date DESC, m.ROWID DESC
+        LIMIT ?
+      `);
+      return stmt.all(chatRowId, beforeDate, beforeDate, beforeMessageId, limit) as MessageRow[];
+    }
     if (beforeMessageId != null && afterMessageId != null) {
       // Gap-fill: messages strictly between two boundary IDs
       const stmt = this.raw.prepare(`
