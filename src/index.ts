@@ -1098,18 +1098,18 @@ export class IMessageMCPServer {
   }
 
   private async handleListConversations(args: unknown) {
-    const { limit } = ListConversationsSchema.parse(args);
-    // Sane upper cap on `0 = unlimited`. A user with 5000+ chats sees
-    // each conversation row serialise to ~400 bytes of JSON, so the
-    // unbounded response was hitting 1.8MB — well past most MCP host
-    // token caps and useless to an agent. 500 is plenty for any
-    // realistic agent-driven browse pattern and the response stays
-    // under ~200KB. Callers that genuinely need more can paginate.
+    const { limit, offset } = ListConversationsSchema.parse(args);
+    // Sane upper cap on `0 = unlimited` PER PAGE. A user with 5000+ chats sees
+    // each conversation row serialise to ~400 bytes of JSON, so an unbounded
+    // response hit ~1.8MB — well past most MCP host token caps. 500 keeps a
+    // page under ~200KB; `offset` + `nextOffset` let callers reach the rest.
     const HARD_CAP = 500;
     const resolvedLimit = Math.min(resolveLimit(limit), HARD_CAP);
-    const limited = await this.db.listConversations(resolvedLimit + 1);
-    const hasMore = limited.length > resolvedLimit;
-    const results = limited.slice(0, resolvedLimit);
+    const startAfter = offset + resolvedLimit;
+    // Fetch one page past the offset (+1 to detect more) and slice the window.
+    const limited = await this.db.listConversations(startAfter + 1);
+    const hasMore = limited.length > startAfter;
+    const results = limited.slice(offset, startAfter);
 
     if (results.length === 0) {
       return toolText("No conversations found.", {
@@ -1162,7 +1162,7 @@ export class IMessageMCPServer {
       })),
       count: results.length,
       hasMore,
-      nextOffset: null,
+      nextOffset: hasMore ? startAfter : null,
     });
   }
 

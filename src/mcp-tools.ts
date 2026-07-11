@@ -184,7 +184,9 @@ export const WaitForReplyOutputSchema = z.object({
 });
 
 export const ListConversationsSchema = z.object({
-  limit: z.number().int().min(0).default(20),
+  // Coerce: some MCP hosts serialise numeric tool args as strings.
+  limit: z.coerce.number().int().min(0).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 export const ListConversationsOutputSchema = z.object({
@@ -661,7 +663,7 @@ export const TOOLS: Tool[] = [
   {
     name: "list_conversations",
     description:
-      "List recent conversations with thread slugs, snippets, unread counts, participants, and service metadata.",
+      "List recent conversations (newest first) with thread slugs, snippets, unread counts, participants, and service metadata. Paginate with `offset` + the returned `nextOffset` to page past the per-call cap.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -669,7 +671,12 @@ export const TOOLS: Tool[] = [
         limit: {
           type: "number",
           default: 20,
-          description: "Number of conversations. 0 = unlimited.",
+          description: "Conversations per page. 0 = as many as fit (capped at 500 per call).",
+        },
+        offset: {
+          type: "number",
+          default: 0,
+          description: "Skip this many conversations (for pagination; pass the prior nextOffset).",
         },
       },
     },
