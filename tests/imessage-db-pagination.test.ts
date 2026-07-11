@@ -112,16 +112,19 @@ describe.skipIf(!haveFixture)("getMessagesForChat pagination", () => {
         const incoming = msgs.filter((m) => !m.isFromMe);
         if (incoming.length < 2) continue;
 
-        const boundary = incoming[0].id;
-        const after = await db.getMessagesAfter(c.chatIdentifier, boundary);
-        expect(after.every((m) => !m.isFromMe && m.id > boundary)).toBe(true);
-        // The DB returns rows date-ascending. ROWID and date generally
-        // correlate but not perfectly — messages received offline can
-        // land with a low ROWID and a later date. Assert by date order
-        // (which is what `getMessagesForChat` actually guarantees)
-        // rather than ROWID — pre-fix this test was brittle on real
-        // chat.db data and only passed against the synthetic fixture
-        // where ROWID == date order.
+        const boundaryMsg = incoming[0];
+        const after = await db.getMessagesAfter(c.chatIdentifier, boundaryMsg.id);
+        // "After" is composite (date, ROWID) order, not bare id order: a
+        // message received offline can land with a LOWER ROWID and a later
+        // date and must still be returned (wait_for_reply depends on it).
+        for (const m of after) {
+          expect(m.isFromMe).toBe(false);
+          expect(m.id).not.toBe(boundaryMsg.id);
+          const strictlyLater =
+            m.date.getTime() > boundaryMsg.date.getTime() ||
+            (m.date.getTime() === boundaryMsg.date.getTime() && m.id > boundaryMsg.id);
+          expect(strictlyLater).toBe(true);
+        }
         const dates = after.map((m) => m.date.getTime());
         expect(dates).toEqual([...dates].sort((a, b) => a - b));
         return;

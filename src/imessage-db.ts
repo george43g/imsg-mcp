@@ -520,16 +520,10 @@ export class IMessageDB {
     }
 
     const perChatLimit = Math.max(limit * 2, 50);
-    // The pagination cursor is an id, but ordering is by date — resolve the
+    // The pagination cursors are ids, but ordering is by date — resolve each
     // cursor's date so paging bounds messages by the composite (date, ROWID).
-    const beforeDate =
-      beforeMessageId != null
-        ? (
-            this.raw
-              .prepare(`SELECT date FROM ${Tables.MESSAGE} WHERE ROWID = ?`)
-              .get(beforeMessageId) as { date: number } | undefined
-          )?.date
-        : undefined;
+    const beforeDate = beforeMessageId != null ? this.dateOfMessage(beforeMessageId) : undefined;
+    const afterDate = afterMessageId != null ? this.dateOfMessage(afterMessageId) : undefined;
     const result = new Map<number, Message>();
     for (const chat of chats) {
       const rows = this.fetchMessagesForChatRowId(
@@ -538,6 +532,7 @@ export class IMessageDB {
         beforeMessageId,
         afterMessageId,
         beforeDate,
+        afterDate,
       );
       const extBatch = this.fetchExtendedMessageDataBatch(rows.map((r) => r.ROWID));
 
@@ -794,7 +789,11 @@ export class IMessageDB {
    */
   async getMessagesAfter(chatIdentifier: string, afterMessageId: number): Promise<Message[]> {
     const messages = await this.getMessagesForChat(chatIdentifier, 1000, { afterMessageId });
-    const filtered = messages.filter((m) => m.id > afterMessageId && !m.isFromMe);
+    // "After" means after the boundary in (date, ROWID) order — NOT a bare id
+    // comparison. A reply synced with a lower ROWID but later date is still
+    // new; an id-only filter here silently dropped it (wait_for_reply missed
+    // the reply). The SQL bound already excludes the boundary itself.
+    const filtered = messages.filter((m) => m.id !== afterMessageId && !m.isFromMe);
     filtered.sort((a, b) => a.date.getTime() - b.date.getTime());
     return filtered;
   }
@@ -826,11 +825,12 @@ export class IMessageDB {
     // Sort by last message date descending
     sortEntries.sort((a, b) => b.lastDate - a.lastDate);
 
-    // Over-fetch to account for dedup (multiple chat rows can merge into one conversation)
-    const candidates = sortEntries.slice(0, limit * 3);
-
-    // ── Pass 2: full enrichment only on candidates ──
-    const prepared = candidates.map(({ chat, isGroup, last }) => {
+    // ── Pass 2: enrich lazily in chunks until enough DEDUPED rows exist ──
+    // A fixed over-fetch factor (previously limit*3) starves offset paging
+    // when many chat rows merge into few conversations: the deduped list came
+    // up short of the requested window and the page silently truncated. Keep
+    // enriching until the deduped count reaches `limit` or chats run out.
+    const enrich = ({ chat, isGroup, last }: SortEntry) => {
       const lastDate = last ? macTimestampToDate(last.lastDate) : null;
       const rawIdentifier = chat.chat_identifier;
 
@@ -863,9 +863,18 @@ export class IMessageDB {
           serviceType,
         } satisfies Conversation,
       };
-    });
+    };
 
-    const deduped = this.mergeDuplicateConversations(prepared);
+    const CHUNK = Math.max(limit, 200);
+    const prepared: ReturnType<typeof enrich>[] = [];
+    let cursor = 0;
+    let deduped = this.mergeDuplicateConversations(prepared);
+    while (deduped.length < limit && cursor < sortEntries.length) {
+      const chunk = sortEntries.slice(cursor, cursor + CHUNK);
+      cursor += chunk.length;
+      for (const entry of chunk) prepared.push(enrich(entry));
+      deduped = this.mergeDuplicateConversations(prepared);
+    }
     const selected = deduped.slice(0, limit);
 
     const result = selected.map(({ conversation, last }) => ({
@@ -874,7 +883,7 @@ export class IMessageDB {
     }));
     span.end({
       chats: chats.length,
-      candidates: candidates.length,
+      enriched: cursor,
       deduped: deduped.length,
       returned: result.length,
     });
@@ -1469,9 +1478,25 @@ export class IMessageDB {
     return rows;
   }
 
+  /** Resolve a message ROWID to its date (for composite pagination cursors). */
+  private dateOfMessage(rowid: number): number | undefined {
+    const row = this.raw.prepare(`SELECT date FROM ${Tables.MESSAGE} WHERE ROWID = ?`).get(rowid) as
+      | { date: number }
+      | undefined;
+    return row?.date;
+  }
+
   /**
    * Fetch message rows for a chat ROWID, ordered by date DESC.
-   * Replaces the upstream IMessageDatabase.getMessagesFromChat().
+   *
+   * Pagination boundaries are composite `(date, ROWID)` cursors, NOT bare
+   * ROWID comparisons: results are ordered by date, and in restored/merged
+   * threads ROWID order diverges from date order — a ROWID-only bound both
+   * skips older-date/higher-ROWID messages and re-shows newer-date/lower-ROWID
+   * ones (paginating a real thread that way reached only ~47% of it; the same
+   * defect made wait_for_reply able to miss replies entirely). ROWID-only is
+   * kept solely as a fallback when the boundary message's date is unknown
+   * (e.g. the boundary row was deleted).
    */
   private fetchMessagesForChatRowId(
     chatRowId: number,
@@ -1479,70 +1504,31 @@ export class IMessageDB {
     beforeMessageId?: number,
     afterMessageId?: number,
     beforeDate?: number,
+    afterDate?: number,
   ): MessageRow[] {
-    if (beforeMessageId != null && beforeDate != null && afterMessageId == null) {
-      // History pagination: bound by the composite (date, ROWID) cursor of the
-      // beforeMessageId message. Filtering on ROWID alone while ordering by date
-      // skips older-date/higher-ROWID messages (restored/merged threads reorder
-      // ROWIDs) and re-shows newer-date/lower-ROWID ones — paginating a real
-      // thread this way reached only ~47% of it.
-      const stmt = this.raw.prepare(`
-        SELECT
-          m.ROWID, m.guid, m.text, m.attributedBody, m.date,
-          m.is_from_me, h.id as handle_id, m.cache_has_attachments
-        FROM ${Tables.MESSAGE} m
-        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
-        LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
-        WHERE cmj.chat_id = ?
-          AND (m.date < ? OR (m.date = ? AND m.ROWID < ?))
-        ORDER BY m.date DESC, m.ROWID DESC
-        LIMIT ?
-      `);
-      return stmt.all(chatRowId, beforeDate, beforeDate, beforeMessageId, limit) as MessageRow[];
-    }
-    if (beforeMessageId != null && afterMessageId != null) {
-      // Gap-fill: messages strictly between two boundary IDs
-      const stmt = this.raw.prepare(`
-        SELECT
-          m.ROWID, m.guid, m.text, m.attributedBody, m.date,
-          m.is_from_me, h.id as handle_id, m.cache_has_attachments
-        FROM ${Tables.MESSAGE} m
-        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
-        LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
-        WHERE cmj.chat_id = ? AND m.ROWID > ? AND m.ROWID < ?
-        ORDER BY m.date DESC, m.ROWID DESC
-        LIMIT ?
-      `);
-      return stmt.all(chatRowId, afterMessageId, beforeMessageId, limit) as MessageRow[];
-    }
+    const conditions: string[] = ["cmj.chat_id = ?"];
+    const params: unknown[] = [chatRowId];
+
     if (beforeMessageId != null) {
-      const stmt = this.raw.prepare(`
-        SELECT
-          m.ROWID, m.guid, m.text, m.attributedBody, m.date,
-          m.is_from_me, h.id as handle_id, m.cache_has_attachments
-        FROM ${Tables.MESSAGE} m
-        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
-        LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
-        WHERE cmj.chat_id = ? AND m.ROWID < ?
-        ORDER BY m.date DESC, m.ROWID DESC
-        LIMIT ?
-      `);
-      return stmt.all(chatRowId, beforeMessageId, limit) as MessageRow[];
+      if (beforeDate != null) {
+        conditions.push("(m.date < ? OR (m.date = ? AND m.ROWID < ?))");
+        params.push(beforeDate, beforeDate, beforeMessageId);
+      } else {
+        conditions.push("m.ROWID < ?");
+        params.push(beforeMessageId);
+      }
     }
     if (afterMessageId != null) {
-      const stmt = this.raw.prepare(`
-        SELECT
-          m.ROWID, m.guid, m.text, m.attributedBody, m.date,
-          m.is_from_me, h.id as handle_id, m.cache_has_attachments
-        FROM ${Tables.MESSAGE} m
-        LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
-        LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
-        WHERE cmj.chat_id = ? AND m.ROWID > ?
-        ORDER BY m.date DESC, m.ROWID DESC
-        LIMIT ?
-      `);
-      return stmt.all(chatRowId, afterMessageId, limit) as MessageRow[];
+      if (afterDate != null) {
+        conditions.push("(m.date > ? OR (m.date = ? AND m.ROWID > ?))");
+        params.push(afterDate, afterDate, afterMessageId);
+      } else {
+        conditions.push("m.ROWID > ?");
+        params.push(afterMessageId);
+      }
     }
+    params.push(limit);
+
     const stmt = this.raw.prepare(`
       SELECT
         m.ROWID, m.guid, m.text, m.attributedBody, m.date,
@@ -1550,11 +1536,11 @@ export class IMessageDB {
       FROM ${Tables.MESSAGE} m
       LEFT JOIN ${Tables.HANDLE} h ON m.handle_id = h.ROWID
       LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
-      WHERE cmj.chat_id = ?
+      WHERE ${conditions.join(" AND ")}
       ORDER BY m.date DESC, m.ROWID DESC
       LIMIT ?
     `);
-    return stmt.all(chatRowId, limit) as MessageRow[];
+    return stmt.all(...params) as MessageRow[];
   }
 
   /**

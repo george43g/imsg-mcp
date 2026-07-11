@@ -282,3 +282,55 @@ describe("getMessagesForChat beforeMessageId pagination", () => {
     }
   });
 });
+
+describe("afterMessageId + gap-fill composite cursors", () => {
+  // Fixture chronology (date ascending): m102(base) → m101(+1s) → m103(+2s)
+  // → m100(+3s) → m1(+4s). ROWIDs deliberately diverge: 102, 101, 103, 100, 1.
+
+  it("afterMessageId returns chronologically-later messages even with LOWER ROWIDs", async () => {
+    const { chatDb, contactDb, slugsDb } = makeSplitContactExportFixture();
+    const db = new IMessageDB(chatDb, [contactDb], slugsDb);
+    try {
+      // Boundary m100 (+3s). The only later message is m1 (+4s) — ROWID 1,
+      // far BELOW the boundary id. A ROWID-only bound returned nothing here.
+      const after = await db.getMessagesForChat("+15550000088", 50, { afterMessageId: 100 });
+      expect(after.map((m) => m.id)).toEqual([1]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("getMessagesAfter delivers an incoming reply whose ROWID precedes the boundary (wait_for_reply P0)", async () => {
+    const { chatDb, contactDb, slugsDb } = makeSplitContactExportFixture();
+    const db = new IMessageDB(chatDb, [contactDb], slugsDb);
+    try {
+      // Boundary m103 (+2s). The incoming reply m100 arrived later (+3s) but
+      // was stored with ROWID 100 < 103 (iCloud-sync reorder). The old
+      // ROWID-only path returned [] — wait_for_reply would poll forever.
+      const replies = await db.getMessagesAfter("+15550000088", 103);
+      expect(replies.map((m) => m.id)).toContain(100);
+      // ...and never resurfaces chronologically OLDER messages as "new".
+      expect(replies.map((m) => m.id)).not.toContain(101);
+      expect(replies.map((m) => m.id)).not.toContain(102);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("gap-fill (after+before) returns the chronological interior, not the ROWID interval", async () => {
+    const { chatDb, contactDb, slugsDb } = makeSplitContactExportFixture();
+    const db = new IMessageDB(chatDb, [contactDb], slugsDb);
+    try {
+      // Chronological gap between m102 (base) and m100 (+3s) contains m101
+      // (+1s, ROWID 101) and m103 (+2s, ROWID 103) — BOTH outside the ROWID
+      // interval (102, 100), which is empty. The old bound returned [].
+      const gap = await db.getMessagesForChat("+15550000088", 50, {
+        afterMessageId: 102,
+        beforeMessageId: 100,
+      });
+      expect(gap.map((m) => m.id)).toEqual([101, 103]);
+    } finally {
+      await db.close();
+    }
+  });
+});
