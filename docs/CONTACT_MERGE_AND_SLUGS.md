@@ -55,10 +55,21 @@ merge → **exports silently undercount**. This exact mistake once made a
 ~11,390-message thread look like 9,166. The Rust `contacts.rs` also loads all
 sources (`ContactsDb::open(main, sources_dir)`).
 
-`ContactsDB` also **dedups and unions across sources**: if a person's phone is
-on a local card and their email on an iCloud card (two `Z_PK`s), they collapse
-to one `contactId` (`findExistingContactIds` + `mergeContacts`), including the
-case where a third card *bridges* two previously-separate ids.
+`ContactsDB` also **dedups and unions across sources** — but only cards that
+plausibly name the **same entity**. Union requires the cards' name-candidate
+sets ({nickname, "first last", organization}, lowercased, diacritics stripped)
+to **intersect**: a person split across a local card (phone) and an iCloud card
+(email) with the same name — or a nickname matching another card's full name —
+collapses to one `contactId` (`findExistingContactIds` + `mergeContacts`),
+including a third same-name card *bridging* two previously-separate ids.
+
+**Sharing one handle is NOT enough to union.** Real counterexample: a person's
+card and their business's org card both carrying the same `info@` email. They
+are different entities — unioning them mislabeled the person's phone with the
+org name and would have merged both entities' conversations and slugs into one.
+Messages.app keeps them separate; so do we. The shared handle stays with its
+**first claimant**, and every handle's `displayName` comes from **the card that
+declares it** (nickname-first) — per-handle names, not the union survivor's.
 
 ## Completeness diagnostic
 
@@ -79,15 +90,25 @@ it belongs to the exported identity but wasn't merged. Two signals:
 
 A slug (`alice~imsg~a3f2`) is the stable handle for a whole identity, so it must
 be identical across every leg. `generateThreadSlug` hashes a stable
-**`identityKey`** — the merge key (`contact:<id>` or normalized handle), NOT the
-per-chat `guid` — and uses a **canonical service** (prefer iMessage) so the SMS
-leg and iMessage leg don't produce `…~sms~h` vs `…~imsg~h`.
+**`identityKey`**, NOT the per-chat `guid`, and uses a **canonical service**
+(prefer iMessage) so the SMS leg and iMessage leg don't produce `…~sms~h` vs
+`…~imsg~h`. The name part uses the **identity-level card name**, so legs whose
+per-handle names differ still yield one slug string.
+
+**The hash must survive restarts.** Session `contactId`s are assigned in
+Address Book load order and renumber whenever ANY card is added/removed, so
+`computeSlugForChat` anchors the hash on the contact's **smallest normalized
+handle** (`ContactsDB.stableAnchor`) — it changes only if that contact's own
+handles change. Never hash a session id into anything persisted.
 
 `SlugStore` (schema v2) maps **many `chat_guid`s → one slug**
 (`slug_chat_guids` table) with identity rows in `thread_slugs`. The canonical
 `chat_identifier` prefers a phone over an email. Slugs are derived data: the v2
 migration drops any v1 rows (which hashed the guid) and the background sync
-rebuilds them.
+rebuilds them. The sync also **self-heals**: any guid whose expected canonical
+slug differs from the stored one is re-synced (so slugs minted under earlier
+bugs — or after contact-data changes — converge), and prune sweeps orphaned
+slug rows.
 
 ## Invariants / tests that must keep passing
 

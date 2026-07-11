@@ -118,4 +118,17 @@ describe("MCP Output Schema Validation", () => {
     });
     expect(() => OUTPUT_SCHEMAS.get_messages.parse(res.structuredContent)).not.toThrow();
   });
+
+  it("get_contact maps each handle to its thread slug (contact → conversation)", async () => {
+    // Fixture: Blake Reed owns +15550000100, which has a 1:1 chat.
+    const res = await callHandler("get_contact", { handle: "+15550000100" });
+    const content = res.structuredContent;
+    expect(() => OUTPUT_SCHEMAS.get_contact.parse(content)).not.toThrow();
+    expect(content.contact?.displayName).toBe("Blake Reed");
+    const entry = content.threads.find((t: any) => t.handle === "+15550000100");
+    expect(entry).toBeDefined();
+    expect(entry.threadSlug).toMatch(/~/); // resolved to a real slug
+    // The text payload surfaces the mapping for CLI users too.
+    expect(res.content?.[0]?.text).toContain("Threads:");
+  });
 });

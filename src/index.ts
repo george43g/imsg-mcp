@@ -1317,15 +1317,32 @@ export class IMessageMCPServer {
       contact = this.db.contacts.getContact(id);
     }
     if (!contact) {
-      return toolText("Contact not found.", { contact: null });
+      return toolText("Contact not found.", { contact: null, threads: [] });
     }
     const phones =
       contact.phoneNumbers.length > 0 ? `\nPhones: ${contact.phoneNumbers.join(", ")}` : "";
     const emails = contact.emails.length > 0 ? `\nEmails: ${contact.emails.join(", ")}` : "";
     const org = contact.organization ? `\nOrganization: ${contact.organization}` : "";
+
+    // Contact → conversations: map each handle to its thread slug so agents can
+    // go straight from a contact search to send_message/get_messages. Resolved
+    // guid-level via findChatByHandle so every leg of a merged identity reports
+    // the canonical slug (identifier-level lookup misses email legs).
+    const threads = await Promise.all(
+      [...contact.phoneNumbers, ...contact.emails].map(async (h) => ({
+        handle: h,
+        threadSlug: (await this.db.findChatByHandle(h))?.threadSlug ?? null,
+      })),
+    );
+    const withThreads = threads.filter((t) => t.threadSlug);
+    const threadLines =
+      withThreads.length > 0
+        ? `\nThreads:\n${withThreads.map((t) => `  ${t.handle} → ${t.threadSlug}`).join("\n")}`
+        : "";
+
     return toolText(
-      `${sanitizeUserText(contact.displayName)} (id ${contact.id})${phones}${emails}${org}`,
-      { contact },
+      `${sanitizeUserText(contact.displayName)} (id ${contact.id})${phones}${emails}${org}${threadLines}`,
+      { contact, threads },
     );
   }
 

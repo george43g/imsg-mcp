@@ -143,6 +143,31 @@ async function runConsoleCommand(
         message: args.slice(1).join(" "),
       });
       return;
+    case "contacts": {
+      const verb = args[0];
+      if (verb === "list" || verb === undefined) {
+        await printToolResult(client, "list_contacts", {
+          limit: Number(args[1] ?? 20),
+          offset: Number(args[2] ?? 0),
+        });
+      } else if (verb === "search") {
+        if (!args[1]) throw new Error("Usage: contacts search <query> [limit]");
+        await printToolResult(client, "search_contacts", {
+          query: args[1],
+          limit: Number(args[2] ?? 20),
+        });
+      } else if (verb === "resolve") {
+        if (!args[1]) throw new Error("Usage: contacts resolve <handle>");
+        await printToolResult(client, "resolve_handle", { handle: args[1] });
+      } else if (verb === "show") {
+        if (!args[1]) throw new Error("Usage: contacts show <handle-or-id>");
+        const params = /^\d+$/.test(args[1]) ? { id: Number(args[1]) } : { handle: args[1] };
+        await printToolResult(client, "get_contact", params);
+      } else {
+        throw new Error(`Unknown contacts verb: ${verb}. Use list|search|resolve|show.`);
+      }
+      return;
+    }
     case "logs":
       await printToolResult(client, "get_logs", args[0] ? { tail: Number(args[0]) } : {});
       return;
@@ -190,6 +215,7 @@ Available commands:
   search <query> [n]   Search messages
   wait <chat> [secs]   Wait for a reply (default 60s)
   send <target> <msg>  Send a message
+  contacts [verb]      Contacts: list [n] [offset] | search <q> [n] | resolve <handle> | show <handle-or-id>
   logs [tail]          Show server debug logs
   last-error           Show last send failure
   tools                List available MCP tools
@@ -504,6 +530,47 @@ program
         message: messageParts.join(" "),
       }),
     );
+  });
+
+const contactsCommand = program
+  .command("contacts")
+  .description("Search and inspect macOS contacts (read-only)");
+
+contactsCommand
+  .command("list")
+  .description("List contacts, sorted by name")
+  .argument("[limit]", "Number of contacts", "20")
+  .argument("[offset]", "Skip this many (pagination)", "0")
+  .action(async (limit: string, offset: string) => {
+    await withClient((c) =>
+      printToolResult(c, "list_contacts", { limit: Number(limit), offset: Number(offset) }),
+    );
+  });
+
+contactsCommand
+  .command("search")
+  .description("Search contacts by name, phone, or email")
+  .argument("<query>", "Substring to match")
+  .argument("[limit]", "Number of results", "20")
+  .action(async (query: string, limit: string) => {
+    await withClient((c) => printToolResult(c, "search_contacts", { query, limit: Number(limit) }));
+  });
+
+contactsCommand
+  .command("resolve")
+  .description("Resolve a phone number or email to its contact name")
+  .argument("<handle>", "Phone number or email")
+  .action(async (handle: string) => {
+    await withClient((c) => printToolResult(c, "resolve_handle", { handle }));
+  });
+
+contactsCommand
+  .command("show")
+  .description("Show a contact's handles and the thread slug for each")
+  .argument("<handleOrId>", "Phone, email, or numeric contact id")
+  .action(async (handleOrId: string) => {
+    const args = /^\d+$/.test(handleOrId) ? { id: Number(handleOrId) } : { handle: handleOrId };
+    await withClient((c) => printToolResult(c, "get_contact", args));
   });
 
 program

@@ -80,10 +80,13 @@ Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 | `get_attachment` | Fetch attachment bytes (inline or path). |
 | `check_imessage_availability` | Pre-flight iMessage vs SMS reachability. |
 | `chat_analytics` | Pre-aggregated stats (heatmaps, leaderboards, etc). |
-| `list_contacts` / `search_contacts` / `get_contact` | Contact lookup. |
+| `list_contacts` / `search_contacts` | Browse/search contacts (name, phone, email). |
+| `get_contact` | One contact with all handles **+ the thread slug per handle**. |
 | `resolve_handle` | Phone/email → contact name. |
 
 </details>
+
+Contacts are also on the CLI: `imsg contacts search <query>`, `imsg contacts show <handle-or-id>` (handles → thread slugs), `imsg contacts resolve <handle>`, `imsg contacts list`.
 
 Full reference (CLI subcommands + MCP tools + every flag): [**docs/TOOLS.md**](docs/TOOLS.md).
 

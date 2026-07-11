@@ -88,10 +88,12 @@ imsg export <slug-or-handle>
 |---|---|---|
 | `list_contacts` | — | `limit` (default 20, internal safety cap 5000), `offset` for paging |
 | `search_contacts` | `query` | `limit` (default 20, `0`=unlimited capped at 1000) |
-| `get_contact` | `handle` | — |
+| `get_contact` | `handle` or `id` | Includes `threads: [{handle, threadSlug}]` — each handle's conversation slug |
 | `resolve_handle` | `handle` | — |
 
 `contact:N` selector: when a search has multiple matches, the result lists numbered candidates. Subsequent tool calls can pass `contact:1` / `contact:2` / etc. (process-wide LRU; resets on server restart).
+
+**Typical agent workflow:** `search_contacts "alex"` → pick a match → `get_contact` (returns every phone/email **and the thread slug for each**) → `send_message {threadSlug}` or `get_messages`/`export_messages` with the handle. The same flow is available on the CLI: `imsg contacts search alex`, `imsg contacts show <handle-or-id>`, `imsg contacts resolve <handle>`, `imsg contacts list [limit] [offset]`.
 
 ### Diagnostics
 
