@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { defineConfig } from "vitest/config";
+
+const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 const nodeExternals = [
   ...builtinModules,
@@ -20,6 +23,12 @@ const nodeExternals = [
 ];
 
 export default defineConfig({
+  // Single source of truth for the app version: package.json (bumped by
+  // semantic-release). Statically replaced at build/test time — never
+  // hardcode a version in src/.
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   build: {
     target: "node22",
     lib: {

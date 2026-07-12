@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_VERSION } from "./meta.js";
 
 export interface ToolCallResult {
   content?: { type: string; text?: string }[];
@@ -70,7 +71,7 @@ export class LocalMcpClient {
     const response = (await this.call("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "imsg", version: "1.0.0" },
+      clientInfo: { name: "imsg", version: APP_VERSION },
     })) as { result?: unknown };
 
     if (response.result) {
