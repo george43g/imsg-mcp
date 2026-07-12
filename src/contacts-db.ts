@@ -48,8 +48,11 @@ function normalizePhoneNumber(phone: string): string {
 /**
  * All normalized forms to use when storing a number in the map,
  * so lookups by +61..., 04..., 0... all hit.
+ *
+ * Exported for handle→chat matching too: Address Book cards often store local
+ * formats ("0408 315 498") while chat identifiers are E.164 ("+61408315498").
  */
-function normalizedPhoneVariants(phone: string): string[] {
+export function normalizedPhoneVariants(phone: string): string[] {
   const normalized = normalizePhoneNumber(phone);
   const variants = new Set<string>([normalized]);
 
@@ -87,6 +90,42 @@ function normalizedPhoneVariants(phone: string): string[] {
  */
 function normalizeEmail(email: string): string {
   return email.toLowerCase().trim();
+}
+
+/** Normalize a name for cross-card equivalence: lowercase, strip diacritics, collapse whitespace. */
+function normalizeNameForMatch(name: string | null | undefined): string {
+  if (!name) return "";
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The set of normalized names a card can be known by (nickname, "first last",
+ * organization). Two cards are considered the same entity when these sets
+ * intersect — so a card nicknamed "Dad" still matches a "Armen Grigorian" card,
+ * but an org card ("ProperyStart VR") sharing one utility email with a person
+ * does NOT match them.
+ */
+function nameCandidates(fields: {
+  firstName?: string | null;
+  lastName?: string | null;
+  nickname?: string | null;
+  organization?: string | null;
+}): Set<string> {
+  const out = new Set<string>();
+  const add = (n: string | null | undefined) => {
+    const norm = normalizeNameForMatch(n);
+    if (norm) out.add(norm);
+  };
+  add(fields.nickname);
+  const full = [fields.firstName, fields.lastName].filter(Boolean).join(" ");
+  add(full);
+  add(fields.organization);
+  return out;
 }
 
 const ADDRESS_BOOK_DIR = join(homedir(), "Library", "Application Support", "AddressBook");
@@ -174,58 +213,102 @@ export class ContactsDB {
       .all() as any[];
 
     for (const row of contacts) {
-      const globalId = this.nextContactId++;
-      const contact: Contact = {
-        id: globalId,
-        firstName: row.firstName,
-        lastName: row.lastName,
-        middleName: row.middleName,
-        nickname: row.nickname,
-        organization: row.organization,
-        displayName: this.buildDisplayName(row),
-        phoneNumbers: [],
-        emails: [],
-      };
-
       const localId = row.localId as number;
 
-      const phones = db
-        .prepare(`
+      const phones = (
+        db
+          .prepare(`
         SELECT ZFULLNUMBER as number, ZLABEL as label
         FROM ZABCDPHONENUMBER
         WHERE ZOWNER = ? OR Z22_OWNER = ?
       `)
-        .all(localId, localId) as any[];
+          .all(localId, localId) as any[]
+      ).filter((p) => p.number);
 
-      for (const phone of phones) {
-        if (phone.number) {
-          contact.phoneNumbers.push(phone.number);
-          const lookup: ContactLookup = {
-            contactId: contact.id,
-            displayName: contact.displayName,
-            label: phone.label,
-          };
-          for (const variant of normalizedPhoneVariants(phone.number)) {
-            this.phoneMap.set(variant, lookup);
-          }
-        }
-      }
-
-      const emails = db
-        .prepare(`
+      const emails = (
+        db
+          .prepare(`
         SELECT ZADDRESS as email, ZLABEL as label
         FROM ZABCDEMAILADDRESS
         WHERE ZOWNER = ? OR Z22_OWNER = ?
       `)
-        .all(localId, localId) as any[];
+          .all(localId, localId) as any[]
+      ).filter((e) => e.email);
+
+      // Cross-source dedup + union: if a handle already resolves to a contact
+      // loaded from an earlier source DB AND the two cards plausibly name the
+      // same entity, reuse that contact instead of minting a new id — that's
+      // how a person split across a local card (phone) and an iCloud card
+      // (email) merges into one identity.
+      //
+      // The name gate matters: distinct cards can legitimately share a handle
+      // (a person's card and their business's org card both carrying the same
+      // info@ email). Unioning those folds two different entities into one
+      // contactId — mislabeling conversations and wrongly merging threads. So
+      // union only when the cards' name-candidate sets intersect; otherwise
+      // mint a separate contact and leave the shared handle with its first
+      // claimant (Messages.app behaves the same way).
+      const existingIds = this.findExistingContactIds(
+        phones.map((p) => p.number as string),
+        emails.map((e) => e.email as string),
+      );
+      const cardNames = nameCandidates(row);
+      const sameEntityIds = existingIds.filter((id) => {
+        const existing = this.contactCache.get(id);
+        if (!existing) return false;
+        const existingNames = nameCandidates(existing);
+        // A card with no usable name can't be disproven — treat as a match.
+        if (cardNames.size === 0 || existingNames.size === 0) return true;
+        for (const n of cardNames) if (existingNames.has(n)) return true;
+        return false;
+      });
+
+      let contact: Contact;
+      if (sameEntityIds.length === 0) {
+        contact = {
+          id: this.nextContactId++,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          middleName: row.middleName,
+          nickname: row.nickname,
+          organization: row.organization,
+          displayName: this.buildDisplayName(row),
+          phoneNumbers: [],
+          emails: [],
+        };
+      } else {
+        const survivorId = sameEntityIds[0];
+        for (let i = 1; i < sameEntityIds.length; i++) {
+          this.mergeContacts(survivorId, sameEntityIds[i]);
+        }
+        contact = this.contactCache.get(survivorId) as Contact;
+      }
+
+      // Register handles with the DECLARING card's name (nickname-first), not
+      // the survivor's — a handle is named by the card that carries it, exactly
+      // like Messages.app. First claimant wins for a handle two cards share.
+      const handleName = this.buildDisplayName(row);
+
+      for (const phone of phones) {
+        if (!contact.phoneNumbers.includes(phone.number)) contact.phoneNumbers.push(phone.number);
+        for (const variant of normalizedPhoneVariants(phone.number)) {
+          if (!this.phoneMap.has(variant)) {
+            this.phoneMap.set(variant, {
+              contactId: contact.id,
+              displayName: handleName,
+              label: phone.label,
+            });
+          }
+        }
+      }
 
       for (const email of emails) {
-        if (email.email) {
-          contact.emails.push(email.email);
-          const normalized = normalizeEmail(email.email);
-          this.emailMap.set(normalized, {
+        if (!contact.emails.includes(email.email)) contact.emails.push(email.email);
+        const key = normalizeEmail(email.email);
+        if (!this.emailMap.has(key)) {
+          this.emailMap.set(key, {
             contactId: contact.id,
-            displayName: contact.displayName,
+            displayName: handleName,
             label: email.label,
           });
         }
@@ -233,6 +316,65 @@ export class ContactsDB {
 
       this.contactCache.set(contact.id, contact);
     }
+  }
+
+  /**
+   * Probe the already-loaded lookup maps for every existing contactId that
+   * shares any of these handles (loaded from earlier source DBs). Returns the
+   * distinct ids in first-seen order; the caller treats the first as the
+   * survivor and unions the rest. Empty when none match.
+   */
+  private findExistingContactIds(phones: string[], emails: string[]): number[] {
+    const ids: number[] = [];
+    const seen = new Set<number>();
+    const add = (id: number) => {
+      if (!seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    };
+    for (const number of phones) {
+      for (const variant of normalizedPhoneVariants(number)) {
+        const hit = this.phoneMap.get(variant);
+        if (hit) add(hit.contactId);
+      }
+    }
+    for (const email of emails) {
+      const hit = this.emailMap.get(normalizeEmail(email));
+      if (hit) add(hit.contactId);
+    }
+    return ids;
+  }
+
+  /**
+   * Fold contact `dropId` into `keepId`: union their phone/email lists and
+   * re-point every lookup-map entry (preserving labels) from the dropped id to
+   * the survivor, then forget the dropped id. Used when one card bridges two
+   * previously-separate identities.
+   */
+  private mergeContacts(keepId: number, dropId: number): void {
+    if (keepId === dropId) return;
+    const keep = this.contactCache.get(keepId);
+    const drop = this.contactCache.get(dropId);
+    if (!keep || !drop) return;
+
+    for (const p of drop.phoneNumbers)
+      if (!keep.phoneNumbers.includes(p)) keep.phoneNumbers.push(p);
+    for (const e of drop.emails) if (!keep.emails.includes(e)) keep.emails.push(e);
+
+    // Repoint the dropped id but keep each entry's per-handle displayName —
+    // the declaring card's name stays authoritative for its own handles.
+    for (const [key, lookup] of this.phoneMap) {
+      if (lookup.contactId === dropId) {
+        this.phoneMap.set(key, { ...lookup, contactId: keepId });
+      }
+    }
+    for (const [key, lookup] of this.emailMap) {
+      if (lookup.contactId === dropId) {
+        this.emailMap.set(key, { ...lookup, contactId: keepId });
+      }
+    }
+    this.contactCache.delete(dropId);
   }
 
   /**
@@ -279,6 +421,26 @@ export class ContactsDB {
       this.initialize();
     }
     return this.contactCache.get(id) || null;
+  }
+
+  /**
+   * A load-order-independent identity anchor for a contact: the
+   * lexicographically smallest normalized handle. Contact ids are assigned in
+   * Address Book load order, so they renumber whenever any card is added or
+   * removed — anything persisted across sessions (thread-slug hashes) must key
+   * off this anchor instead, which only changes if the contact's own handles
+   * change.
+   */
+  stableAnchor(contactId: number): string | null {
+    const contact = this.getContact(contactId);
+    if (!contact) return null;
+    const handles = [
+      ...contact.phoneNumbers.map((p) => normalizePhoneNumber(p)),
+      ...contact.emails.map((e) => normalizeEmail(e)),
+    ].filter((h) => h.length > 0);
+    if (handles.length === 0) return null;
+    handles.sort();
+    return handles[0];
   }
 
   /**

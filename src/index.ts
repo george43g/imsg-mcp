@@ -30,6 +30,7 @@ import {
 } from "./applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
+import { normalizedPhoneVariants } from "./contacts-db.js";
 import { streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
 import { IMessageDB } from "./imessage-db.js";
@@ -787,22 +788,27 @@ export class IMessageMCPServer {
     });
     const durMs = span.end({ format, count: result.count, sizeBytes: result.sizeBytes });
 
-    return toolText(
-      [
-        `Exported ${result.count} message(s) to ${result.savedTo}`,
-        `Format: ${format}`,
-        `Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
-        `Size: ${(result.sizeBytes / 1024).toFixed(1)} KB`,
-        `_Took ${durMs.toFixed(0)}ms_`,
-      ].join("\n"),
-      {
-        ...result,
-        format,
-        oldest: result.oldest?.toISOString() ?? null,
-        newest: result.newest?.toISOString() ?? null,
-        durationMs: durMs,
-      },
-    );
+    const lines = [
+      `Exported ${result.count} message(s) to ${result.savedTo}`,
+      `Format: ${format}`,
+      `Range: ${result.oldest?.toISOString() ?? "(none)"} → ${result.newest?.toISOString() ?? "(none)"}`,
+      `Size: ${(result.sizeBytes / 1024).toFixed(1)} KB`,
+    ];
+    if (result.unmergedSiblings.length > 0) {
+      const which = result.unmergedSiblings.map((s) => s.chatIdentifier).join(", ");
+      lines.push(
+        `⚠️ ${result.unmergedSiblings.length} other chat(s) (${which}) share this contact's identity but were not merged — history may be incomplete.`,
+      );
+    }
+    lines.push(`_Took ${durMs.toFixed(0)}ms_`);
+
+    return toolText(lines.join("\n"), {
+      ...result,
+      format,
+      oldest: result.oldest?.toISOString() ?? null,
+      newest: result.newest?.toISOString() ?? null,
+      durationMs: durMs,
+    });
   }
 
   private async handleGetUnreadMessages(args: unknown) {
@@ -1093,18 +1099,18 @@ export class IMessageMCPServer {
   }
 
   private async handleListConversations(args: unknown) {
-    const { limit } = ListConversationsSchema.parse(args);
-    // Sane upper cap on `0 = unlimited`. A user with 5000+ chats sees
-    // each conversation row serialise to ~400 bytes of JSON, so the
-    // unbounded response was hitting 1.8MB — well past most MCP host
-    // token caps and useless to an agent. 500 is plenty for any
-    // realistic agent-driven browse pattern and the response stays
-    // under ~200KB. Callers that genuinely need more can paginate.
+    const { limit, offset } = ListConversationsSchema.parse(args);
+    // Sane upper cap on `0 = unlimited` PER PAGE. A user with 5000+ chats sees
+    // each conversation row serialise to ~400 bytes of JSON, so an unbounded
+    // response hit ~1.8MB — well past most MCP host token caps. 500 keeps a
+    // page under ~200KB; `offset` + `nextOffset` let callers reach the rest.
     const HARD_CAP = 500;
     const resolvedLimit = Math.min(resolveLimit(limit), HARD_CAP);
-    const limited = await this.db.listConversations(resolvedLimit + 1);
-    const hasMore = limited.length > resolvedLimit;
-    const results = limited.slice(0, resolvedLimit);
+    const startAfter = offset + resolvedLimit;
+    // Fetch one page past the offset (+1 to detect more) and slice the window.
+    const limited = await this.db.listConversations(startAfter + 1);
+    const hasMore = limited.length > startAfter;
+    const results = limited.slice(offset, startAfter);
 
     if (results.length === 0) {
       return toolText("No conversations found.", {
@@ -1157,7 +1163,7 @@ export class IMessageMCPServer {
       })),
       count: results.length,
       hasMore,
-      nextOffset: null,
+      nextOffset: hasMore ? startAfter : null,
     });
   }
 
@@ -1312,15 +1318,42 @@ export class IMessageMCPServer {
       contact = this.db.contacts.getContact(id);
     }
     if (!contact) {
-      return toolText("Contact not found.", { contact: null });
+      return toolText("Contact not found.", { contact: null, threads: [] });
     }
     const phones =
       contact.phoneNumbers.length > 0 ? `\nPhones: ${contact.phoneNumbers.join(", ")}` : "";
     const emails = contact.emails.length > 0 ? `\nEmails: ${contact.emails.join(", ")}` : "";
     const org = contact.organization ? `\nOrganization: ${contact.organization}` : "";
+
+    // Contact → conversations: map each handle to its thread slug so agents can
+    // go straight from a contact search to send_message/get_messages. Resolved
+    // guid-level via findChatByHandle so every leg of a merged identity reports
+    // the canonical slug (identifier-level lookup misses email legs). Cards
+    // often store phones in local format ("0408 315 498") while chat
+    // identifiers are E.164 — try each normalized variant until one matches.
+    const resolveThreadSlug = async (handle: string): Promise<string | null> => {
+      const candidates = handle.includes("@") ? [handle] : normalizedPhoneVariants(handle);
+      for (const candidate of candidates) {
+        const conv = await this.db.findChatByHandle(candidate);
+        if (conv?.threadSlug) return conv.threadSlug;
+      }
+      return null;
+    };
+    const threads = await Promise.all(
+      [...contact.phoneNumbers, ...contact.emails].map(async (h) => ({
+        handle: h,
+        threadSlug: await resolveThreadSlug(h),
+      })),
+    );
+    const withThreads = threads.filter((t) => t.threadSlug);
+    const threadLines =
+      withThreads.length > 0
+        ? `\nThreads:\n${withThreads.map((t) => `  ${t.handle} → ${t.threadSlug}`).join("\n")}`
+        : "";
+
     return toolText(
-      `${sanitizeUserText(contact.displayName)} (id ${contact.id})${phones}${emails}${org}`,
-      { contact },
+      `${sanitizeUserText(contact.displayName)} (id ${contact.id})${phones}${emails}${org}${threadLines}`,
+      { contact, threads },
     );
   }
 

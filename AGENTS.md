@@ -43,11 +43,15 @@ For any `--mode`, Vite loads (each step overrides the previous): **`.env`** → 
 
 **Why:** Agents need a **stable, readable** handle per conversation—especially **group chats**, where `chat_identifier` / GUIDs are opaque. Phone/email variants are also awkward for tool arguments.
 
-**What:** Each chat gets a slug like `alice~imsg~a3f2` or `weekend-crew~imsg~d4e5` (see `src/thread-slug.ts`: sanitized name + service abbrev + short hash of GUID). `list_conversations` includes **`threadSlug`** for each row.
+**What:** Each conversation gets a slug like `alice~imsg~a3f2` or `weekend-crew~imsg~d4e5` (see `src/thread-slug.ts`: sanitized name + service abbrev + short hash of the **identity key**). The slug is **per-identity, not per-chat**: every leg of one contact (phone + email, SMS + iMessage) hashes the same `identityKey` (the merge key) and uses a canonical service → **one stable slug**. `list_conversations` includes **`threadSlug`** for each row.
 
-**Persistence:** `src/slug-store.ts` keeps mappings in **`~/.imsg-mcp/slugs.db`** (or `VITE_SLUGS_DB_PATH`). `IMessageDB` syncs from the current `chat.db`, upserts, and prunes removed GUIDs.
+**Persistence:** `src/slug-store.ts` (schema **v2**) maps **many `chat_guid`s → one slug** in **`~/.imsg-mcp/slugs.db`** (or `VITE_SLUGS_DB_PATH`). `IMessageDB` syncs from the current `chat.db`, upserts, and prunes removed GUIDs. v1 slugs (which hashed the per-chat guid) are dropped on migration and rebuilt.
 
 **Tools:** `send_message` accepts **`threadSlug`** *or* **`recipient`**. `wait_for_reply` accepts **`threadSlug`** *or* **`chatIdentifier`**. **`get_messages`** still takes **`chatIdentifier`** only (phone, email, or raw id)—not slug—so use the identifier from list output or the underlying handle when filtering messages.
+
+## Contact identity & cross-source merge
+
+One human conversation is often split across multiple `chat` rows (phone vs email, SMS vs iMessage, two of your accounts). They merge into one thread via the **Address Book `contactId`** (`getConversationMergeKey` → `contact:<id>`). **Contacts live in multiple Address Books** — the local `AddressBook-v22.abcddb` **and** iCloud `Sources/<uuid>/AddressBook-v22.abcddb` (many contacts exist *only* in a source). **Always build the contacts layer via `getContactsDbPaths()`** (loads main + all Sources) — passing a single path makes iCloud-only contacts unresolvable and **silently undercounts exports**. `ContactsDB` dedups/unions a person across sources. Full reference + invariants: **`docs/CONTACT_MERGE_AND_SLUGS.md`**. (`person_centric_id` is NULL on the dev chat.db, so the completeness diagnostic leans on the contactId signal.)
 
 ## Scripts and fixtures
 
@@ -63,6 +67,7 @@ For any `--mode`, Vite loads (each step overrides the previous): **`.env`** → 
 - **README.md** – User-facing: install, permissions, configuration, tool examples.
 - **skills.md** – Agent handoff: LFS, env summary, thread slugs, scripts, code map.
 - **docs/IMESSAGE_DB_SCHEMA.md** – iMessage DB reference: tables, timestamps (Mac epoch), message types, reactions, attachments, example SQL.
+- **docs/CONTACT_MERGE_AND_SLUGS.md** – How chats merge into one identity (cross-source Address Books, contactId), the completeness diagnostic, and per-identity thread slugs. Read before touching contacts/merge/slug code.
 
 ## MCP Tools (Summary)
 

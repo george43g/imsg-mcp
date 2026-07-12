@@ -19,13 +19,13 @@ function makeStore(): SlugStore {
 }
 
 describe("SlugStore", () => {
-  it("updates an existing chat guid when the slug changes", () => {
+  it("remaps a guid to a new slug; the orphaned old slug is cleaned on prune", () => {
     const store = makeStore();
 
     try {
       // Synthetic data using fictional reserved phone (+1-555-01xx).
-      // Same chatGuid keyed by both rows simulates a contact whose display
-      // name changed (e.g. firstname → nickname after Address Book sync).
+      // Re-upserting the same guid with a new slug simulates a contact whose
+      // display name changed (e.g. firstname → nickname after Address Book sync).
       const PHONE = "+15550000088";
       const GUID = `iMessage;-;${PHONE}`;
 
@@ -51,9 +51,66 @@ describe("SlugStore", () => {
         updatedAt: 2,
       });
 
+      // The guid now points at the new slug.
       expect(store.lookupByGuid(GUID)?.slug).toBe("alexnick~imsg~1234");
-      expect(store.lookupBySlug("alex-example~imsg~1234")).toBeNull();
       expect(store.lookupBySlug("alexnick~imsg~1234")?.displayName).toBe("AlexNick");
+      // The old slug lingers (a slug may have other legs) until prune sweeps orphans.
+      store.prune(new Set([GUID]));
+      expect(store.lookupBySlug("alex-example~imsg~1234")).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("collapses multiple chat legs of one identity into a single canonical slug", () => {
+    const store = makeStore();
+    try {
+      const SLUG = "desiree~imsg~abcd";
+      const phoneGuid = "iMessage;-;+15550000200";
+      const emailGuid = "iMessage;-;desiree@example.com";
+
+      store.upsert({
+        slug: SLUG,
+        chatGuid: phoneGuid,
+        chatIdentifier: "+15550000200",
+        displayName: "Desiree",
+        service: "iMessage",
+        isGroup: false,
+        participants: "+15550000200",
+        updatedAt: 1,
+      });
+      // Email leg arrives second under the SAME slug — must not overwrite the
+      // canonical phone identifier.
+      store.upsert({
+        slug: SLUG,
+        chatGuid: emailGuid,
+        chatIdentifier: "desiree@example.com",
+        displayName: "Desiree",
+        service: "iMessage",
+        isGroup: false,
+        participants: "desiree@example.com",
+        updatedAt: 2,
+      });
+
+      // Both legs resolve to the one slug.
+      expect(store.lookupByGuid(phoneGuid)?.slug).toBe(SLUG);
+      expect(store.lookupByGuid(emailGuid)?.slug).toBe(SLUG);
+      // One identity row, phone kept as the canonical handle.
+      expect(store.all()).toHaveLength(1);
+      expect(store.lookupBySlug(SLUG)?.chatIdentifier).toBe("+15550000200");
+      // Both guids are linked.
+      expect(
+        store
+          .guidLinks()
+          .map((l) => l.chatGuid)
+          .sort(),
+      ).toEqual([emailGuid, phoneGuid].sort());
+
+      // Pruning with only the phone leg valid drops the email link but keeps the
+      // slug (still has the phone leg).
+      store.prune(new Set([phoneGuid]));
+      expect(store.lookupBySlug(SLUG)).not.toBeNull();
+      expect(store.lookupByGuid(emailGuid)).toBeNull();
     } finally {
       store.close();
     }

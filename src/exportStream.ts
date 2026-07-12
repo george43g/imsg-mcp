@@ -4,7 +4,7 @@
  * MCP tool.
  *
  * Strategy:
- *  1. Walk older history with `beforeMessageId` cursor.
+ *  1. Walk history chronologically with a stable `(date, ROWID)` cursor.
  *  2. Each page is formatted and written immediately to a writable stream.
  *  3. For JSON we emit a top-level `{ ..., messages: [...] }` shape, opening
  *     the array, comma-separating page entries, then closing — that way we
@@ -14,9 +14,8 @@
  */
 
 import { createWriteStream, statSync } from "node:fs";
-import type { IMessageDB } from "./imessage-db.js";
+import type { IMessageDB, MessageExportCursor, UnmergedSiblingChat } from "./imessage-db.js";
 import { toCSV, toMarkdown, toNDJSONLine } from "./tui/exportFormats.js";
-import { minMessageId } from "./types.js";
 
 export interface ExportOptions {
   db: IMessageDB;
@@ -35,6 +34,7 @@ export interface ExportResult {
   oldest: Date | null;
   newest: Date | null;
   sizeBytes: number;
+  unmergedSiblings: UnmergedSiblingChat[];
 }
 
 /** Type guard — Node ESM filesystem stream */
@@ -78,7 +78,7 @@ export async function streamExport(opts: ExportOptions): Promise<ExportResult> {
   let count = 0;
   let oldest: Date | null = null;
   let newest: Date | null = null;
-  let beforeMessageId: number | undefined;
+  let cursor: MessageExportCursor | null = null;
 
   try {
     if (signal?.aborted) throw new Error("Export cancelled by client.");
@@ -107,62 +107,53 @@ export async function streamExport(opts: ExportOptions): Promise<ExportResult> {
 
     let firstJson = true;
 
-    // Page through history. After the first page, use beforeMessageId =
-    // (oldest id in previous page) to fetch the next older page.
+    // Page through history in chronological order. The export-specific DB
+    // method applies date bounds in SQL and dedupes merged chat rows before
+    // LIMIT so every normal message gets one chance to be exported.
     while (true) {
       if (signal?.aborted) throw new Error("Export cancelled by client.");
-
-      const page = await db.getMessagesForChat(chatIdentifier, pageSize, {
+      const page = await db.getMessagesForChatExportPage(chatIdentifier, pageSize, {
         includeReactionDetails: true,
-        beforeMessageId,
+        afterCursor: cursor,
+        since,
+        until,
       });
-      if (page.length === 0) break;
-
-      // Filter by date bounds (since/until) — applied per page
-      const filtered = page.filter((m) => {
-        if (since && m.date < since) return false;
-        if (until && m.date > until) return false;
-        return true;
-      });
+      if (page.messages.length === 0) break;
 
       // Track running oldest/newest for the result
-      for (const m of filtered) {
+      for (const m of page.messages) {
         if (oldest == null || m.date < oldest) oldest = m.date;
         if (newest == null || m.date > newest) newest = m.date;
       }
 
       // Format and write
-      if (filtered.length > 0) {
+      if (page.messages.length > 0) {
         if (format === "markdown") {
           await writeAndDrain(
             stream,
-            toMarkdown(filtered, { thread: chatIdentifier }).split("\n").slice(7).join("\n"),
+            toMarkdown(page.messages, { thread: chatIdentifier }).split("\n").slice(6).join("\n"),
           );
-          // ^ slice(7) skips the per-page header — we wrote it once above
+          // ^ slice(6) skips the per-page header (6 lines without participants) — we wrote it once above
         } else if (format === "csv") {
           // toCSV emits its own header; skip the first line on each page
-          const csvBody = toCSV(filtered).split("\n").slice(1).join("\n");
+          const csvBody = toCSV(page.messages).split("\n").slice(1).join("\n");
           await writeAndDrain(stream, `${csvBody}\n`);
         } else if (format === "json") {
-          for (const m of filtered) {
+          for (const m of page.messages) {
             if (!firstJson) await writeAndDrain(stream, ",\n");
             await writeAndDrain(stream, `    ${toNDJSONLine(m)}`);
             firstJson = false;
           }
         } else if (format === "ndjson") {
-          for (const m of filtered) {
+          for (const m of page.messages) {
             await writeAndDrain(stream, `${toNDJSONLine(m)}\n`);
           }
         }
       }
+      count += page.messages.length;
 
-      count += filtered.length;
-
-      // Advance cursor — next page is older than the current oldest
-      const pageOldestId = minMessageId(page) ?? 0;
-      if (page.length < pageSize) break; // last page
-      if (since && oldest && oldest <= since) break; // crossed lower bound
-      beforeMessageId = pageOldestId;
+      cursor = page.nextCursor;
+      if (!cursor || page.rawCount < pageSize) break; // last page
 
       // Yield so other tasks (e.g. health_check) can run
       await new Promise((r) => setImmediate(r));
@@ -182,7 +173,9 @@ export async function streamExport(opts: ExportOptions): Promise<ExportResult> {
       }
     })();
 
-    return { savedTo: outputPath, count, oldest, newest, sizeBytes };
+    const unmergedSiblings = db.findUnmergedSiblingChats(chatIdentifier);
+
+    return { savedTo: outputPath, count, oldest, newest, sizeBytes, unmergedSiblings };
   } catch (error) {
     stream.destroy();
     throw error;

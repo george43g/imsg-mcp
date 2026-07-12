@@ -118,4 +118,27 @@ describe("MCP Output Schema Validation", () => {
     });
     expect(() => OUTPUT_SCHEMAS.get_messages.parse(res.structuredContent)).not.toThrow();
   });
+
+  it("get_contact maps each handle to its thread slug (contact → conversation)", async () => {
+    // Slugs are derived data: on a fresh fixture set (CI regenerates
+    // fixtures/slugs.db) the store starts empty until the background sync
+    // populates it. Kick the sync and wait for the fixture chat's slug so the
+    // assertion doesn't depend on leftover local state.
+    server.db.scheduleBackgroundSlugSync();
+    const deadline = Date.now() + 5000;
+    while (!server.db.getSlugForChatGuid("iMessage;-;+15550000100") && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    // Fixture: Blake Reed owns +15550000100, which has a 1:1 chat.
+    const res = await callHandler("get_contact", { handle: "+15550000100" });
+    const content = res.structuredContent;
+    expect(() => OUTPUT_SCHEMAS.get_contact.parse(content)).not.toThrow();
+    expect(content.contact?.displayName).toBe("Blake Reed");
+    const entry = content.threads.find((t: any) => t.handle === "+15550000100");
+    expect(entry).toBeDefined();
+    expect(entry.threadSlug).toMatch(/~/); // resolved to a real slug
+    // The text payload surfaces the mapping for CLI users too.
+    expect(res.content?.[0]?.text).toContain("Threads:");
+  });
 });

@@ -64,12 +64,24 @@ export interface SlugInput {
   serviceName: string | null;
   /** Resolved contact name for 1-on-1 chats (from ContactsDB). */
   resolvedContactName: string | null;
+  /**
+   * Stable identity key the hash is derived from, so every chat leg of one
+   * identity yields the SAME slug. For a 1-on-1 with a resolved contact this is
+   * `contact:<contactId>` (covers all the contact's numbers + emails across SMS
+   * and iMessage); otherwise the normalized handle; for groups, the chat guid.
+   * Falls back to `guid` when not provided.
+   */
+  identityKey?: string;
 }
 
 /**
  * Generate a thread slug from chat metadata.
  *
  * Format: {sanitized-name}~{service}~{short-hash}
+ *
+ * The hash is derived from `identityKey` (not the per-chat guid) so a contact
+ * whose conversation is split across a phone chat and an email chat — and across
+ * SMS + iMessage — collapses to ONE stable slug.
  *
  * Examples:
  *   1-on-1 with contact: alice~imsg~a3f2
@@ -79,7 +91,7 @@ export interface SlugInput {
  */
 export function generateThreadSlug(input: SlugInput): string {
   const svc = serviceAbbrev(input.serviceName || "iMessage");
-  const hash = shortHash(input.guid);
+  const hash = shortHash(input.identityKey ?? input.guid);
   const isGroup = isGroupGuid(input.guid) || isGroupChatIdentifier(input.chatIdentifier);
 
   let namePart: string;

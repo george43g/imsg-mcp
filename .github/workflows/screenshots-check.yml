@@ -19,10 +19,12 @@ jobs:
     # `pnpm screenshots:check` twice in a row on the same machine produces
     # drift in the resulting PNGs. The check is useful as a "did the TUI
     # surface change?" signal, but cannot be a hard gate without a tolerant
-    # image-diff (pixelmatch / ImageMagick `compare -metric AE`). Mark the
-    # job as informational so it surfaces drift in the PR status without
-    # blocking merge. Track a follow-up: replace byte-equality with a
-    # threshold-based pixel diff.
+    # image-diff (pixelmatch / ImageMagick `compare -metric AE`). The drift
+    # step is therefore REPORT-ONLY (warning annotation + file list, exit 0):
+    # job-level continue-on-error alone still painted a red X on the PR
+    # checks list even though the workflow run succeeded. continue-on-error
+    # stays to absorb infra flakiness (brew/vhs/font installs). Track a
+    # follow-up: replace byte-equality with a threshold-based pixel diff.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -66,13 +68,13 @@ jobs:
       - name: Regenerate screenshots
         run: pnpm screenshots
 
-      - name: Fail on drift
+      - name: Report drift (informational)
         run: |
-          if ! git diff --exit-code -- docs/screenshots/; then
+          if ! git diff --quiet -- docs/screenshots/; then
+            echo "::warning::Screenshots drifted from source (byte-level; often vhs render noise). If the TUI surface changed intentionally, run 'pnpm screenshots' locally and commit the result."
             echo ""
-            echo "::error::Screenshots are stale. Run 'pnpm screenshots' locally and commit the result."
-            echo ""
+            echo "Drifted files:"
             git diff --name-only -- docs/screenshots/
-            exit 1
+          else
+            echo "✓ screenshots match source"
           fi
-          echo "✓ screenshots match source"

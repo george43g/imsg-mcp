@@ -32,6 +32,25 @@ function mount(opts?: {
   );
 }
 
+/**
+ * Poll the rendered frame until `pred` holds, or the timeout elapses. Ink's
+ * TextInput state updates are async; a fixed sleep flaked under full-suite CPU
+ * contention (render sometimes took >30ms), so wait on the condition instead.
+ */
+async function waitForFrame(
+  lastFrame: () => string | undefined,
+  pred: (frame: string) => boolean,
+  timeoutMs = 1500,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let frame = lastFrame() ?? "";
+  while (!pred(frame) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+    frame = lastFrame() ?? "";
+  }
+  return frame;
+}
+
 describe("ComposeRecipientModal — initial render", () => {
   it("starts on stage 1 (recipient entry)", () => {
     const { lastFrame, unmount } = mount();
@@ -80,10 +99,9 @@ describe("ComposeRecipientModal — ambiguous numbered picker", () => {
     );
     const { lastFrame, stdin, unmount } = mount({ resolve });
     stdin.write("b"); // trigger any-input → resolution recomputes
-    // TextInput's internal state update isn't synchronous — give Ink a
-    // tick so the next render reflects the typed character.
-    await new Promise((r) => setTimeout(r, 30));
-    const frame = lastFrame() ?? "";
+    const frame = await waitForFrame(lastFrame, (f) =>
+      f.includes("1: Brian Osborne (+61411113227)"),
+    );
     expect(frame).toContain("1: Brian Osborne (+61411113227)");
     expect(frame).toContain("2: Brian Osborne (brian@example.com)");
     expect(frame).toContain("Press 1-9 to pick a match");
@@ -108,10 +126,9 @@ describe("ComposeRecipientModal — ambiguous numbered picker", () => {
     );
     const { stdin, lastFrame, unmount } = mount({ resolve });
     stdin.write("b"); // any-input
-    await new Promise((r) => setTimeout(r, 30));
+    await waitForFrame(lastFrame, (f) => f.includes("Press 1-9 to pick a match"));
     stdin.write("2"); // pick candidate #2 (email)
-    await new Promise((r) => setTimeout(r, 30));
-    const frame = lastFrame() ?? "";
+    const frame = await waitForFrame(lastFrame, (f) => f.includes("New message — body"));
     expect(frame).toContain("New message — body");
     expect(frame).toContain("To: Brian Osborne (brian@example.com)");
     unmount();
@@ -128,8 +145,7 @@ describe("ComposeRecipientModal — resolution badge transparency", () => {
     );
     const { stdin, lastFrame, unmount } = mount({ resolve });
     stdin.write("0");
-    await new Promise((r) => setTimeout(r, 30));
-    const frame = lastFrame() ?? "";
+    const frame = await waitForFrame(lastFrame, (f) => f.includes("→ +61401990797"));
     expect(frame).toContain("→ +61401990797");
     unmount();
   });
@@ -143,8 +159,7 @@ describe("ComposeRecipientModal — resolution badge transparency", () => {
     );
     const { stdin, lastFrame, unmount } = mount({ resolve });
     stdin.write("+61401990797");
-    await new Promise((r) => setTimeout(r, 40));
-    const frame = lastFrame() ?? "";
+    const frame = await waitForFrame(lastFrame, (f) => /\[phone\]/.test(f));
     // [phone] should appear WITHOUT an arrow (input already E.164).
     expect(frame).toMatch(/\[phone\]/);
     expect(frame).not.toMatch(/\[phone → /);
@@ -157,7 +172,10 @@ describe("ComposeRecipientModal — Esc handling", () => {
     const onCancel = vi.fn();
     const { stdin, unmount } = mount({ onCancel });
     stdin.write(String.fromCharCode(27)); // ESC
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const deadline = Date.now() + 1500;
+    while (onCancel.mock.calls.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     expect(onCancel).toHaveBeenCalledTimes(1);
     unmount();
   });

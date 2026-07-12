@@ -183,3 +183,21 @@ WHERE m.thread_originator_guid = ?
    OR m.guid = ?
 ORDER BY m.date
 ```
+
+## Contact identity & conversation merge
+
+One human conversation is frequently split across **multiple `chat` rows** — a
+phone-number chat and an email chat, an `SMS;-;…` chat and an `iMessage;-;…`
+chat, and chats routed through different `account_login`s of yours. Messages.app
+shows them as **one** thread, and imsg-mcp merges them by **Address Book
+`contactId`** (not by `chat_identifier`).
+
+- `handle.person_centric_id` is Apple's own cross-handle identity link, **but it
+  is NULL on many real `chat.db`s** (including the primary dev machine's) — do
+  not rely on it as the sole signal.
+- Contacts can live in the local Address Book **and** one or more iCloud sources
+  (`AddressBook/Sources/<uuid>/AddressBook-v22.abcddb`). All must be loaded or a
+  contact's legs won't merge and exports undercount.
+
+Full reference (merge keys, slugs, the completeness diagnostic, invariants):
+**`docs/CONTACT_MERGE_AND_SLUGS.md`**.

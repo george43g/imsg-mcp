@@ -184,7 +184,9 @@ export const WaitForReplyOutputSchema = z.object({
 });
 
 export const ListConversationsSchema = z.object({
-  limit: z.number().int().min(0).default(20),
+  // Coerce: some MCP hosts serialise numeric tool args as strings.
+  limit: z.coerce.number().int().min(0).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 export const ListConversationsOutputSchema = z.object({
@@ -326,6 +328,13 @@ export const GetContactSchema = z
   });
 export const GetContactOutputSchema = z.object({
   contact: ContactSchema.nullable(),
+  /** Per-handle conversation mapping: which thread slug each handle chats under. */
+  threads: z.array(
+    z.object({
+      handle: z.string(),
+      threadSlug: z.string().nullable(),
+    }),
+  ),
 });
 
 export const ResolveHandleSchema = z.object({
@@ -661,7 +670,7 @@ export const TOOLS: Tool[] = [
   {
     name: "list_conversations",
     description:
-      "List recent conversations with thread slugs, snippets, unread counts, participants, and service metadata.",
+      "List recent conversations (newest first) with thread slugs, snippets, unread counts, participants, and service metadata. Paginate with `offset` + the returned `nextOffset` to page past the per-call cap.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -669,7 +678,12 @@ export const TOOLS: Tool[] = [
         limit: {
           type: "number",
           default: 20,
-          description: "Number of conversations. 0 = unlimited.",
+          description: "Conversations per page. 0 = as many as fit (capped at 500 per call).",
+        },
+        offset: {
+          type: "number",
+          default: 0,
+          description: "Skip this many conversations (for pagination; pass the prior nextOffset).",
         },
       },
     },
@@ -786,7 +800,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_contact",
     description:
-      "Fetch a single contact by handle (phone/email) or by numeric id. Returns null if not found.",
+      "Fetch a single contact by handle (phone/email) or by numeric id, including each handle's thread slug (for send_message/get_messages). Returns null if not found.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",

@@ -144,6 +144,7 @@ describe("generateThreadSlug", () => {
     displayName: null,
     serviceName: "iMessage",
     resolvedContactName: null,
+    identityKey: "identifier:61401990797",
   };
 
   it("uses resolvedContactName when present (1-on-1)", () => {
@@ -213,21 +214,49 @@ describe("generateThreadSlug", () => {
     expect(slug).toMatch(/^unknown~imsg~[0-9a-f]{4}$/);
   });
 
-  it("is deterministic — same guid produces same hash", () => {
+  it("is deterministic — same identityKey produces same hash", () => {
     const a = generateThreadSlug({ ...baseInput, resolvedContactName: "Alice" });
     const b = generateThreadSlug({ ...baseInput, resolvedContactName: "Alice" });
     expect(a).toBe(b);
   });
 
-  it("changes hash when guid changes (separates slugs from the same name)", () => {
-    const a = generateThreadSlug({ ...baseInput, resolvedContactName: "Alice" });
-    const b = generateThreadSlug({
+  it("is STABLE across a contact's legs — same identityKey, different guid/identifier → same slug", () => {
+    // The phone leg and the email leg of one contact share contact:5.
+    const phoneLeg = generateThreadSlug({
       ...baseInput,
+      identityKey: "contact:5",
+      guid: "iMessage;-;+61401990797",
+      chatIdentifier: "+61401990797",
+      resolvedContactName: "Alice",
+    });
+    const emailLeg = generateThreadSlug({
+      ...baseInput,
+      identityKey: "contact:5",
       guid: "iMessage;-;alice@example.com",
       chatIdentifier: "alice@example.com",
       resolvedContactName: "Alice",
     });
-    expect(a).not.toBe(b);
-    expect(a.split("~")[0]).toBe(b.split("~")[0]); // same name part
+    expect(phoneLeg).toBe(emailLeg);
+  });
+
+  it("separates distinct identities even when the display name matches", () => {
+    const alice5 = generateThreadSlug({
+      ...baseInput,
+      identityKey: "contact:5",
+      resolvedContactName: "Alice",
+    });
+    const alice6 = generateThreadSlug({
+      ...baseInput,
+      identityKey: "contact:6",
+      resolvedContactName: "Alice",
+    });
+    expect(alice5).not.toBe(alice6);
+    expect(alice5.split("~")[0]).toBe(alice6.split("~")[0]); // same name part
+  });
+
+  it("falls back to hashing the guid when no identityKey is given", () => {
+    const { identityKey: _omit, ...noKey } = baseInput;
+    const slug = generateThreadSlug({ ...noKey, resolvedContactName: "Alice" });
+    expect(slug).toMatch(/^alice~imsg~[0-9a-f]{4}$/);
   });
 });
