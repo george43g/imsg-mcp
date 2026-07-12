@@ -1,5 +1,10 @@
 import { useCallback, useRef } from "react";
-import { sendMessageAlt, sendToChat, sendToChatId } from "../../applescript.js";
+import {
+  type SendService,
+  sendMessageReliable,
+  sendToChat,
+  sendToChatId,
+} from "../../applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../../config.js";
 import { IMessageDB } from "../../imessage-db.js";
 import {
@@ -85,7 +90,13 @@ export function useImsg() {
           ? sendToChat(slugRecord.displayName, text)
           : sendToChatId(slugRecord.chatGuid, text);
       }
-      return sendMessageAlt(slugRecord.chatIdentifier, text);
+      // Route on the thread's REAL service. AppleScript cannot detect a
+      // wrong-service send (lazy participant resolution): an iMessage-first
+      // attempt to an SMS-only number "succeeds", never delivers (error 22 in
+      // chat.db), and mints a phantom iMessage chat leg. The slug store knows
+      // which service the conversation actually lives on — send there first.
+      const preferred: SendService = slugRecord.service === "SMS" ? "SMS" : "iMessage";
+      return sendMessageReliable(slugRecord.chatIdentifier, text, preferred);
     },
     [getDb],
   );
@@ -123,9 +134,14 @@ export function useImsg() {
           error: `Ambiguous: ${resolution.candidates.length} matches for "${input}". Pick a specific handle.`,
         };
       }
-      return sendMessageAlt(resolution.handle, text);
+      // Existing conversation knows its real service (see `send` above);
+      // brand-new recipients default to iMessage-first with SMS fallback.
+      const conv = await getDb().findChatByHandle(resolution.handle);
+      const preferred: SendService | undefined =
+        conv && !conv.isGroupChat ? (conv.serviceType === "SMS" ? "SMS" : "iMessage") : undefined;
+      return sendMessageReliable(resolution.handle, text, preferred);
     },
-    [resolveRecipientInput],
+    [resolveRecipientInput, getDb],
   );
 
   const refresh = useCallback(() => {
