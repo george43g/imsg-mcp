@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import React, { useMemo } from "react";
 import type { Conversation, Message } from "../../types.js";
+import { visualWidth } from "../../visual-width.js";
 import { useTheme } from "../themes/ThemeContext.js";
 import type { Mode, PendingMessage } from "../types.js";
 import { ComposeBar } from "./ComposeBar.js";
@@ -76,13 +77,13 @@ export function ThreadPane({
     if (cursorIdx >= messages.length - NEAR_END && pending.length === 0) {
       const end = messages.length - 1;
       let start = end;
-      let totalLines = lineHeight(messages, end, maxBubbleW);
+      let totalLines = lineHeight(messages, end, maxBubbleW, isGroup);
       while (
         start > 0 &&
-        totalLines + lineHeight(messages, start - 1, maxBubbleW) <= msgAreaHeight
+        totalLines + lineHeight(messages, start - 1, maxBubbleW, isGroup) <= msgAreaHeight
       ) {
         start--;
-        totalLines += lineHeight(messages, start, maxBubbleW);
+        totalLines += lineHeight(messages, start, maxBubbleW, isGroup);
       }
       return { visibleStart: start, visibleEnd: end + 1 };
     }
@@ -94,16 +95,16 @@ export function ThreadPane({
     const targetAbove = Math.floor(msgAreaHeight * 0.4);
     while (start > 0 && linesAbove < targetAbove) {
       start--;
-      linesAbove += lineHeight(messages, start, maxBubbleW);
+      linesAbove += lineHeight(messages, start, maxBubbleW, isGroup);
     }
 
     // Then go downward from cursor
     let end = cursorIdx;
-    let totalLines = linesAbove + lineHeight(messages, cursorIdx, maxBubbleW);
+    let totalLines = linesAbove + lineHeight(messages, cursorIdx, maxBubbleW, isGroup);
     while (end < total - 1 && totalLines < msgAreaHeight) {
       end++;
       if (end < messages.length) {
-        totalLines += lineHeight(messages, end, maxBubbleW);
+        totalLines += lineHeight(messages, end, maxBubbleW, isGroup);
       } else {
         totalLines += 1; // pending messages
       }
@@ -112,7 +113,7 @@ export function ThreadPane({
     // If we have room, extend upward more
     while (start > 0 && totalLines < msgAreaHeight) {
       start--;
-      totalLines += lineHeight(messages, start, maxBubbleW);
+      totalLines += lineHeight(messages, start, maxBubbleW, isGroup);
     }
 
     return { visibleStart: start, visibleEnd: end + 1 };
@@ -120,7 +121,7 @@ export function ThreadPane({
     // (see types.ts reducer), so depending on length is sufficient for the
     // common fast path. Content-mutating actions (SET_MESSAGES /
     // PREPEND_MESSAGES) replace the whole array, which also flips length.
-  }, [messages, pending.length, selectedMsgIdx, msgAreaHeight, maxBubbleW]);
+  }, [messages, pending.length, selectedMsgIdx, msgAreaHeight, maxBubbleW, isGroup]);
 
   const visibleMessages = messages.slice(visibleStart, Math.min(visibleEnd, messages.length));
 
@@ -305,26 +306,39 @@ export function ThreadPane({
   );
 }
 
+/** Wrap rows a text consumes at a given inner width (grapheme-aware). */
+function wrapRows(text: string, innerW: number): number {
+  let rows = 0;
+  for (const line of text.split("\n")) {
+    rows += Math.max(1, Math.ceil(visualWidth(line) / innerW));
+  }
+  return rows;
+}
+
 /**
  * Estimate how many terminal lines a message at index `i` will consume.
- * Conservative upper bound: under-counts trigger bottom-of-thread clipping
- * (Ink's overflow="hidden" silently drops rows past the box edge), so we err
- * toward over-counting wrap rows from text length.
+ * MessageBubble wraps the body text, so this must match the REAL wrapped
+ * height: under-counts trigger bottom-of-thread clipping (Ink's
+ * overflow="hidden" silently drops rows past the box edge). The prefix
+ * block (lineNum 4 + cursor 1 + gutter 2 + timestamp 14 + glyph 2 = 23
+ * cells, plus up to 14 for a group sender label) is flexShrink=0, so the
+ * text box width = pane content width − prefix. bubbleWidth is width−8,
+ * pane content is width−2 → text width ≈ bubbleWidth − 17 (1:1) or
+ * bubbleWidth − 31 (group first-in-group rows with a sender label).
  */
-function lineHeight(messages: Message[], i: number, bubbleWidth: number): number {
+function lineHeight(messages: Message[], i: number, bubbleWidth: number, isGroup: boolean): number {
   if (i < 0 || i >= messages.length) return 1;
   const msg = messages[i];
-  // Wrap rows for the message body. Bubble inner width is roughly bubbleWidth
-  // minus padding/prefix (sender name, line number). Use max(20) so very narrow
-  // terminals don't divide-by-near-zero.
-  const innerW = Math.max(20, bubbleWidth - 4);
+  const firstInGroup = isGroupStart(msg, i > 0 ? messages[i - 1] : undefined);
+  const senderPad = isGroup && firstInGroup && !msg.isFromMe ? 14 : 0;
+  // −17 for the prefix, −8 slack for inline indicators (reactions 📎 ✎)
+  // that share the row and narrow the text box. Over-counting only costs a
+  // slightly smaller window; under-counting clips the bottom row.
+  const innerW = Math.max(16, bubbleWidth - 25 - senderPad);
   const text = msg.text ?? "";
-  let h = Math.max(1, Math.ceil(text.length / innerW));
-  // Reply preview row(s)
-  if (msg.isReply) {
-    const replyLen = msg.replyTo?.replyToText?.length ?? 0;
-    h += Math.max(1, Math.ceil(replyLen / Math.max(20, innerW - 4)));
-  }
+  let h = wrapRows(text, innerW);
+  // Reply preview row(s) — preview itself is truncated to one line.
+  if (msg.isReply) h += 1;
   // Date separator. Rendered with marginTop={1} when realIdx > 0
   // (ThreadPane.tsx ~line 216), so it actually occupies TWO terminal rows in
   // that case: 1 blank margin + 1 separator content. Under-counting this
@@ -334,8 +348,6 @@ function lineHeight(messages: Message[], i: number, bubbleWidth: number): number
   } else if (isDifferentDay(messages[i - 1].date, msg.date)) {
     h += 2;
   }
-  // Attachment indicator row (paperclip + filename) when present
-  if (msg.attachments && msg.attachments.length > 0) h += 1;
   return h;
 }
 

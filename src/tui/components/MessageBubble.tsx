@@ -182,8 +182,12 @@ export function MessageBubble({
           </Text>
         </Box>
 
-        {/* Message text — the only shrinkable element on the row. */}
-        <Text color={isSent ? theme.sentText : theme.receivedText} wrap="truncate">
+        {/* Message text — the only shrinkable element on the row. Wraps to
+            the remaining row width (hanging indent falls out of the flex
+            layout: every wrapped line starts at this box's left edge).
+            ThreadPane's lineHeight() budgets the wrap rows so the visible
+            window stays clip-free. */}
+        <Text color={isSent ? theme.sentText : theme.receivedText} wrap="wrap">
           {text}
         </Text>
 
@@ -214,7 +218,7 @@ export function MessageBubble({
             <Box>
               {lineNum !== undefined && <Text>{"    "}</Text>}
               <Text>{"  "}</Text>
-              <Text color={theme.replyContext} italic>
+              <Text color={theme.replyContext} italic wrap="truncate">
                 {"  ↩ "}
                 {display}
               </Text>
@@ -244,7 +248,7 @@ export function PendingBubble({ text, status }: PendingBubbleProps) {
       <Text color={theme.sent.bg} bold>
         {`${theme.glyphs.sent} Me: `}
       </Text>
-      <Text color={theme.pending.fg} wrap="truncate">
+      <Text color={theme.pending.fg} wrap="wrap">
         {text}
       </Text>
     </Box>
