@@ -171,3 +171,11 @@ Precedence: `.env` → `.env.local` → `.env.[mode]` → `.env.[mode].local`
 - Never publish private message content.
 - Confirm before sending messages on behalf of the user.
 - See `AGENTS.md` for thread isolation and MCP guardrails.
+
+## Humans files (relationship memory)
+
+imsg-mcp scaffolds per-person relationship files at `~/.agents/humans/`
+(`init_human` tool, `imsg humans init`, `imsg humans top`) following the
+**humans/v1** convention — see `skills/humans/SKILL.md` for the format,
+workflows, and privacy rules. The calling agent writes all summaries;
+the tool only creates skeletons prefilled with identity + history stats.
