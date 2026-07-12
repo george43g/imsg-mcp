@@ -90,6 +90,8 @@ export interface Message {
  * Represents an attachment
  */
 export interface Attachment {
+  /** attachment table ROWID — feed to get_attachment to fetch/view the file. */
+  rowId?: number;
   filename: string;
   mimeType: string | null;
   transferName: string | null;

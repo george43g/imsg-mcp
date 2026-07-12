@@ -790,15 +790,24 @@ export class IMessageDB {
 
   /**
    * Get messages after a specific message ID (for polling new messages).
-   * Returns incoming messages only, sorted by date ascending (chronological).
+   * Sorted by date ascending (chronological). By default returns incoming
+   * messages only; `includeSelf` also returns from-me rows (the user's own
+   * interjections from other devices) — callers using it must suppress the
+   * agent's own send echo themselves (see SentEchoRegistry).
    */
-  async getMessagesAfter(chatIdentifier: string, afterMessageId: number): Promise<Message[]> {
+  async getMessagesAfter(
+    chatIdentifier: string,
+    afterMessageId: number,
+    options: { includeSelf?: boolean } = {},
+  ): Promise<Message[]> {
     const messages = await this.getMessagesForChat(chatIdentifier, 1000, { afterMessageId });
     // "After" means after the boundary in (date, ROWID) order — NOT a bare id
     // comparison. A reply synced with a lower ROWID but later date is still
     // new; an id-only filter here silently dropped it (wait_for_reply missed
     // the reply). The SQL bound already excludes the boundary itself.
-    const filtered = messages.filter((m) => m.id !== afterMessageId && !m.isFromMe);
+    const filtered = messages.filter(
+      (m) => m.id !== afterMessageId && (options.includeSelf || !m.isFromMe),
+    );
     filtered.sort((a, b) => a.date.getTime() - b.date.getTime());
     return filtered;
   }
@@ -2052,6 +2061,7 @@ export class IMessageDB {
   private fetchAttachments(messageRowId: number): Attachment[] {
     const stmt = this.raw.prepare(`
       SELECT 
+        a.ROWID as row_id,
         a.filename,
         a.mime_type,
         a.transfer_name,
@@ -2062,6 +2072,7 @@ export class IMessageDB {
     `);
     const rows = stmt.all(messageRowId) as any[];
     return rows.map((r) => ({
+      rowId: r.row_id,
       filename: r.filename || "",
       mimeType: r.mime_type,
       transferName: r.transfer_name,

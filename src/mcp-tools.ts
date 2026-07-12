@@ -22,6 +22,7 @@ export const ReplyContextSchema = z.object({
 });
 
 export const AttachmentSchema = z.object({
+  rowId: z.number().int().optional().describe("Feed to get_attachment to fetch/view the file."),
   filename: z.string(),
   mimeType: z.string().nullable(),
   transferName: z.string().nullable(),
@@ -152,6 +153,12 @@ export const SendMessageOutputSchema = z.object({
   timestamp: z.string().nullable().optional(),
   threadSlug: z.string().optional(),
   lastMessageId: z.number().int().optional(),
+  sendConfirmed: z
+    .boolean()
+    .optional()
+    .describe(
+      "True when the sent message was observed in chat.db before returning — lastMessageId then points exactly at the sent message.",
+    ),
   attachments: z
     .array(
       z.object({
@@ -169,12 +176,19 @@ export const WaitForReplySchema = z.object({
   timeoutSeconds: z.number().min(10).max(3600).default(300),
   pollIntervalSeconds: z.number().min(5).max(60).default(10),
   afterMessageId: z.number().int().positive().optional(),
+  includeSelf: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Also return messages the user sends from their own account (other devices) — they may be addressing the agent. The agent's own just-sent messages are always excluded. false = incoming-only (legacy behavior).",
+    ),
 });
 
 export const WaitForReplyOutputSchema = z.object({
   received: z.boolean().optional(),
   messages: z.array(MessageSchema).optional(),
   count: z.number().int().optional(),
+  selfCount: z.number().int().optional(),
   timedOut: z.boolean().optional(),
   timeoutSeconds: z.number().optional(),
   threadSlug: z.string().optional(),
@@ -441,6 +455,18 @@ export const GetAttachmentOutputSchema = z.object({
   inline: z.boolean(),
   base64: z.string().optional(),
   converted: z.string().optional().describe("Set when source was HEIC and we converted to PNG."),
+  mediaInfo: z
+    .string()
+    .optional()
+    .describe("Compact duration/dimensions/codec summary for audio/video (via mdls)."),
+  transcript: z
+    .string()
+    .optional()
+    .describe("Audio transcript when an optional transcriber (hear/yap/whisper-cli) is installed."),
+  imageBlockIncluded: z
+    .boolean()
+    .optional()
+    .describe("True when the tool result carries a real MCP image content block."),
 });
 
 export type ToolName = keyof typeof TOOL_SCHEMAS;
@@ -644,7 +670,7 @@ export const TOOLS: Tool[] = [
   {
     name: "wait_for_reply",
     description:
-      "Wait for a new incoming message in a conversation until timeout or client cancellation.",
+      "Wait for new messages in a conversation until timeout or client cancellation. Returns the other party's replies AND (by default) messages the user sends from their own account on other devices — marked isFromMe: true, counted in selfCount — since the user may be interjecting to address the agent. The agent's own just-sent message never echoes back. Pass includeSelf: false for incoming-only.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -662,6 +688,12 @@ export const TOOLS: Tool[] = [
           description: "Polling interval in seconds, 5-60",
         },
         afterMessageId: { type: "number", description: "Only return messages after this id" },
+        includeSelf: {
+          type: "boolean",
+          default: true,
+          description:
+            "Also return the user's own messages sent from other devices (the agent's own sends are always excluded). false = incoming-only.",
+        },
       },
     },
     // @ts-expect-error
@@ -870,7 +902,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_attachment",
     description:
-      "Fetch an attachment by ROWID (from search_attachments). Returns base64 inline if ≤ inlineMaxBytes (default 5MB); otherwise returns the resolved path only. HEIC images are auto-converted to PNG via macOS sips.",
+      "Fetch an attachment by ROWID (from search_attachments or a message's attachments[].rowId). IMAGES: returned as a real MCP image content block (downscaled ≤1536px, HEIC auto-converted) so the model can SEE it — plus full-size base64 in structuredContent when ≤ inlineMaxBytes (default 5MB). VIDEO: QuickLook poster frame as an image block + duration/resolution metadata + file path. AUDIO (voice memos): metadata + file path, and a transcript when a transcriber (hear, yap, or whisper-cli) is installed on PATH.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",

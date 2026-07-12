@@ -75,11 +75,20 @@ import {
   type ToolName,
   WaitForReplySchema,
 } from "./mcp-tools.js";
+import {
+  detectTranscriber,
+  imageBlockFromFile,
+  mediaMetadata,
+  TRANSCRIBE_MAX_BYTES,
+  transcribeAudio,
+  videoPosterFrame,
+} from "./media.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import { hasNativeModule } from "./native-bridge.js";
 import { wrapUntrusted } from "./prompt-injection.js";
 import { defaultCountryFromEnv, resolveRecipient } from "./recipient.js";
 import { sanitizeUserText } from "./sanitize.js";
+import { normalizeForEcho, type SentEcho, SentEchoRegistry } from "./sent-echo-registry.js";
 import {
   enableOrphanWatchdog,
   enableStdinEofDetection,
@@ -316,6 +325,10 @@ export class IMessageMCPServer {
   private toolCallCount = 0;
   private recentErrorCount = 0;
   private lastActivityTs = Date.now();
+
+  // Fingerprints of this process's own sends so wait_for_reply can return
+  // the user's interjections without echoing the agent's just-sent message.
+  private sentEchoes = new SentEchoRegistry();
 
   constructor() {
     this.server = new Server(
@@ -1007,10 +1020,23 @@ export class IMessageMCPServer {
         threadSlug ? (this.db.getSlugRecord(threadSlug)?.chatIdentifier ?? "") : recipient!,
       );
       let lastMessageId: number | undefined;
+      let sendConfirmed = false;
 
       if (chat) {
-        const lastMsg = await this.db.getLastMessage(chat.chatIdentifier);
-        lastMessageId = lastMsg?.id;
+        // Register the send's fingerprint (echo suppression for
+        // wait_for_reply's includeSelf mode), then wait — bounded — for our
+        // own row to land in chat.db so lastMessageId points AT the sent
+        // message. chat.db lags Messages.app by 1–2s; the previous one-shot
+        // getLastMessage could return a stale pre-send row, and the echo
+        // would later read as a "new" message.
+        const chatKey = chat.threadSlug ?? chat.chatIdentifier;
+        const echo = this.sentEchoes.register(chatKey, message);
+        for (const a of attachmentResults) {
+          if (a.success) this.sentEchoes.register(chatKey, "", "attachment");
+        }
+        const confirmed = await this.confirmSendLanded(chat.chatIdentifier, echo);
+        lastMessageId = confirmed.lastMessageId;
+        sendConfirmed = confirmed.confirmed;
       }
 
       const attSummary =
@@ -1026,6 +1052,7 @@ export class IMessageMCPServer {
           timestamp: result.timestamp?.toISOString() ?? null,
           threadSlug: chat?.threadSlug,
           lastMessageId,
+          sendConfirmed,
           attachments: attachmentResults.length > 0 ? attachmentResults : undefined,
         },
       );
@@ -1042,9 +1069,52 @@ export class IMessageMCPServer {
     }
   }
 
+  /**
+   * Bounded poll for the just-sent message's own from-me row in chat.db.
+   * Scans the last few messages (not just the newest — an incoming reply can
+   * land AFTER our send) for a from-me row matching the echo's normalized
+   * text with a plausible date. On hit, pins the echo's ROWID so wait_for_reply
+   * suppression is exact. On timeout, falls back to the last message id
+   * (previous behavior) with confirmed: false.
+   */
+  private async confirmSendLanded(
+    chatIdentifier: string,
+    echo: SentEcho,
+    opts: { timeoutMs?: number; pollMs?: number } = {},
+  ): Promise<{ lastMessageId: number | undefined; confirmed: boolean }> {
+    const timeoutMs = opts.timeoutMs ?? 5_000;
+    const pollMs = opts.pollMs ?? 500;
+    const deadline = Date.now() + timeoutMs;
+    const skewMs = 15_000;
+    for (;;) {
+      const recent = await this.db.getMessagesForChat(chatIdentifier, 5);
+      for (let i = recent.length - 1; i >= 0; i--) {
+        const m = recent[i];
+        if (
+          m.isFromMe &&
+          normalizeForEcho(m.text) === echo.normalizedText &&
+          m.date.getTime() >= echo.sentAt - skewMs
+        ) {
+          echo.matchedMessageId = m.id;
+          return { lastMessageId: m.id, confirmed: true };
+        }
+      }
+      if (Date.now() >= deadline) break;
+      await sleep(pollMs);
+    }
+    const lastMsg = await this.db.getLastMessage(chatIdentifier);
+    return { lastMessageId: lastMsg?.id, confirmed: false };
+  }
+
   private async handleWaitForReply(args: unknown, signal?: AbortSignal): Promise<any> {
-    const { chatIdentifier, threadSlug, timeoutSeconds, pollIntervalSeconds, afterMessageId } =
-      WaitForReplySchema.parse(args);
+    const {
+      chatIdentifier,
+      threadSlug,
+      timeoutSeconds,
+      pollIntervalSeconds,
+      afterMessageId,
+      includeSelf,
+    } = WaitForReplySchema.parse(args);
 
     if (!chatIdentifier && !threadSlug) {
       return toolError("Either chatIdentifier or threadSlug is required.", {});
@@ -1078,6 +1148,9 @@ export class IMessageMCPServer {
       lastKnownId = lastMsg?.id || 0;
     }
 
+    // Canonical thread key — must match what handleSendMessage registered.
+    const chatKey = chat.threadSlug ?? chat.chatIdentifier;
+
     // Poll for new messages — bail out early on cancellation
     while (Date.now() - startTime < timeoutMs) {
       if (signal?.aborted) {
@@ -1089,15 +1162,34 @@ export class IMessageMCPServer {
           },
         );
       }
-      const newMessages = await this.db.getMessagesAfter(chat.chatIdentifier, lastKnownId);
+      const newMessages = await this.db.getMessagesAfter(chat.chatIdentifier, lastKnownId, {
+        includeSelf,
+      });
+      // In includeSelf mode, drop this process's own send echoes — a from-me
+      // row is only a genuine interjection if the registry doesn't claim it.
+      const visible = includeSelf
+        ? newMessages.filter((m) => !m.isFromMe || !this.sentEchoes.consume(chatKey, m))
+        : newMessages;
 
-      if (newMessages.length > 0) {
-        const formatted = newMessages.map((m) => formatMessage(m)).join("\n");
-        return toolText(`Received ${newMessages.length} new message(s):\n\n${formatted}`, {
+      if (visible.length > 0) {
+        const selfCount = visible.filter((m) => m.isFromMe).length;
+        const header =
+          selfCount > 0
+            ? `Received ${visible.length} new message(s) — ${selfCount} sent by the user from their own account (another device), ${visible.length - selfCount} from the other party:`
+            : `Received ${visible.length} new message(s):`;
+        const formatted = visible.map((m) => formatMessage(m)).join("\n");
+        return toolText(`${header}\n\n${formatted}`, {
           received: true,
-          messages: newMessages.map(messageToStructured),
-          count: newMessages.length,
+          messages: visible.map(messageToStructured),
+          count: visible.length,
+          selfCount,
         });
+      }
+      if (newMessages.length > 0) {
+        // Everything new was our own echo — advance the cursor past it so
+        // subsequent polls stay cheap (the echo row is a real row in
+        // (date, ROWID) order).
+        lastKnownId = newMessages[newMessages.length - 1].id;
       }
 
       await sleep(pollIntervalMs, signal);
@@ -1481,46 +1573,106 @@ export class IMessageMCPServer {
 
     const stat = statSync(resolvedPath);
     const sizeBytes = stat.size;
-    const isHeic =
-      (rec.mimeType ?? "").toLowerCase().includes("heic") ||
-      resolvedPath.toLowerCase().endsWith(".heic");
+    const mime = (rec.mimeType ?? "").toLowerCase();
+    const isHeic = mime.includes("heic") || resolvedPath.toLowerCase().endsWith(".heic");
+    const isImage = mime.startsWith("image/") || isHeic;
+    const isVideo = mime.startsWith("video/");
+    const isAudio = mime.startsWith("audio/") || /\.(caf|amr|m4a|mp3|wav|aac)$/i.test(resolvedPath);
 
     // Inline if small AND not too large to base64-encode (base64 inflates ~33%).
-    const inline = sizeBytes <= inlineMaxBytes;
+    const inline = isImage && sizeBytes <= inlineMaxBytes;
 
     let base64: string | undefined;
     let convertedNote: string | undefined;
     let finalMime = rec.mimeType;
     let finalPath = resolvedPath;
+    let mediaInfo: string | undefined;
+    let transcript: string | undefined;
+    // A real MCP image content block (base64 ≤ ~1MB, ≤1536px) so the MODEL
+    // sees the image, not just JSON metadata. Emitted for images (always a
+    // downscaled preview, even when the original exceeds inlineMaxBytes) and
+    // for videos (QuickLook poster frame).
+    let imageBlock: { base64: string; mimeType: string; note?: string } | null = null;
 
-    if (inline) {
-      if (isHeic) {
-        // Convert HEIC → PNG via macOS sips (zero-dep, ships with macOS).
-        try {
-          const { execFileSync } = await import("node:child_process");
-          const { tmpdir } = await import("node:os");
-          const { join: pjoin } = await import("node:path");
-          const out = pjoin(tmpdir(), `imsg-att-${rowId}.png`);
-          execFileSync("sips", ["-s", "format", "png", resolvedPath, "--out", out], {
-            stdio: "ignore",
-          });
-          finalPath = out;
-          finalMime = "image/png";
-          convertedNote = "HEIC → PNG via sips";
-          base64 = readFileSync(out).toString("base64");
-        } catch (e: any) {
-          return toolError(`HEIC→PNG conversion failed: ${e.message ?? e}`, { rowId });
+    if (isImage) {
+      imageBlock = imageBlockFromFile(resolvedPath);
+      if (inline) {
+        if (isHeic) {
+          // Full-size HEIC → PNG via macOS sips (zero-dep) for the
+          // structuredContent.base64 back-compat field.
+          try {
+            const { execFileSync } = await import("node:child_process");
+            const { tmpdir } = await import("node:os");
+            const { join: pjoin } = await import("node:path");
+            const out = pjoin(tmpdir(), `imsg-att-${rowId}.png`);
+            execFileSync("sips", ["-s", "format", "png", resolvedPath, "--out", out], {
+              stdio: "ignore",
+            });
+            finalPath = out;
+            finalMime = "image/png";
+            convertedNote = "HEIC → PNG via sips";
+            base64 = readFileSync(out).toString("base64");
+          } catch (e: any) {
+            return toolError(`HEIC→PNG conversion failed: ${e.message ?? e}`, { rowId });
+          }
+        } else {
+          base64 = readFileSync(resolvedPath).toString("base64");
         }
-      } else {
-        base64 = readFileSync(resolvedPath).toString("base64");
+      }
+    } else if (isVideo) {
+      imageBlock = videoPosterFrame(resolvedPath);
+      mediaInfo = mediaMetadata(resolvedPath) ?? undefined;
+      convertedNote = imageBlock ? "poster frame via QuickLook" : undefined;
+    } else if (isAudio) {
+      mediaInfo = mediaMetadata(resolvedPath) ?? undefined;
+      if (sizeBytes <= TRANSCRIBE_MAX_BYTES) {
+        transcript = transcribeAudio(resolvedPath) ?? undefined;
       }
     }
 
-    return toolText(
-      inline
-        ? `Attachment ${rowId} (${sizeBytes}B, ${finalMime ?? "?"}) returned inline.`
-        : `Attachment ${rowId} too large to inline (${sizeBytes}B > ${inlineMaxBytes}B). Use path: ${resolvedPath}`,
-      {
+    const lines: string[] = [];
+    if (isVideo) {
+      lines.push(
+        `Video attachment ${rowId} (${sizeBytes}B${mediaInfo ? `, ${mediaInfo}` : ""}).`,
+        imageBlock
+          ? "Poster frame attached as an image; full video at the path below."
+          : "Poster frame unavailable; use the path below.",
+        `Path: ${resolvedPath}`,
+      );
+    } else if (isAudio) {
+      lines.push(`Audio attachment ${rowId} (${sizeBytes}B${mediaInfo ? `, ${mediaInfo}` : ""}).`);
+      if (transcript) {
+        lines.push("", "Transcript:", wrapUntrusted(sanitizeUserText(transcript) ?? ""));
+      } else {
+        lines.push(
+          detectTranscriber()
+            ? "Transcription produced no text."
+            : "No transcriber installed — `brew install hear` enables on-device transcription.",
+        );
+      }
+      lines.push(`Path: ${resolvedPath}`);
+    } else if (inline) {
+      lines.push(`Attachment ${rowId} (${sizeBytes}B, ${finalMime ?? "?"}) returned inline.`);
+    } else if (isImage) {
+      lines.push(
+        `Attachment ${rowId} too large to inline (${sizeBytes}B > ${inlineMaxBytes}B); a downscaled preview is attached${imageBlock ? "" : " (preview failed)"}. Full file: ${resolvedPath}`,
+      );
+    } else {
+      lines.push(
+        `Attachment ${rowId} (${sizeBytes}B, ${finalMime ?? "?"}) — not an inlineable type. Path: ${resolvedPath}`,
+      );
+    }
+
+    const content: Array<
+      { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+    > = [{ type: "text", text: lines.join("\n") }];
+    if (imageBlock) {
+      content.push({ type: "image", data: imageBlock.base64, mimeType: imageBlock.mimeType });
+    }
+
+    return {
+      content,
+      structuredContent: {
         rowId,
         filename: rec.filename,
         resolvedPath: finalPath,
@@ -1529,8 +1681,11 @@ export class IMessageMCPServer {
         inline,
         base64,
         converted: convertedNote,
+        mediaInfo,
+        transcript,
+        imageBlockIncluded: imageBlock != null,
       },
-    );
+    };
   }
 
   private async handleChatAnalytics(args: unknown) {
