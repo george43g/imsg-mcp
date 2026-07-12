@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+## [1.3.1](https://github.com/george43g/imsg-mcp/compare/v1.3.0...v1.3.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **cli:** report the real version — inject from package.json at build ([f2d2245](https://github.com/george43g/imsg-mcp/commit/f2d2245ef0e204b25c8d91375bc58656926a3d26))
+* **export:** deterministic key order in NDJSON/JSON message lines ([43cf729](https://github.com/george43g/imsg-mcp/commit/43cf729aad3a6651768f2d1511b06485f48b913f))
+* **release:** pack .mcpb after version bump; sync manifest.json version ([c93c503](https://github.com/george43g/imsg-mcp/commit/c93c5031f9112ed122b04ff508b27bd7d1f19700))
+* **tui:** paint dev-stats immediately when the panel opens ([734257c](https://github.com/george43g/imsg-mcp/commit/734257caa3bedc4ca4a49f354295cfbf61a84de5))
+
 # [1.3.0](https://github.com/george43g/imsg-mcp/compare/v1.2.0...v1.3.0) (2026-07-12)
 
 
