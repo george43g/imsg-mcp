@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { Conversation } from "../../types.js";
-import { truncateToWidth } from "../../visual-width.js";
+import { truncateToWidth, visualWidth } from "../../visual-width.js";
 import { useTheme } from "../themes/ThemeContext.js";
 
 function relativeDate(date: Date | null): string {
@@ -78,6 +78,10 @@ export function ConversationItem({
   const truncatedName = truncateToWidth(name, nameW);
   const snippetW = Math.max(width - 6, 8); // -5 for left padding, -1 safety
   const truncatedSnippet = truncateToWidth(snippet, snippetW, "");
+  // Slug row must fit ONE line — a long slug used to wrap and orphan its
+  // tail onto the next row, breaking the sidebar layout. Truncate the NAME
+  // part and keep the identifying "~svc~hash" tail intact.
+  const slugText = truncateSlugForRow(c.threadSlug ?? "", Math.max(width - 3, 10));
 
   return (
     <Box flexDirection="column" width={width}>
@@ -140,8 +144,8 @@ export function ConversationItem({
           paddingRight={1}
           backgroundColor={theme.sidebar.slugBg}
         >
-          <Text color={theme.sidebar.slug} dimColor italic>
-            ~{c.threadSlug}
+          <Text color={theme.sidebar.slug} dimColor italic wrap="truncate">
+            ~{slugText}
           </Text>
         </Box>
       </Box>
@@ -156,6 +160,23 @@ export function ConversationItem({
       )}
     </Box>
   );
+}
+
+/**
+ * Fit a thread slug into `maxCols` cells by squeezing the name part while
+ * preserving the "~service~hash" tail (the part that identifies the thread).
+ * Falls back to plain tail-truncation for non-slug-shaped strings.
+ * Exported for tests.
+ */
+export function truncateSlugForRow(slug: string, maxCols: number): string {
+  if (visualWidth(slug) <= maxCols) return slug;
+  const m = slug.match(/^(.*)(~[a-z]+~[0-9a-f]+)$/);
+  if (m?.[1] !== undefined && m[2] !== undefined) {
+    const tailW = visualWidth(m[2]);
+    const nameCols = Math.max(maxCols - tailW, 3);
+    return `${truncateToWidth(m[1], nameCols)}${m[2]}`;
+  }
+  return truncateToWidth(slug, maxCols);
 }
 
 // Exported for tests

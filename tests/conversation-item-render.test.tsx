@@ -12,7 +12,7 @@
 
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
-import { ConversationItem } from "../src/tui/components/ConversationItem.js";
+import { ConversationItem, truncateSlugForRow } from "../src/tui/components/ConversationItem.js";
 import { makeTheme } from "../src/tui/theme.js";
 import { ThemeProvider } from "../src/tui/themes/ThemeContext.js";
 import type { Conversation } from "../src/types.js";
@@ -84,5 +84,24 @@ describe("ConversationItem — emoji-safe truncation", () => {
     const frame = lastFrame() ?? "";
     expect(frame).not.toContain("�");
     unmount();
+  });
+});
+
+describe("truncateSlugForRow", () => {
+  it("returns short slugs unchanged", () => {
+    expect(truncateSlugForRow("mal~imsg~8ac8", 40)).toBe("mal~imsg~8ac8");
+  });
+
+  it("squeezes the name part but preserves the ~svc~hash tail", () => {
+    const slug = "sarah-redhead-kittens-best-tits-ever~imsg~d607";
+    const out = truncateSlugForRow(slug, 30);
+    expect(out.endsWith("~imsg~d607")).toBe(true);
+    expect(out).toContain("…");
+    expect(out.length).toBeLessThanOrEqual(30);
+  });
+
+  it("falls back to plain truncation for non-slug strings", () => {
+    const out = truncateSlugForRow("x".repeat(50), 20);
+    expect(out.length).toBeLessThanOrEqual(20);
   });
 });
