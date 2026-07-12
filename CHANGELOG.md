@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.3.0](https://github.com/george43g/imsg-mcp/compare/v1.2.0...v1.3.0) (2026-07-12)
+
+
+### Bug Fixes
+
+* **contacts:** per-handle names + name-gated union + stable slug anchors ([5f1ff00](https://github.com/george43g/imsg-mcp/commit/5f1ff001713787d59c1697ff5f14999400ff9a0b))
+* **db:** composite cursors for afterMessageId + gap-fill; unstarved dedup paging ([97f8dc1](https://github.com/george43g/imsg-mcp/commit/97f8dc11aedf8a512727a156d712865b5f72c798))
+* **db:** composite-cursor pagination for get_messages beforeMessageId ([b7353a9](https://github.com/george43g/imsg-mcp/commit/b7353a9785fb62f7f452e9ff8b7b806807248edf))
+* **mcp:** match local-format card phones to E.164 chats in get_contact threads ([a79af10](https://github.com/george43g/imsg-mcp/commit/a79af10204a629fbbc5af1621e3a6c415718ba4f))
+* **mcp:** real pagination for list_conversations (offset + nextOffset) ([d663126](https://github.com/george43g/imsg-mcp/commit/d663126916265bb57bc4fdf0dbbb656f4047700c))
+* **tui:** reset cursor + scroll when filtering conversations ([3b5f617](https://github.com/george43g/imsg-mcp/commit/3b5f617dfe519c0d04b84aac9fb868de28e06de6))
+
+
+### Features
+
+* **cli:** contacts subcommands + contact→thread mapping in get_contact ([e070fa7](https://github.com/george43g/imsg-mcp/commit/e070fa795141300656f42a7b6cbbe784f3372470))
+* **merge:** cross-source contact identity, complete exports, canonical slugs ([c43cd9c](https://github.com/george43g/imsg-mcp/commit/c43cd9c9893219d256bbd0048e06879df060ade5))
+
 # [1.2.0](https://github.com/george43g/imsg-mcp/compare/v1.1.1...v1.2.0) (2026-06-07)
 
 
