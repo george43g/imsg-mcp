@@ -408,6 +408,40 @@ export const SearchAttachmentsOutputSchema = z.object({
   count: z.number().int(),
 });
 
+export const InitHumanSchema = z
+  .object({
+    contact: nonEmptyString(
+      "Contact name, phone, email, or contact:N selector from a prior search_contacts",
+    ).optional(),
+    threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
+    top: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(25)
+      .optional()
+      .describe(
+        "Scaffold files for the user's top N relationships (ranked by the relationship_leaderboard analytic over the last year).",
+      ),
+  })
+  .refine((d) => [d.contact, d.threadSlug, d.top].filter((v) => v !== undefined).length === 1, {
+    message: "Provide exactly one of: contact, threadSlug, or top.",
+  });
+
+export const InitHumanOutputSchema = z.object({
+  results: z.array(
+    z.object({
+      slug: z.string(),
+      name: z.string(),
+      path: z.string(),
+      created: z.boolean(),
+      messageCount: z.number().int().optional(),
+    }),
+  ),
+  count: z.number().int(),
+  humansDir: z.string(),
+});
+
 export const ChatAnalyticsSchema = z.object({
   type: z
     .enum([
@@ -417,6 +451,7 @@ export const ChatAnalyticsSchema = z.object({
       "daily_heatmap",
       "tapback_summary",
       "year_in_review_wrapped",
+      "relationship_leaderboard",
     ])
     .describe(
       "Which analytic to compute. Six priority types are implemented; 20 more are reserved for future versions and return a structured 'not_yet_implemented' error.",
@@ -492,6 +527,7 @@ export const TOOL_SCHEMAS = {
   search_attachments: SearchAttachmentsSchema,
   get_attachment: GetAttachmentSchema,
   chat_analytics: ChatAnalyticsSchema,
+  init_human: InitHumanSchema,
 } as const;
 
 export const OUTPUT_SCHEMAS = {
@@ -515,6 +551,7 @@ export const OUTPUT_SCHEMAS = {
   search_attachments: SearchAttachmentsOutputSchema,
   get_attachment: GetAttachmentOutputSchema,
   chat_analytics: ChatAnalyticsOutputSchema,
+  init_human: InitHumanOutputSchema,
 } as const;
 
 type JsonSchema = Tool["inputSchema"];
@@ -556,6 +593,8 @@ const annotations = {
 
 export const TOOL_TIMEOUTS_MS: Record<string, number> = {
   wait_for_reply: 0,
+  init_human: 120_000, // top-N path runs a year-window analytic
+
   run_build: 120_000,
   search_messages: 60_000,
   get_messages: 60_000,
@@ -918,7 +957,7 @@ export const TOOLS: Tool[] = [
   {
     name: "chat_analytics",
     description:
-      "Compute analytics over your chat history. Pick a `type`: messaging_streaks, double_texts, response_time_stats, daily_heatmap, tapback_summary, or year_in_review_wrapped. Results are cached at ~/.imsg-mcp/analytics-cache.db keyed on (type, args, MAX(message.rowid)) so subsequent calls without new messages hit cache. 20 additional analytic types are reserved for future versions.",
+      "Compute analytics over your chat history. Pick a `type`: messaging_streaks, double_texts, response_time_stats, daily_heatmap, tapback_summary, year_in_review_wrapped, or relationship_leaderboard (top relationships by volume, reciprocity, and recency). Results are cached at ~/.imsg-mcp/analytics-cache.db keyed on (type, args, MAX(message.rowid)) so subsequent calls without new messages hit cache. 20 additional analytic types are reserved for future versions.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -933,6 +972,7 @@ export const TOOLS: Tool[] = [
             "daily_heatmap",
             "tapback_summary",
             "year_in_review_wrapped",
+            "relationship_leaderboard",
           ],
         },
         windowDays: {
@@ -944,6 +984,33 @@ export const TOOLS: Tool[] = [
     },
     // @ts-expect-error
     outputSchema: zodToJsonSchema(ChatAnalyticsOutputSchema),
+  },
+  {
+    name: "init_human",
+    description:
+      "Scaffold a humans/v1 relationship file (~/.agents/humans/<person>.md — see the humans skill) for a contact, a thread slug, or the user's top N relationships. Prefills identity (name, aliases, handles) from the Address Book and first/last contact + message counts from chat.db. NEVER overwrites an existing file — returns its path with created: false. The calling agent fills the sections (export_messages → summarize → edit the file directly); the file's contents are privacy: never-share.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        contact: {
+          type: "string",
+          description: "Contact name, phone, email, or contact:N selector.",
+        },
+        threadSlug: { type: "string", description: "Thread slug from list_conversations." },
+        top: {
+          type: "number",
+          description: "Scaffold the top N relationships (1-25) by importance.",
+        },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(InitHumanOutputSchema),
   },
 ];
 

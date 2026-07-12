@@ -26,6 +26,7 @@ export const ANALYTIC_DESCRIPTION: Record<AnalyticType, string> = {
   daily_heatmap: "7×24 grid of activity by weekday × hour",
   tapback_summary: "Tapback reactions sent per contact",
   year_in_review_wrapped: "Wrapped summary: top contacts, peak day, totals",
+  relationship_leaderboard: "Top relationships by volume, reciprocity, and recency",
 };
 
 let instanceCounter = 0;

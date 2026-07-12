@@ -168,6 +168,27 @@ async function runConsoleCommand(
       }
       return;
     }
+    case "humans": {
+      const verb = args[0];
+      if (verb === "init") {
+        if (!args[1]) throw new Error("Usage: humans init <contact|slug|top N>");
+        if (args[1] === "top") {
+          await printToolResult(client, "init_human", { top: Number(args[2] ?? 10) });
+        } else if (args[1].includes("~")) {
+          await printToolResult(client, "init_human", { threadSlug: args[1] });
+        } else {
+          await printToolResult(client, "init_human", { contact: args.slice(1).join(" ") });
+        }
+      } else if (verb === "top") {
+        await printToolResult(client, "chat_analytics", {
+          type: "relationship_leaderboard",
+          windowDays: Number(args[1] ?? 365),
+        });
+      } else {
+        throw new Error(`Unknown humans verb: ${verb}. Use init|top.`);
+      }
+      return;
+    }
     case "logs":
       await printToolResult(client, "get_logs", args[0] ? { tail: Number(args[0]) } : {});
       return;
@@ -216,6 +237,7 @@ Available commands:
   wait <chat> [secs]   Wait for a reply (default 60s)
   send <target> <msg>  Send a message
   contacts [verb]      Contacts: list [n] [offset] | search <q> [n] | resolve <handle> | show <handle-or-id>
+  humans <verb>        Relationship files: init <contact|slug> | init top [n] | top [days]
   logs [tail]          Show server debug logs
   last-error           Show last send failure
   tools                List available MCP tools
@@ -571,6 +593,44 @@ contactsCommand
   .action(async (handleOrId: string) => {
     const args = /^\d+$/.test(handleOrId) ? { id: Number(handleOrId) } : { handle: handleOrId };
     await withClient((c) => printToolResult(c, "get_contact", args));
+  });
+
+const humansCommand = program
+  .command("humans")
+  .description("Scaffold humans/v1 relationship files (~/.agents/humans) — see the humans skill");
+
+humansCommand
+  .command("init")
+  .description(
+    "Scaffold a relationship file for a contact/slug, or --top N for your top relationships",
+  )
+  .argument("[contact]", "Contact name, phone, email, or thread slug")
+  .option("--top <n>", "Scaffold the top N relationships (by the relationship leaderboard)")
+  .action(async (contact: string | undefined, opts: { top?: string }) => {
+    if (!contact && !opts.top) {
+      console.error("Provide a contact/slug or --top N.");
+      process.exitCode = 1;
+      return;
+    }
+    const args = opts.top
+      ? { top: Number(opts.top) }
+      : contact?.includes("~")
+        ? { threadSlug: contact }
+        : { contact };
+    await withClient((c) => printToolResult(c, "init_human", args));
+  });
+
+humansCommand
+  .command("top")
+  .description("Show the relationship leaderboard (volume × reciprocity × recency, last year)")
+  .argument("[windowDays]", "Days of history to rank", "365")
+  .action(async (windowDays: string) => {
+    await withClient((c) =>
+      printToolResult(c, "chat_analytics", {
+        type: "relationship_leaderboard",
+        windowDays: Number(windowDays),
+      }),
+    );
   });
 
 program

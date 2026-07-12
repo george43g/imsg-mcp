@@ -259,5 +259,10 @@ export function resolveRecipient(
     };
   }
   if (candidates.length === 1) return candidates[0]!;
+  // All handles belonging to ONE contact card are not ambiguous — that's just
+  // one person with several ways to reach them. Prefer their first phone
+  // (dial-ready) over emails. Pre-fix, "send to dad" listed Dad's own three
+  // handles as competing "matches".
+  if (matches.length === 1) return candidates[0]!;
   return { kind: "ambiguous", query: trimmed, candidates };
 }

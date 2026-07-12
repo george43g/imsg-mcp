@@ -11,6 +11,7 @@
  * `not_yet_implemented` if requested.
  */
 
+import { isGroupChatIdentifier } from "./thread-slug.js";
 import type { Message } from "./types.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -366,6 +367,110 @@ export function computeWrapped(messages: Message[]): WrappedResult {
   };
 }
 
+// ── Relationship leaderboard ─────────────────────────────────────────────
+
+export interface RelationshipScore {
+  /** Contact display name when resolved, else the raw handle. */
+  contact: string;
+  /** A representative handle for the contact (feeds init_human / get_contact). */
+  handle: string;
+  total: number;
+  sent: number;
+  received: number;
+  /** min(sent,received)/max(sent,received) — 1.0 = perfectly balanced. */
+  reciprocity: number;
+  daysSinceLast: number;
+  /** Weighted importance score — see computeRelationshipLeaderboard. */
+  score: number;
+}
+
+/**
+ * Rank 1:1 relationships by fuzzy importance within the analytic window.
+ *
+ * Score = log2(1 + total) — volume with diminishing returns
+ *       × (0.4 + 0.6 × reciprocity) — real conversations beat broadcasts
+ *       × exp(-daysSinceLast / 45) — recency decay (half-ish life ~1 month)
+ *
+ * Group chats are excluded (a person's group activity says little about the
+ * 1:1 relationship, and humans files are per-person). Contacts are keyed by
+ * resolved display name so phone+email legs of one person merge; unresolved
+ * handles key by the handle itself.
+ */
+export function computeRelationshipLeaderboard(messages: Message[]): {
+  leaderboard: RelationshipScore[];
+} {
+  interface Acc {
+    contact: string | null;
+    handle: string;
+    sent: number;
+    received: number;
+    lastMs: number;
+  }
+  // Group by CONVERSATION (chatId), not by sender — from-me rows carry the
+  // user's own handle ("me"), so sender-keyed grouping put every sent message
+  // under one giant "me" bucket and zeroed reciprocity for every contact.
+  const byChat = new Map<string, Acc>();
+  for (const m of messages) {
+    if (m.isReaction) continue;
+    if (!m.chatId || isGroupChatIdentifier(m.chatId)) continue;
+    let acc = byChat.get(m.chatId);
+    if (!acc) {
+      acc = { contact: null, handle: m.chatId, sent: 0, received: 0, lastMs: 0 };
+      byChat.set(m.chatId, acc);
+    }
+    if (m.isFromMe) {
+      acc.sent++;
+    } else {
+      acc.received++;
+      // The other party names the conversation.
+      if (!acc.contact && m.displayName) acc.contact = m.displayName;
+      if (m.handle && m.handle !== "unknown") acc.handle = m.handle;
+    }
+    if (m.date.getTime() > acc.lastMs) acc.lastMs = m.date.getTime();
+  }
+
+  // Merge phone+email legs of the same person: same resolved contact name →
+  // one entry.
+  const byContact = new Map<string, Acc>();
+  for (const acc of byChat.values()) {
+    const key = acc.contact ?? acc.handle;
+    if (!key || key === "unknown") continue;
+    const merged = byContact.get(key);
+    if (merged) {
+      merged.sent += acc.sent;
+      merged.received += acc.received;
+      merged.lastMs = Math.max(merged.lastMs, acc.lastMs);
+    } else {
+      byContact.set(key, { ...acc });
+    }
+  }
+
+  const now = Date.now();
+  const leaderboard: RelationshipScore[] = [];
+  for (const [contact, acc] of byContact) {
+    const total = acc.sent + acc.received;
+    // One-sided "conversations" (promos, OTP senders) score near zero via
+    // the reciprocity term; skip trivial volumes outright.
+    if (total < 3) continue;
+    const reciprocity =
+      Math.min(acc.sent, acc.received) / Math.max(Math.max(acc.sent, acc.received), 1);
+    const daysSinceLast = Math.max(0, (now - acc.lastMs) / 86_400_000);
+    const score = Math.log2(1 + total) * (0.4 + 0.6 * reciprocity) * Math.exp(-daysSinceLast / 45);
+    leaderboard.push({
+      contact,
+      handle: acc.handle,
+      total,
+      sent: acc.sent,
+      received: acc.received,
+      reciprocity: Math.round(reciprocity * 100) / 100,
+      daysSinceLast: Math.round(daysSinceLast * 10) / 10,
+      score: Math.round(score * 1000) / 1000,
+    });
+  }
+  leaderboard.sort((a, b) => b.score - a.score);
+  return { leaderboard: leaderboard.slice(0, 50) };
+}
+
 // ── Dispatch ─────────────────────────────────────────────────────────────
 
 export type AnalyticType =
@@ -374,7 +479,8 @@ export type AnalyticType =
   | "response_time_stats"
   | "daily_heatmap"
   | "tapback_summary"
-  | "year_in_review_wrapped";
+  | "year_in_review_wrapped"
+  | "relationship_leaderboard";
 
 /** Full enum including the 20 deferred types — agents get a friendly error. */
 export const FUTURE_TYPES = [
@@ -407,6 +513,7 @@ export const IMPLEMENTED_TYPES: AnalyticType[] = [
   "daily_heatmap",
   "tapback_summary",
   "year_in_review_wrapped",
+  "relationship_leaderboard",
 ];
 
 export function dispatchAnalytic(
@@ -429,5 +536,7 @@ export function dispatchAnalytic(
       return { type, data: computeTapbacks(messages) };
     case "year_in_review_wrapped":
       return { type, data: computeWrapped(messages) };
+    case "relationship_leaderboard":
+      return { type, data: computeRelationshipLeaderboard(messages) };
   }
 }

@@ -11,6 +11,7 @@ import {
   dispatchAnalytic,
   type HeatmapResult,
   IMPLEMENTED_TYPES,
+  type RelationshipScore,
   type ResponseTimeStats,
   type StreakResult,
   type TapbackResult,
@@ -28,6 +29,7 @@ export const ANALYTIC_LABEL: Record<AnalyticType, string> = {
   daily_heatmap: "Daily Heatmap",
   tapback_summary: "Tapback Summary",
   year_in_review_wrapped: "Year in Review (Wrapped)",
+  relationship_leaderboard: "Relationship Leaderboard",
 };
 
 const RANGE_LABEL: Record<AnalyticsRange, string> = {
@@ -231,9 +233,41 @@ function AnalyticsResultView({
       return <TapbacksView rows={data as TapbackResult[]} height={height} />;
     case "year_in_review_wrapped":
       return <WrappedView result={data as WrappedResult} />;
+    case "relationship_leaderboard":
+      return (
+        <LeaderboardView result={data as { leaderboard: RelationshipScore[] }} height={height} />
+      );
   }
   void messages;
   void resolveNames;
+}
+
+function LeaderboardView({
+  result,
+  height,
+}: {
+  result: { leaderboard: RelationshipScore[] };
+  height: number;
+}) {
+  const theme = useTheme();
+  const rows = result.leaderboard.slice(0, Math.max(height - 3, 5));
+  if (rows.length === 0) return <NoData />;
+  return (
+    <Box flexDirection="column">
+      {rows.map((r, i) => (
+        <Box key={r.contact} gap={1}>
+          <Text color={theme.lineNum}>{String(i + 1).padStart(2)}</Text>
+          <Text color={theme.senderName} bold>
+            {r.contact.length > 24 ? `${r.contact.slice(0, 23)}…` : r.contact}
+          </Text>
+          <Text color={theme.info.label}>
+            {r.total} msgs · {Math.round(r.reciprocity * 100)}% recip ·{" "}
+            {Math.round(r.daysSinceLast)}d ago · score {r.score}
+          </Text>
+        </Box>
+      ))}
+    </Box>
+  );
 }
 
 function NoData() {

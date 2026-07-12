@@ -75,6 +75,11 @@ export function getSlugsDbPath(): string {
   return resolveEnvPath(process.env.VITE_SLUGS_DB_PATH, join(homedir(), ".imsg-mcp", "slugs.db"));
 }
 
+/** Directory for humans/v1 relationship files (see skills/humans/SKILL.md). */
+export function getHumansDirPath(): string {
+  return resolveEnvPath(process.env.VITE_HUMANS_DIR, join(homedir(), ".agents", "humans"));
+}
+
 export function getVcfPath(): string {
   return resolveEnvPath(process.env.VITE_VCF_PATH, join(process.cwd(), "fixtures", "contacts.vcf"));
 }

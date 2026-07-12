@@ -789,6 +789,36 @@ export class IMessageDB {
   }
 
   /**
+   * Aggregate stats over ALL merged legs of a conversation — one SQL
+   * COUNT/MIN/MAX instead of materializing messages. Reactions and other
+   * associated messages are excluded (normal items only). Used by
+   * init_human to prefill first/last contact + volume.
+   */
+  getChatStats(chatIdentifier: string): { count: number; first: Date | null; last: Date | null } {
+    const chats = this.resolveChatsForConversation(chatIdentifier);
+    if (chats.length === 0) return { count: 0, first: null, last: null };
+    const placeholders = chats.map(() => "?").join(",");
+    const row = this.raw
+      .prepare(
+        `SELECT COUNT(*) as count, MIN(m.date) as first, MAX(m.date) as last
+         FROM ${Tables.MESSAGE} m
+         JOIN ${Tables.CHAT_MESSAGE_JOIN} j ON j.message_id = m.ROWID
+         WHERE j.chat_id IN (${placeholders})
+           AND (m.associated_message_type = 0 OR m.associated_message_type IS NULL)`,
+      )
+      .get(...chats.map((c) => c.ROWID)) as {
+      count: number;
+      first: number | null;
+      last: number | null;
+    };
+    return {
+      count: row.count ?? 0,
+      first: row.first != null ? macTimestampToDate(row.first) : null,
+      last: row.last != null ? macTimestampToDate(row.last) : null,
+    };
+  }
+
+  /**
    * Get messages after a specific message ID (for polling new messages).
    * Sorted by date ascending (chronological). By default returns incoming
    * messages only; `includeSelf` also returns from-me rows (the user's own

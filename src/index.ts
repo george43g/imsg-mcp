@@ -17,7 +17,11 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
-import { dispatchAnalytic } from "./analytics.js";
+import {
+  computeRelationshipLeaderboard,
+  dispatchAnalytic,
+  type RelationshipScore,
+} from "./analytics.js";
 import { lookupCache, storeCache } from "./analytics-cache.js";
 import {
   checkImessageAvailability,
@@ -29,11 +33,12 @@ import {
   sendToChat,
   sendToChatId,
 } from "./applescript.js";
-import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "./config.js";
+import { getContactsDbPaths, getHumansDirPath, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
 import { normalizedPhoneVariants } from "./contacts-db.js";
 import { streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
+import { HumansScaffold } from "./humans-scaffold.js";
 import { IMessageDB } from "./imessage-db.js";
 import {
   appendLog,
@@ -62,6 +67,7 @@ import {
   GetMessagesSchema,
   GetUnreadMessagesSchema,
   getActiveTools,
+  InitHumanSchema,
   isDevMode,
   ListContactsSchema,
   ListConversationsSchema,
@@ -135,6 +141,24 @@ function withTimeout<T>(toolName: string, fn: () => Promise<T>): Promise<T> {
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+/**
+ * Human-readable text rendering for analytics whose data matters on the CLI.
+ * Only relationship_leaderboard gets rows for now; other types keep their
+ * JSON-only structured payloads.
+ */
+function analyticTextSummary(type: string, data: unknown): string {
+  if (type !== "relationship_leaderboard") return "";
+  const rows = (data as { leaderboard?: RelationshipScore[] })?.leaderboard ?? [];
+  if (rows.length === 0) return "\n(no ranked relationships in window)";
+  const lines = rows
+    .slice(0, 20)
+    .map(
+      (r, i) =>
+        `${String(i + 1).padStart(2)}. ${sanitizeUserText(r.contact)}  —  ${r.total} msgs, ${Math.round(r.reciprocity * 100)}% reciprocity, last ${Math.round(r.daysSinceLast)}d ago (score ${r.score})`,
+    );
+  return `\n\n${lines.join("\n")}`;
 }
 
 /** Format a millisecond duration as e.g. "1h 23m" or "5s". */
@@ -536,6 +560,8 @@ export class IMessageMCPServer {
         return await this.handleGetAttachment(args);
       case "chat_analytics":
         return await this.handleChatAnalytics(args);
+      case "init_human":
+        return await this.handleInitHuman(args);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1688,6 +1714,124 @@ export class IMessageMCPServer {
     };
   }
 
+  /**
+   * Scaffold humans/v1 relationship file(s). Identity comes from the Address
+   * Book; message stats from chat.db across the person's merged legs. Never
+   * overwrites. The agent does all summarization afterwards (humans skill).
+   */
+  private async handleInitHuman(args: unknown) {
+    const { contact, threadSlug, top } = InitHumanSchema.parse(args);
+    const scaffold = new HumansScaffold();
+
+    interface Target {
+      name: string;
+      aliases: string[];
+      handles: string[];
+    }
+    const targets: Target[] = [];
+
+    const targetFromHandle = (handle: string, fallbackName?: string): Target => {
+      const lookup = this.db.contacts.lookupContact(handle);
+      const card = lookup ? this.db.contacts.getContact(lookup.contactId) : null;
+      if (card) {
+        return {
+          name: card.displayName,
+          aliases: card.nickname && card.nickname !== card.displayName ? [card.nickname] : [],
+          handles: [...card.phoneNumbers, ...card.emails],
+        };
+      }
+      return { name: fallbackName ?? handle, aliases: [], handles: [handle] };
+    };
+
+    if (threadSlug) {
+      const slugRecord = this.db.getSlugRecord(threadSlug);
+      if (!slugRecord) {
+        return toolError(`Unknown thread slug: ${threadSlug}`, { threadSlug });
+      }
+      if (slugRecord.isGroup) {
+        return toolError("Humans files are per-person — pick a 1:1 thread (or use contact/top).", {
+          threadSlug,
+        });
+      }
+      targets.push(
+        targetFromHandle(slugRecord.chatIdentifier, slugRecord.displayName ?? undefined),
+      );
+    } else if (contact) {
+      const selectorHit = resolveContactSelector(contact);
+      const resolution = resolveRecipient(selectorHit?.handle ?? contact, {
+        contacts: this.db.contacts,
+        defaultCountry: defaultCountryFromEnv(),
+      });
+      if (resolution.kind === "error") {
+        return toolError(resolution.message, { contact });
+      }
+      if (resolution.kind === "ambiguous") {
+        const lines = resolution.candidates
+          .map((c, i) => `  contact:${i + 1}  ${c.displayName}  →  ${c.handle}`)
+          .join("\n");
+        return toolError(
+          `Ambiguous contact "${contact}" — multiple matches:\n${lines}\n\nCall again with one of the contact:N labels.`,
+          { contact, candidates: resolution.candidates },
+        );
+      }
+      targets.push(targetFromHandle(resolution.handle, contact));
+    } else if (top !== undefined) {
+      const cutoffMs = Date.now() - 365 * 86_400_000;
+      const messages = await this.db.getMessagesInWindow(cutoffMs);
+      const { leaderboard } = computeRelationshipLeaderboard(messages);
+      for (const entry of leaderboard.slice(0, top)) {
+        targets.push(targetFromHandle(entry.handle, entry.contact));
+      }
+      if (targets.length === 0) {
+        return toolError("No ranked relationships found in the last year.", { top });
+      }
+    }
+
+    const results: Array<{
+      slug: string;
+      name: string;
+      path: string;
+      created: boolean;
+      messageCount?: number;
+    }> = [];
+    for (const t of targets) {
+      // Stats: any handle resolves to the merged conversation, so take the
+      // handle that yields the richest history. Cards store phones in local
+      // format ("0408 …") while chats are E.164 — expand variants first.
+      let stats = { count: 0, first: null as Date | null, last: null as Date | null };
+      for (const h of t.handles) {
+        const candidates = h.includes("@") ? [h] : normalizedPhoneVariants(h);
+        for (const candidate of candidates) {
+          const s = this.db.getChatStats(candidate);
+          if (s.count > stats.count) stats = s;
+        }
+      }
+      const r = scaffold.scaffold({
+        name: t.name,
+        aliases: t.aliases,
+        handles: t.handles,
+        firstContact: stats.first,
+        lastContact: stats.last,
+        messageCount: stats.count,
+      });
+      results.push({ ...r, name: t.name, messageCount: stats.count });
+    }
+
+    const lines = results.map(
+      (r) =>
+        `${r.created ? "created" : "exists "}  ${r.slug}  (${r.name}, ${r.messageCount?.toLocaleString() ?? "?"} msgs)  ${r.path}`,
+    );
+    lines.push(
+      "",
+      "Next: export history (export_messages), summarize it YOURSELF into the file's sections, and append a Log entry — see the humans skill. File contents are privacy: never-share.",
+    );
+    return toolText(lines.join("\n"), {
+      results,
+      count: results.length,
+      humansDir: getHumansDirPath(),
+    });
+  }
+
   private async handleChatAnalytics(args: unknown) {
     const { type, windowDays } = ChatAnalyticsSchema.parse(args);
     // year_in_review pins to 365 days regardless of caller; otherwise use the
@@ -1701,13 +1845,16 @@ export class IMessageMCPServer {
     const cacheArgs = { type, windowDays: effectiveDays };
     const hit = lookupCache(type, cacheArgs, maxRowId);
     if (hit) {
-      return toolText(`Cached ${type} (computed at ${new Date(hit.computedAt).toISOString()}).`, {
-        type,
-        windowDays: effectiveDays,
-        computedAtIso: new Date(hit.computedAt).toISOString(),
-        fromCache: true,
-        data: hit.data,
-      });
+      return toolText(
+        `Cached ${type} (computed at ${new Date(hit.computedAt).toISOString()}).${analyticTextSummary(type, hit.data)}`,
+        {
+          type,
+          windowDays: effectiveDays,
+          computedAtIso: new Date(hit.computedAt).toISOString(),
+          fromCache: true,
+          data: hit.data,
+        },
+      );
     }
 
     const messages = await this.db.getMessagesInWindow(cutoffMs);
@@ -1716,7 +1863,7 @@ export class IMessageMCPServer {
     storeCache(type, cacheArgs, maxRowId, result.data);
 
     return toolText(
-      `Computed ${type} over ${messages.length} messages in the last ${effectiveDays}d.`,
+      `Computed ${type} over ${messages.length} messages in the last ${effectiveDays}d.${analyticTextSummary(type, result.data)}`,
       {
         type,
         windowDays: effectiveDays,
