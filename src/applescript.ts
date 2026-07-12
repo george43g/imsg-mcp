@@ -260,6 +260,62 @@ export async function buddyExists(address: string): Promise<boolean> {
   }
 }
 
+/** Services a send can be routed through. */
+export type SendService = "iMessage" | "SMS";
+
+/**
+ * Decide which service(s) to attempt for a send, in order.
+ *
+ * Messages.app's participant/buddy resolution is LAZY — `participant "x" of
+ * (iMessage account)` returns a reference for ANY string (verified
+ * empirically: even garbage handles resolve), and `send` to a wrong-service
+ * participant fails asynchronously in the GUI ("Not Delivered") without
+ * raising an AppleScript error. So the on-error fallback in the generated
+ * script only covers synchronous failures (no SMS account configured,
+ * service down) — it CANNOT detect "this number isn't on iMessage".
+ *
+ * Callers that know the thread's real service from chat.db (slug store /
+ * existing conversation) must pass `preferredService` so the FIRST attempt
+ * is already the right one. Emails are iMessage-only — SMS never applies.
+ */
+export function sendServiceOrder(recipient: string, preferredService?: SendService): SendService[] {
+  if (!isPhoneLike(recipient)) return ["iMessage"];
+  return preferredService === "SMS" ? ["SMS", "iMessage"] : ["iMessage", "SMS"];
+}
+
+/**
+ * Build the AppleScript for a participant send that attempts services in
+ * `order` (second entry, if any, goes in the on-error branch). `payload` is
+ * an AppleScript expression (e.g. `msgBody` or a `POSIX file` specifier);
+ * `prelude` runs once before the attempts. Exported for tests.
+ */
+export function buildParticipantSendScript(opts: {
+  order: SendService[];
+  escapedRecipient: string;
+  payload: string;
+  prelude?: string;
+}): string {
+  const { order, escapedRecipient, payload, prelude } = opts;
+  const preludeLine = prelude ? `\n        ${prelude}` : "";
+  const attempt = (svc: SendService, svcVar: string) => `
+          set ${svcVar} to 1st account whose service type = ${svc}
+          send ${payload} to participant "${escapedRecipient}" of ${svcVar}
+          return "${svc}"`;
+  if (order.length === 1 || order[1] === undefined) {
+    return `
+      tell application "Messages"${preludeLine}${attempt(order[0]!, "svcA")}
+      end tell
+    `;
+  }
+  return `
+      tell application "Messages"${preludeLine}
+        try${attempt(order[0]!, "svcA")}
+        on error${attempt(order[1], "svcB")}
+        end try
+      end tell
+    `;
+}
+
 /**
  * Reliable send: writes the message body to a UTF-8 temp file and uses
  * `read (POSIX file "...") as «class utf8»` inside AppleScript. This avoids
@@ -268,12 +324,16 @@ export async function buddyExists(address: string): Promise<boolean> {
  *   2. Quote/backslash/escape bugs when the message contains arbitrary user
  *      content (emoji ZWJ sequences, smart quotes, backticks, etc).
  *
- * Auto-fallback: if iMessage send fails AND the recipient looks like a phone
- * number, retries via the SMS service in the same AppleScript invocation.
+ * Service routing: attempts services in `sendServiceOrder(recipient,
+ * preferredService)` order. Pass `preferredService: "SMS"` when chat.db
+ * says the conversation is SMS — the on-error fallback cannot detect
+ * wrong-service sends (see sendServiceOrder), so first attempt must be
+ * the service the thread actually lives on.
  */
 export async function sendMessageReliable(
   recipient: string,
   message: string,
+  preferredService?: SendService,
 ): Promise<SendMessageResult> {
   if (MOCK) return mockSend(message, { chatIdentifier: recipient });
 
@@ -286,34 +346,13 @@ export async function sendMessageReliable(
 
   const escapedRecipient = appleScriptEscape(recipient);
   const escapedPath = appleScriptEscape(tmpFile);
-  const phoneFallback = isPhoneLike(recipient);
 
-  // Outer try sends via iMessage; if it errors AND the recipient is a phone
-  // number, the on-error branch falls back to SMS. Both branches read the
-  // body from the temp file to avoid AppleScript string handling.
-  const script = phoneFallback
-    ? `
-      tell application "Messages"
-        set msgBody to read (POSIX file "${escapedPath}") as «class utf8»
-        try
-          set iSvc to 1st account whose service type = iMessage
-          send msgBody to participant "${escapedRecipient}" of iSvc
-          return "iMessage"
-        on error
-          set sSvc to 1st account whose service type = SMS
-          send msgBody to participant "${escapedRecipient}" of sSvc
-          return "SMS"
-        end try
-      end tell
-    `
-    : `
-      tell application "Messages"
-        set msgBody to read (POSIX file "${escapedPath}") as «class utf8»
-        set iSvc to 1st account whose service type = iMessage
-        send msgBody to participant "${escapedRecipient}" of iSvc
-        return "iMessage"
-      end tell
-    `;
+  const script = buildParticipantSendScript({
+    order: sendServiceOrder(recipient, preferredService),
+    escapedRecipient,
+    payload: "msgBody",
+    prelude: `set msgBody to read (POSIX file "${escapedPath}") as «class utf8»`,
+  });
 
   try {
     const service = await runAppleScript(script, true);
@@ -342,39 +381,24 @@ export async function sendMessageReliable(
  * exist on disk; Messages.app will rate-limit or reject very large files
  * (typical cap ~100MB).
  *
- * For phone-like recipients, falls back to SMS service on iMessage failure.
+ * Service routing mirrors sendMessageReliable: pass `preferredService: "SMS"`
+ * for threads chat.db knows are SMS (MMS carries the attachment).
  */
 export async function sendAttachment(
   recipient: string,
   filepath: string,
+  preferredService?: SendService,
 ): Promise<SendMessageResult> {
   if (MOCK) return mockSend(`[attachment:${filepath}]`, { chatIdentifier: recipient });
 
   const escapedRecipient = appleScriptEscape(recipient);
   const escapedPath = appleScriptEscape(filepath);
-  const phoneFallback = isPhoneLike(recipient);
 
-  const script = phoneFallback
-    ? `
-      tell application "Messages"
-        try
-          set iSvc to 1st account whose service type = iMessage
-          send (POSIX file "${escapedPath}") to participant "${escapedRecipient}" of iSvc
-          return "iMessage"
-        on error
-          set sSvc to 1st account whose service type = SMS
-          send (POSIX file "${escapedPath}") to participant "${escapedRecipient}" of sSvc
-          return "SMS"
-        end try
-      end tell
-    `
-    : `
-      tell application "Messages"
-        set iSvc to 1st account whose service type = iMessage
-        send (POSIX file "${escapedPath}") to participant "${escapedRecipient}" of iSvc
-        return "iMessage"
-      end tell
-    `;
+  const script = buildParticipantSendScript({
+    order: sendServiceOrder(recipient, preferredService),
+    escapedRecipient,
+    payload: `(POSIX file "${escapedPath}")`,
+  });
 
   try {
     const service = await runAppleScript(script, true);
@@ -392,11 +416,15 @@ export async function sendAttachment(
  * Preflight reachability check. Cheap call that an agent should make BEFORE
  * `send_message` to avoid wasted attempts when the handle can't be reached.
  *
- * Detection rules:
- *   - Try iMessage `buddy` lookup → if success, return `iMessage`.
- *   - If handle looks like a phone number, try SMS `buddy` → if success,
- *     return `SMS`.
- *   - Otherwise return `unknown` with a remediation hint.
+ * IMPORTANT LIMITATION (verified empirically): Messages.app buddy/participant
+ * resolution is lazy — the iMessage `buddy` lookup succeeds for ANY
+ * well-formed string, so this probe cannot actually distinguish iMessage
+ * from SMS-only numbers, and will report `iMessage` for both. It still
+ * catches format errors and missing-account/permission failures. The
+ * authoritative source for service + reachability is an EXISTING
+ * conversation in chat.db — `handleCheckImessageAvailability` consults that
+ * first and only falls back to this best-effort probe for never-messaged
+ * handles.
  */
 /**
  * Cheap format check used by checkImessageAvailability before invoking

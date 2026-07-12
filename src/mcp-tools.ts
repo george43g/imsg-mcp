@@ -830,7 +830,7 @@ export const TOOLS: Tool[] = [
   {
     name: "check_imessage_availability",
     description:
-      "Preflight check: is this handle reachable via iMessage or SMS? Call BEFORE send_message to avoid wasted send attempts to unreachable recipients. Returns the best-guess service plus a human-readable hint when unreachable.",
+      "Preflight check: is this handle reachable via iMessage or SMS? Authoritative when a conversation with the handle already exists (service comes from chat.db history); best-effort otherwise (Messages.app cannot verify iMessage registration without sending). send_message routes on the same ground truth automatically, so this is mainly useful for never-messaged handles and format validation.",
     annotations: annotations.status,
     inputSchema: {
       type: "object",

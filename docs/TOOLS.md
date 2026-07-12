@@ -66,7 +66,7 @@ imsg export <slug-or-handle>
 
 | Tool | Required args | Notes |
 |---|---|---|
-| `send_message` | `message` + (`recipient` or `threadSlug`) | Optional `attachments[]` array of file paths. Auto-falls-back to SMS if iMessage delivery fails. |
+| `send_message` | `message` + (`recipient` or `threadSlug`) | Optional `attachments[]` array of file paths. Routes on the thread's real service from chat.db (SMS threads send as SMS/MMS, iMessage threads as iMessage); new recipients with no history default to iMessage-first. |
 | `wait_for_reply` | `chatIdentifier` or `threadSlug` | `timeoutSeconds`, `pollIntervalSeconds`, `afterMessageId`. Honors `notifications/cancelled`. |
 
 ### Exporting
@@ -99,7 +99,7 @@ imsg export <slug-or-handle>
 
 | Tool | Notes |
 |---|---|
-| `check_imessage_availability` | Preflight a handle — returns `service: "iMessage"\|"SMS"\|null` + `hint` if unreachable. |
+| `check_imessage_availability` | Preflight a handle — returns `service: "iMessage"\|"SMS"\|"unknown"` + `hint`. Authoritative when conversation history exists; best-effort for never-messaged handles. |
 | `chat_analytics` | `type` + window. 6 priority types shipped; 20 reserved (see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types)). Cached per-window. |
 
 ### Dev-only (require `IMSG_DEV=1`)
