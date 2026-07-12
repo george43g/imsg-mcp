@@ -58,9 +58,10 @@ jobs:
       - name: Test (Rust native)
         run: pnpm test:rust
 
-      - name: Pack Claude Desktop bundle (.mcpb)
-        run: pnpm pack:mcpb
-
+      # The .mcpb bundle is packed by @semantic-release/exec during prepare (see
+      # .releaserc.json) — after the version bump, so the bundle's package.json
+      # and manifest.json carry the released version. A standalone pack step
+      # here would run pre-bump and ship stale versions inside the bundle.
       - name: Run semantic-release
         env:
           # OIDC: npmjs.com Trusted Publisher is configured for this repo + workflow.

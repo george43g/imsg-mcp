@@ -111,12 +111,19 @@ export function toJSON(messages: Message[], header?: ExportHeader): string {
 
 /** NDJSON — newline-delimited JSON, ideal for streaming exports. */
 export function toNDJSONLine(m: Message): string {
-  return JSON.stringify({
+  const entry: Record<string, unknown> = {
     ...m,
     date: m.date.toISOString(),
     dateRead: m.dateRead?.toISOString() ?? null,
     dateDelivered: m.dateDelivered?.toISOString() ?? null,
-  });
+  };
+  // Sort top-level keys so the same data always serializes to the same bytes.
+  // Message objects come from different construction paths (TS parser, native
+  // parser, cache hydration) whose property insertion order can differ, which
+  // made re-exports of identical data diff at the byte level.
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(entry).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+  );
 }
 
 /** Choose extension for a given format. */

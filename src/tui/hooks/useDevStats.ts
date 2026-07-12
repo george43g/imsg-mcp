@@ -54,18 +54,20 @@ export function useDevStats(visible: boolean): {
 
   useEffect(() => {
     if (!visible) return;
-    const timer = setInterval(() => {
+    const sample = () => {
       const now = Date.now();
       const elapsed = now - lastTimeRef.current;
-      if (elapsed === 0) return;
 
-      const cpuNow = process.cpuUsage(lastCpuRef.current);
-      // cpuUsage returns microseconds; convert to percentage of wall time
-      const totalCpuUs = cpuNow.user + cpuNow.system;
-      const cpuPercent = (totalCpuUs / 1000 / elapsed) * 100;
-
-      lastCpuRef.current = process.cpuUsage();
-      lastTimeRef.current = now;
+      // CPU% needs a time delta; on the immediate first sample keep 0.
+      let cpuPercent = 0;
+      if (elapsed > 0) {
+        const cpuNow = process.cpuUsage(lastCpuRef.current);
+        // cpuUsage returns microseconds; convert to percentage of wall time
+        const totalCpuUs = cpuNow.user + cpuNow.system;
+        cpuPercent = (totalCpuUs / 1000 / elapsed) * 100;
+        lastCpuRef.current = process.cpuUsage();
+        lastTimeRef.current = now;
+      }
 
       const { rss } = process.memoryUsage();
       const memMB = Math.round((rss / 1024 / 1024) * 10) / 10;
@@ -81,7 +83,12 @@ export function useDevStats(visible: boolean): {
         eventLoopP99Ms: Math.round(wd.eventLoopP99Ms * 10) / 10,
         lastActivityAgo: formatAgo(Date.now() - wd.lastActivityTs),
       });
-    }, 2000);
+    };
+
+    // Paint real numbers as soon as the panel opens — without this the panel
+    // shows 0MB / 0s until the first interval tick lands.
+    sample();
+    const timer = setInterval(sample, 2000);
     timer.unref();
 
     return () => clearInterval(timer);

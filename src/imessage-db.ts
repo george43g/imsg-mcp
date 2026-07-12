@@ -199,6 +199,11 @@ export class IMessageDB {
    * the same merged chats dozens of times; without this, every page re-scanned
    * each chat's full reaction set — O(pages × chats) — which dominated big
    * exports and spiked event-loop lag.
+   *
+   * Invalidation contract: entries expire via their per-entry TTL on read, and
+   * the whole map is cleared only in scheduleBackgroundRefresh() — every read
+   * path that can observe new messages schedules that refresh, so there is no
+   * other clear site. Add one if you introduce a read path that bypasses it.
    */
   private cachedReactionsByChat = new Map<number, { data: Map<string, Reaction[]>; ts: number }>();
   private backgroundSyncNeeded = true;

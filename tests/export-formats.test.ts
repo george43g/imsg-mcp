@@ -151,6 +151,17 @@ describe("toNDJSONLine", () => {
     const parsed = JSON.parse(line);
     expect(parsed.id).toBe(1);
   });
+
+  it("serializes identical data to identical bytes regardless of property insertion order", () => {
+    // Message objects come from different construction paths (TS parser,
+    // native parser, cache hydration) whose property insertion order differs.
+    const base = FIXTURE[0];
+    const reversed = Object.fromEntries(Object.entries(base).reverse()) as typeof base;
+    expect(toNDJSONLine(reversed)).toBe(toNDJSONLine(base));
+    // And the keys really are sorted.
+    const keys = Object.keys(JSON.parse(toNDJSONLine(base)));
+    expect(keys).toEqual([...keys].sort());
+  });
 });
 
 describe("extensionFor", () => {
