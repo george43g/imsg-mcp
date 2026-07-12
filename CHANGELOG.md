@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+## [1.3.2](https://github.com/george43g/imsg-mcp/compare/v1.3.1...v1.3.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **send:** route on the thread's real service — AppleScript can't detect wrong-service sends ([ff30b7a](https://github.com/george43g/imsg-mcp/commit/ff30b7a9a5fa2837a0e20278d61ba20f27db1780))
+
 ## [1.3.1](https://github.com/george43g/imsg-mcp/compare/v1.3.0...v1.3.1) (2026-07-12)
 
 
