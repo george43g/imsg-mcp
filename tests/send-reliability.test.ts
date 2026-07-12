@@ -9,7 +9,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkImessageAvailability, sendMessageReliable } from "../src/applescript.js";
+import {
+  buildParticipantSendScript,
+  checkImessageAvailability,
+  sendMessageReliable,
+  sendServiceOrder,
+} from "../src/applescript.js";
 
 const SRC = readFileSync(resolve(__dirname, "../src/applescript.ts"), "utf8");
 
@@ -34,10 +39,14 @@ describe("send-reliability source guards", () => {
   });
 
   it("contains SMS auto-fallback for phone-like recipients", () => {
-    // The fallback script must reference SMS service inside the on-error
-    // branch of the iMessage send.
-    expect(SRC).toMatch(/service type = SMS/);
-    expect(SRC).toMatch(/on error[\s\S]*service type = SMS/);
+    // The generated script must reference the SMS service inside the
+    // on-error branch when the default (iMessage-first) order applies.
+    const script = buildParticipantSendScript({
+      order: sendServiceOrder("+15555550100"),
+      escapedRecipient: "+15555550100",
+      payload: "msgBody",
+    });
+    expect(script).toMatch(/on error[\s\S]*service type = SMS/);
   });
 
   it("cleans up the temp file in finally", () => {

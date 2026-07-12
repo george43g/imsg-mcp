@@ -22,6 +22,7 @@ import { lookupCache, storeCache } from "./analytics-cache.js";
 import {
   checkImessageAvailability,
   checkMessagesAvailable,
+  type SendService,
   sendAttachment,
   sendMessageAlt,
   sendMessageReliable,
@@ -917,6 +918,14 @@ export class IMessageMCPServer {
       resolvedTarget = resolution.handle;
     }
 
+    // Service routing ground truth: AppleScript cannot detect a wrong-service
+    // send (lazy participant resolution — an SMS-only number "sends" fine via
+    // the iMessage service and just never delivers). chat.db CAN tell us: the
+    // slug store persists each thread's service, and any existing conversation
+    // knows which service carries it. Resolve that BEFORE sending so the first
+    // attempt uses the service the thread actually lives on.
+    let preferredService: SendService | undefined;
+
     if (threadSlug) {
       const slugRecord = this.db.getSlugRecord(threadSlug);
       if (!slugRecord) {
@@ -927,6 +936,7 @@ export class IMessageMCPServer {
           },
         );
       }
+      preferredService = slugRecord.service === "SMS" ? "SMS" : "iMessage";
 
       if (slugRecord.isGroup) {
         if (slugRecord.displayName && !slugRecord.displayName.startsWith("chat")) {
@@ -935,17 +945,23 @@ export class IMessageMCPServer {
           result = await sendToChatId(slugRecord.chatGuid, message);
         }
       } else {
-        // Route 1:1 sends through the temp-file + SMS-fallback path. Falls
-        // back to sendMessageAlt only if the reliable path itself errors
-        // before AppleScript runs (e.g. tmp-file write failure).
-        result = await sendMessageReliable(slugRecord.chatIdentifier, message);
+        // Route 1:1 sends through the temp-file path on the thread's known
+        // service. Falls back to sendMessageAlt only if the reliable path
+        // itself errors before AppleScript runs (e.g. tmp-file write failure).
+        result = await sendMessageReliable(slugRecord.chatIdentifier, message, preferredService);
         if (!result.success) {
           result = await sendMessageAlt(slugRecord.chatIdentifier, message);
         }
       }
       resolvedTarget = slugRecord.displayName || slugRecord.chatIdentifier;
     } else {
-      result = await sendMessageReliable(normalizedRecipient!, message);
+      // Raw recipient: an existing conversation is the only reliable service
+      // signal. New recipients (no history) default to iMessage-first.
+      const existingChat = await this.db.findChatByHandle(normalizedRecipient!);
+      if (existingChat && !existingChat.isGroupChat) {
+        preferredService = existingChat.serviceType === "SMS" ? "SMS" : "iMessage";
+      }
+      result = await sendMessageReliable(normalizedRecipient!, message, preferredService);
       if (!result.success) {
         result = await sendMessageAlt(normalizedRecipient!, message);
       }
@@ -960,7 +976,7 @@ export class IMessageMCPServer {
       if (attachments?.length) {
         const targetHandle = threadSlug
           ? this.db.getSlugRecord(threadSlug)?.chatIdentifier
-          : recipient;
+          : normalizedRecipient;
         const isGroupTarget = threadSlug
           ? Boolean(this.db.getSlugRecord(threadSlug)?.isGroup)
           : false;
@@ -975,7 +991,9 @@ export class IMessageMCPServer {
           }
         } else if (targetHandle) {
           for (const p of attachments) {
-            const r = await sendAttachment(targetHandle, p);
+            // Same service routing as the text body — an SMS thread's
+            // attachment goes out as MMS, not a dead-end iMessage attempt.
+            const r = await sendAttachment(targetHandle, p, preferredService);
             attachmentResults.push({
               path: p,
               success: r.success,
@@ -1384,9 +1402,26 @@ export class IMessageMCPServer {
     const { handle } = CheckImessageAvailabilitySchema.parse(args);
     const selectorHit = resolveContactSelector(handle);
     const effectiveHandle = selectorHit?.handle ?? handle;
+
+    // DB-first: an existing conversation is authoritative for both
+    // reachability and service — messages have actually flowed on it. The
+    // AppleScript probe below can't distinguish services (Messages.app's
+    // buddy resolution is lazy and reports iMessage for any well-formed
+    // handle), so it's only a best-effort fallback for never-messaged handles.
+    const existingChat = await this.db.findChatByHandle(effectiveHandle);
+    if (existingChat && !existingChat.isGroupChat) {
+      const service = existingChat.serviceType === "SMS" ? "SMS" : "iMessage";
+      return toolText(`${handle} reachable via ${service} (existing conversation).`, {
+        handle,
+        service,
+        reachable: true,
+        hint: "Derived from existing conversation history — authoritative. send_message will route on this service.",
+      });
+    }
+
     const result = await checkImessageAvailability(effectiveHandle);
     const text = result.reachable
-      ? `${handle} reachable via ${result.service}.`
+      ? `${handle} reachable via ${result.service} (best-effort probe — no conversation history for this handle; Messages.app cannot verify iMessage registration without sending).`
       : `${handle} not reachable. ${result.hint ?? ""}`.trim();
     return toolText(text, {
       handle,
