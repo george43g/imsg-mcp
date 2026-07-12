@@ -84,14 +84,14 @@ One human conversation is often split across multiple `chat` rows (phone vs emai
 ### Tool limits & timeouts
 
 - **No upper cap on `limit`.** `0` = unlimited (bounded only by per-tool timeout). Default is 20 for most tools; 100 for `get_unread_messages`.
-- **Per-tool timeouts** (in `src/index.ts:TOOL_TIMEOUTS_MS`): default 30s. `wait_for_reply` has its own `timeoutSeconds` arg and skips the wrapper. `health_check` is capped at 5s. On timeout the server returns `isError: true` so the host unblocks immediately, even if the underlying SQL keeps running.
+- **Per-tool timeouts** (in `src/mcp-tools.ts:TOOL_TIMEOUTS_MS`): default 30s. `wait_for_reply` has its own `timeoutSeconds` arg and skips the wrapper. `health_check` is capped at 5s. On timeout the server returns `isError: true` so the host unblocks immediately, even if the underlying SQL keeps running.
 
 ## Conventions for Development
 
 - **Types**: Shared types in `src/types.ts` (Message, Reaction, ReplyContext, etc.); align with DB schema in `docs/IMESSAGE_DB_SCHEMA.md`.
 - **DB layer**: `src/imessage-db.ts` – all SQLite access and message parsing; use Mac epoch for dates (see docs).
 - **Sending**: `src/applescript.ts` – AppleScript interface to Messages.app.
-- **Tools**: Tool schemas and handlers in `src/index.ts`; validate inputs with Zod, keep tool list and schemas in sync.
+- **Tools**: Tool schemas and metadata in `src/mcp-tools.ts`; handlers in `src/index.ts`; validate inputs with Zod, keep tool list and schemas in sync.
 - **Tests**: Vitest; keep coverage for DB and tool behavior where it matters.
 - **Skills**: Canonical skill file is **`skills/imsg-mcp/SKILL.md`** — keep other skill files pointing to it.
 

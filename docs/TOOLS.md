@@ -1,6 +1,6 @@
 # Tools reference
 
-The canonical reference for every CLI subcommand, MCP tool, and TUI keybinding shipped in v1.0.0.
+The canonical reference for every CLI subcommand, MCP tool, and TUI keybinding.
 
 ---
 
@@ -49,7 +49,7 @@ imsg export <slug-or-handle>
 
 ## MCP tools
 
-15 production tools. 5 additional dev-only tools (`health_check`, `get_logs`, `get_last_send_error`, `run_build`, `request_restart`) are gated by `IMSG_DEV=1` — see `src/mcp/mcp-tools.ts`.
+15 production tools. 5 additional dev-only tools (`health_check`, `get_logs`, `get_last_send_error`, `run_build`, `request_restart`) are gated by `IMSG_DEV=1` — see `src/mcp-tools.ts`.
 
 ### Reading
 
@@ -80,7 +80,7 @@ imsg export <slug-or-handle>
 | Tool | Required args | Notes |
 |---|---|---|
 | `search_attachments` | — | `mimePrefix`, `chatIdentifier`, `since`, `until`, `limit`. Returns metadata only. |
-| `get_attachment` | `rowId` | Returns bytes inline if small (default ≤2MB), otherwise just the path. HEIC auto-converts to PNG inline. |
+| `get_attachment` | `rowId` | Returns bytes inline if small (default ≤5MB), otherwise just the path. HEIC auto-converts to PNG inline. |
 
 ### Contacts
 
@@ -100,7 +100,7 @@ imsg export <slug-or-handle>
 | Tool | Notes |
 |---|---|
 | `check_imessage_availability` | Preflight a handle — returns `service: "iMessage"\|"SMS"\|null` + `hint` if unreachable. |
-| `chat_analytics` | `type` + window. 6 priority types in v1.0.0; 20 reserved (see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types)). Cached per-window. |
+| `chat_analytics` | `type` + window. 6 priority types shipped; 20 reserved (see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types)). Cached per-window. |
 
 ### Dev-only (require `IMSG_DEV=1`)
 
