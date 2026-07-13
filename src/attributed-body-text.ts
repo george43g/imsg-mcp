@@ -148,10 +148,20 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
   // Phase 1: structured NSString parsing — these have correct length bytes,
   // so they avoid the "leading length-byte" artifact (e.g. "OYes lmk..." for a 79-char string).
   // Boost their score so they win over byte-scan fallbacks.
+  let structuredParsed = false;
   try {
     if (Date.now() < deadline) {
+      const strings = parser.parseAllNSStrings();
+      // A parsed NSString IS the message text (or "\uFFFC" for
+      // attachment-only messages, which normalizes away to "no text").
+      // Everything else in the blob is attribute METADATA — transfer GUIDs,
+      // attachment UUIDs, attribute names — which the byte-scan phases kept
+      // resurrecting in new shapes ("Mat_<uuid>", "$<uuid>",
+      // "EmojiImageAttributeName"…). When the structured parse succeeds,
+      // skip the scans entirely instead of playing filter whack-a-mole.
+      structuredParsed = strings.length > 0;
       remember(
-        parser.parseAllNSStrings().map((entry) => entry.content),
+        strings.map((entry) => entry.content),
         STRUCTURED_BOOST,
       );
     }
@@ -159,19 +169,21 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
     // Ignore parser failures — continue with fallback strategies
   }
 
-  // Phase 2: heuristic text extraction (byte-by-byte scan)
-  // Lower priority — may pick up length bytes as text artifacts.
-  try {
-    if (Date.now() < deadline) {
-      remember(parser.extractReadableText());
+  if (!structuredParsed) {
+    // Phase 2: heuristic text extraction (byte-by-byte scan)
+    // Lower priority — may pick up length bytes as text artifacts.
+    try {
+      if (Date.now() < deadline) {
+        remember(parser.extractReadableText());
+      }
+    } catch {
+      // Ignore parser failures — continue with fallback strategies
     }
-  } catch {
-    // Ignore parser failures — continue with fallback strategies
-  }
 
-  // Phase 3: raw UTF-8 split (always works, cheapest fallback)
-  if (Date.now() < deadline) {
-    remember(blob.toString("utf8").split(CONTROL_SPLIT_RE));
+    // Phase 3: raw UTF-8 split (always works, cheapest fallback)
+    if (Date.now() < deadline) {
+      remember(blob.toString("utf8").split(CONTROL_SPLIT_RE));
+    }
   }
 
   const best = [...candidates.entries()].sort((a, b) => b[1] - a[1])[0];

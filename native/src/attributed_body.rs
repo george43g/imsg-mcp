@@ -253,28 +253,33 @@ pub fn extract_text(blob: &[u8]) -> Option<String> {
     let mut candidates: Vec<(String, i32)> = Vec::new();
 
     // Phase 1: structured NSString parsing (high confidence — no length-byte leak).
-    for raw in parse_all_nsstrings(blob) {
+    let strings = parse_all_nsstrings(blob);
+    let structured_parsed = !strings.is_empty();
+    for raw in strings {
         if let Some(normalized) = normalize_candidate(&raw) {
             let score = score_candidate(&normalized) + STRUCTURED_BOOST;
             candidates.push((normalized, score));
         }
     }
 
-    // Phase 2: byte-scan fallback (handles non-NSString-framed blobs, but
-    // may include length bytes as text artifacts when the byte is printable).
-    // U+FFFD marks bytes that weren't valid UTF-8 — in a typedstream those
-    // are structural bytes between fields, so treat them as segment breaks.
-    // Without this, an attribute NAME and its VALUE fuse into one candidate
-    // whose leading char defeats the prefix-based metadata filters.
-    let text = String::from_utf8_lossy(blob);
-    for segment in text.split(|c: char| is_control_char(c) || c == '\0' || c == '\u{FFFD}') {
-        let segment = segment.trim();
-        if segment.is_empty() {
-            continue;
-        }
-        if let Some(normalized) = normalize_candidate(segment) {
-            let score = score_candidate(&normalized);
-            candidates.push((normalized, score));
+    // Phase 2: byte-scan fallback — ONLY for blobs with no parseable
+    // NSString. A parsed NSString IS the message text (or U+FFFC for
+    // attachment-only messages, normalized away); everything else in the
+    // blob is attribute metadata that the scan kept resurrecting in new
+    // shapes ("Mat_<uuid>", "$<uuid>", bare attribute names). U+FFFD marks
+    // bytes that weren't valid UTF-8 — structural bytes between typedstream
+    // fields — so treat them as segment breaks.
+    if !structured_parsed {
+        let text = String::from_utf8_lossy(blob);
+        for segment in text.split(|c: char| is_control_char(c) || c == '\0' || c == '\u{FFFD}') {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                continue;
+            }
+            if let Some(normalized) = normalize_candidate(segment) {
+                let score = score_candidate(&normalized);
+                candidates.push((normalized, score));
+            }
         }
     }
 

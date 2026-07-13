@@ -71,3 +71,18 @@ describe("attachment-only blobs extract no text (TS fallback)", () => {
     expect(extractAttributedBodyText(blob)).toBe(text);
   });
 });
+
+describe("structured-parse-first (no byte-scan when NSString parses)", () => {
+  it("attribute NAMES never leak either (EmojiImageAttributeName)", () => {
+    // Same attachment-only blob shape but the surviving byte-scan candidate
+    // would be an attribute name fragment — with structured-first it never runs.
+    const blob = makeAttachmentOnlyBlob("82B8D98D-360F-41EE-8841-0215247DFAE9", 0x24);
+    const withEmojiAttr = Buffer.concat([
+      blob,
+      Buffer.from([0x92, 0x84, 0x96, 0x96, 0x1c]),
+      Buffer.from("__kIMEmojiImageAttributeName"),
+      Buffer.from([0x86, 0x86]),
+    ]);
+    expect(extractAttributedBodyText(withEmojiAttr)).toBeUndefined();
+  });
+});
