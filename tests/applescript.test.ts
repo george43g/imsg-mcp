@@ -88,3 +88,69 @@ describe("appleScriptEscape (pure)", () => {
     expect(appleScriptEscape("Hello World 123")).toBe("Hello World 123");
   });
 });
+
+describe("stageAttachmentForSend (pure, injected dir)", () => {
+  it("copies the file into the staging dir and returns the staged path", async () => {
+    const { stageAttachmentForSend } = await import("../src/applescript.js");
+    const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join, dirname } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "imsg-stage-"));
+    try {
+      const src = join(dir, "photo.png");
+      writeFileSync(src, "fake-png-bytes");
+      const staging = join(dir, "staging");
+      const staged = stageAttachmentForSend(src, staging);
+      expect(dirname(staged)).toBe(staging);
+      expect(staged.endsWith("-photo.png")).toBe(true);
+      expect(readFileSync(staged, "utf8")).toBe("fake-png-bytes");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("sweeps staged files older than an hour, keeps fresh ones", async () => {
+    const { stageAttachmentForSend } = await import("../src/applescript.js");
+    const { mkdtempSync, mkdirSync, writeFileSync, utimesSync, existsSync, rmSync } = await import(
+      "node:fs"
+    );
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "imsg-stage-"));
+    try {
+      const staging = join(dir, "staging");
+      mkdirSync(staging, { recursive: true });
+      const stale = join(staging, "old-file.png");
+      const fresh = join(staging, "fresh-file.png");
+      writeFileSync(stale, "old");
+      writeFileSync(fresh, "new");
+      const past = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      utimesSync(stale, past, past);
+      const src = join(dir, "next.png");
+      writeFileSync(src, "next");
+      stageAttachmentForSend(src, staging);
+      expect(existsSync(stale)).toBe(false);
+      expect(existsSync(fresh)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the original path when staging is impossible", async () => {
+    const { stageAttachmentForSend } = await import("../src/applescript.js");
+    // A staging dir that cannot be created (parent is a file).
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "imsg-stage-"));
+    try {
+      const blocker = join(dir, "not-a-dir");
+      writeFileSync(blocker, "file");
+      const src = join(dir, "pic.png");
+      writeFileSync(src, "bytes");
+      expect(stageAttachmentForSend(src, join(blocker, "nested"))).toBe(src);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

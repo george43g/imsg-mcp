@@ -1,8 +1,16 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  copyFileSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { getImsgDbPath, isAiEnv } from "./config.js";
 import { setLastSendError } from "./logger.js";
@@ -374,12 +382,55 @@ export async function sendMessageReliable(
 }
 
 /**
+ * Staging area for outgoing attachments. On macOS 15+ Messages.app's sandbox
+ * silently DROPS `send (POSIX file ...)` for files outside its allowed paths
+ * (osascript still returns success; the recipient sees nothing or "failed to
+ * send"). Files under `~/Library/Messages/` are allowed, so we copy every
+ * outgoing attachment into a staging subdir there and send the staged path.
+ * The process already has Full Disk Access (needed for chat.db), so the copy
+ * is permitted.
+ */
+const ATTACHMENT_STAGING_DIR = join(homedir(), "Library", "Messages", "imsg-mcp-staging");
+const STAGING_SWEEP_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Copy an outgoing attachment into the Messages-sandbox-visible staging dir
+ * and return the staged path. Staged files are not removed immediately —
+ * Messages reads them asynchronously during the transfer — instead each call
+ * sweeps staged files older than an hour. Falls back to the original path if
+ * staging fails (better to attempt the send than to refuse).
+ */
+export function stageAttachmentForSend(
+  filepath: string,
+  stagingDir: string = ATTACHMENT_STAGING_DIR,
+): string {
+  try {
+    mkdirSync(stagingDir, { recursive: true });
+    for (const entry of readdirSync(stagingDir)) {
+      const p = join(stagingDir, entry);
+      try {
+        if (Date.now() - statSync(p).mtimeMs > STAGING_SWEEP_AGE_MS) rmSync(p, { force: true });
+      } catch {
+        // Sweep is best-effort.
+      }
+    }
+    const staged = join(stagingDir, `${randomBytes(4).toString("hex")}-${basename(filepath)}`);
+    copyFileSync(filepath, staged);
+    return staged;
+  } catch {
+    return filepath;
+  }
+}
+
+/**
  * Send a file attachment to a participant. Returns success/error.
  *
  * Uses `send (POSIX file "...") to participant ...` — the Messages SDEF
  * accepts a file specifier as the first argument to `send`. The file must
  * exist on disk; Messages.app will rate-limit or reject very large files
- * (typical cap ~100MB).
+ * (typical cap ~100MB). The file is staged into `~/Library/Messages/` first
+ * (see stageAttachmentForSend) — sends from arbitrary paths silently fail on
+ * macOS 15+.
  *
  * Service routing mirrors sendMessageReliable: pass `preferredService: "SMS"`
  * for threads chat.db knows are SMS (MMS carries the attachment).
@@ -391,8 +442,9 @@ export async function sendAttachment(
 ): Promise<SendMessageResult> {
   if (MOCK) return mockSend(`[attachment:${filepath}]`, { chatIdentifier: recipient });
 
+  const stagedPath = stageAttachmentForSend(filepath);
   const escapedRecipient = appleScriptEscape(recipient);
-  const escapedPath = appleScriptEscape(filepath);
+  const escapedPath = appleScriptEscape(stagedPath);
 
   const script = buildParticipantSendScript({
     order: sendServiceOrder(recipient, preferredService),
