@@ -86,3 +86,15 @@ describe("structured-parse-first (no byte-scan when NSString parses)", () => {
     expect(extractAttributedBodyText(withEmojiAttr)).toBeUndefined();
   });
 });
+
+describe("chat-properties snippet fallback", () => {
+  it("rejects binary-plist structural noise, keeps real UTF-16 text", async () => {
+    const { extractNullPaddedAsciiText } = await import("../src/plist-text.js");
+    // "(I_d~" style noise: null-interleaved printable structural bytes.
+    const noise = Buffer.from([0, 0x28, 0, 0x49, 0, 0x5f, 0, 0x64, 0, 0x7e]);
+    expect(extractNullPaddedAsciiText(noise)).toBeUndefined();
+    // Genuine UTF-16BE-ish text survives.
+    const real = Buffer.from("hello there mate".split("").flatMap((c) => [0, c.charCodeAt(0)]));
+    expect(extractNullPaddedAsciiText(real)).toBe("hello there mate");
+  });
+});
