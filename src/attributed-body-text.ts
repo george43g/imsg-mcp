@@ -18,6 +18,9 @@ function getNativeParser(): ((blob: Buffer) => string | null) | null {
 function nativeResultLooksTrustworthy(text: string): boolean {
   // Attachment GUID markers — never user-visible text
   if (/at_\d+_[0-9A-F-]{8,}/i.test(text)) return false;
+  // Bare/length-byte-leaked UUID attribute values.
+  if (/^.?[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(text)) return false;
+  if (/^.?at_[0-9A-F][0-9A-F_-]{19,}$/i.test(text)) return false;
   // Apple internal attribute name markers
   if (/__kIM[A-Z]/.test(text)) return false;
   // Class / archiver metadata
@@ -50,6 +53,13 @@ const METADATA_PATTERNS = [
   /^NSNumber$/,
   /^NSValue$/,
   /^at_\d+_[0-9A-F-]+$/i,
+  // Bare-UUID attribute values (sticker/attachment GUIDs), optionally with the
+  // leaked typedstream length byte in front ("$FE7B0D17-…", '$' = 0x24 = 36 =
+  // a UUID's length). No human message is exactly a bare UUID.
+  /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i,
+  /^.[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i,
+  // Transfer-GUID with leaked length byte ("Mat_BDA9FB97-…", 'M' = 77).
+  /^.at_[0-9A-F][0-9A-F_-]{19,}$/i,
   /FileTransferGUIDAttributeName/i,
   /BaseWritingDirectionAttributeName/i,
   /^\d{2}.*��/,
