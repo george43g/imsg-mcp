@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.4.0](https://github.com/george43g/imsg-mcp/compare/v1.3.2...v1.4.0) (2026-07-13)
+
+
+### Bug Fixes
+
+* **native:** attachment-only messages no longer render transfer-GUID garbage ([b7a6ddf](https://github.com/george43g/imsg-mcp/commit/b7a6ddf6898e252a8933fe25e857a66e62a9eda6))
+* **native:** bare-UUID attribute values no longer leak as message text ([1e34677](https://github.com/george43g/imsg-mcp/commit/1e34677a7380f1d5401ed996a51034b6e856dd8a))
+* **parser:** structured-parse-first — byte-scan only when no NSString parses ([430e9ed](https://github.com/george43g/imsg-mcp/commit/430e9ed8402e24a2b76c7b012d7579f29136506a))
+* **parser:** trust the structured parse only when it yields usable text ([68fbeb3](https://github.com/george43g/imsg-mcp/commit/68fbeb3a8430097f047b4fa68d4fd40d994b6f37))
+* **parser:** TS fallback no longer resurrects UUID attribute leaks ([f3d0a66](https://github.com/george43g/imsg-mcp/commit/f3d0a66b1fcc49bbf18312ca6328a958cf6eced4))
+* **send:** stage attachments into ~/Library/Messages before sending ([945d24b](https://github.com/george43g/imsg-mcp/commit/945d24b9d1e1b923284d30f3146a344b3b8adb65))
+* **send:** surface failed sends + route on delivery evidence; tame idle re-renders ([8380765](https://github.com/george43g/imsg-mcp/commit/838076553cafc8679c5622873c4c11413e1cfdc9))
+* **snippets:** chat-properties heuristic no longer emits plist noise ([80d852a](https://github.com/george43g/imsg-mcp/commit/80d852a89429e2ad5463dc8aa0541139ee7c32f1))
+* **tui:** route compose sends on the thread's real service ([144a1e3](https://github.com/george43g/imsg-mcp/commit/144a1e3b065292a92f90b88566b60e954988b761))
+* **tui:** startup thread load, live footer stats, slug overflow, multi-attachment drawer ([b322800](https://github.com/george43g/imsg-mcp/commit/b322800caa6280c371d1e562f13ecb49a2ca358f))
+* **tui:** word-wrap long messages in the thread pane ([48b141d](https://github.com/george43g/imsg-mcp/commit/48b141dab12ef9dd77b849e15f6642d47068260e))
+
+
+### Features
+
+* **humans:** humans/v1 relationship-file convention + init scaffolding ([c90772a](https://github.com/george43g/imsg-mcp/commit/c90772a4b216218eae82f69ab8ee9d4b05920473))
+* **humans:** tool-output hints pointing agents at relationship files ([d83a4c7](https://github.com/george43g/imsg-mcp/commit/d83a4c78950045efcf5c92ed4964032ac006379c))
+* **mcp:** interjection-aware wait_for_reply + multimodal attachments ([984261f](https://github.com/george43g/imsg-mcp/commit/984261f75160fec2c74c60e80a2c94f18840adcd))
+* **watchdog:** heap-space forensics before an rss_exceeded kill ([322a211](https://github.com/george43g/imsg-mcp/commit/322a211f6cdca23ba268fac2ac0c483ab3f25e40))
+
 ## [1.3.2](https://github.com/george43g/imsg-mcp/compare/v1.3.1...v1.3.2) (2026-07-12)
 
 
