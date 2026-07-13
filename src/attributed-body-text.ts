@@ -148,18 +148,23 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
   // Phase 1: structured NSString parsing — these have correct length bytes,
   // so they avoid the "leading length-byte" artifact (e.g. "OYes lmk..." for a 79-char string).
   // Boost their score so they win over byte-scan fallbacks.
-  let structuredParsed = false;
+  let structuredTrusted = false;
   try {
     if (Date.now() < deadline) {
       const strings = parser.parseAllNSStrings();
-      // A parsed NSString IS the message text (or "\uFFFC" for
-      // attachment-only messages, which normalizes away to "no text").
-      // Everything else in the blob is attribute METADATA — transfer GUIDs,
-      // attachment UUIDs, attribute names — which the byte-scan phases kept
-      // resurrecting in new shapes ("Mat_<uuid>", "$<uuid>",
-      // "EmojiImageAttributeName"…). When the structured parse succeeds,
-      // skip the scans entirely instead of playing filter whack-a-mole.
-      structuredParsed = strings.length > 0;
+      // A well-parsed NSString IS the message text (or "\uFFFC" for
+      // attachment-only messages — deliberately empty). Everything else in
+      // the blob is attribute METADATA — transfer GUIDs, attachment UUIDs,
+      // attribute names — which the byte-scan phases kept resurrecting in
+      // new shapes ("Mat_<uuid>", "$<uuid>", "EmojiImageAttributeName"…).
+      // Trust the structured parse (and skip the scans) only when it yields
+      // usable text or a pure attachment placeholder — a parse that produces
+      // only garbage means the blob's framing is one we don't understand,
+      // and the scans remain the fallback for exactly that case.
+      structuredTrusted = strings.some(
+        (entry) =>
+          normalizeCandidate(entry.content) !== null || /^[\uFFFC\s]+$/.test(entry.content),
+      );
       remember(
         strings.map((entry) => entry.content),
         STRUCTURED_BOOST,
@@ -169,7 +174,7 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
     // Ignore parser failures — continue with fallback strategies
   }
 
-  if (!structuredParsed) {
+  if (!structuredTrusted) {
     // Phase 2: heuristic text extraction (byte-by-byte scan)
     // Lower priority — may pick up length bytes as text artifacts.
     try {

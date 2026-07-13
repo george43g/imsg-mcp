@@ -254,7 +254,14 @@ pub fn extract_text(blob: &[u8]) -> Option<String> {
 
     // Phase 1: structured NSString parsing (high confidence — no length-byte leak).
     let strings = parse_all_nsstrings(blob);
-    let structured_parsed = !strings.is_empty();
+    // Trust the structured parse (and skip the byte-scan) only when it
+    // yields usable text or a pure attachment placeholder (U+FFFC) — a parse
+    // producing only garbage means the framing is one we don't understand,
+    // and the scan stays available as the fallback for exactly that case.
+    let structured_trusted = strings.iter().any(|raw| {
+        normalize_candidate(raw).is_some()
+            || (!raw.is_empty() && raw.chars().all(|c| c == '\u{FFFC}' || c.is_whitespace()))
+    });
     for raw in strings {
         if let Some(normalized) = normalize_candidate(&raw) {
             let score = score_candidate(&normalized) + STRUCTURED_BOOST;
@@ -269,7 +276,7 @@ pub fn extract_text(blob: &[u8]) -> Option<String> {
     // shapes ("Mat_<uuid>", "$<uuid>", bare attribute names). U+FFFD marks
     // bytes that weren't valid UTF-8 — structural bytes between typedstream
     // fields — so treat them as segment breaks.
-    if !structured_parsed {
+    if !structured_trusted {
         let text = String::from_utf8_lossy(blob);
         for segment in text.split(|c: char| is_control_char(c) || c == '\0' || c == '\u{FFFD}') {
             let segment = segment.trim();
