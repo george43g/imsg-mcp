@@ -27,6 +27,15 @@ const METADATA_PREFIXES: &[&str] = &[
     "BaseWritingDirectionAttributeName",
 ];
 
+/// Exactly a canonical 8-4-4-4-12 hex UUID.
+fn looks_like_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.chars().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
 fn is_metadata(text: &str) -> bool {
     for prefix in METADATA_PREFIXES {
         if text.starts_with(prefix) {
@@ -36,6 +45,20 @@ fn is_metadata(text: &str) -> bool {
     // Pattern: at_N_UUID
     if text.starts_with("at_") && text.len() > 5 {
         return true;
+    }
+    // Bare-UUID attribute values (sticker/attachment GUIDs) leak as message
+    // text too — either exactly a UUID ("DB19B098-…") or with the leaked
+    // typedstream length byte in front ("$FE7B0D17-…", '$' = 0x24 = 36 = the
+    // UUID's length). No human message is exactly a UUID.
+    if looks_like_uuid(text) {
+        return true;
+    }
+    if text.len() == 37 {
+        if let Some(rest) = text.get(1..) {
+            if looks_like_uuid(rest) {
+                return true;
+            }
+        }
     }
     // Length-byte leak variant: the byte-scan collates the typedstream
     // length byte (an arbitrary ASCII char) with a file-transfer GUID
@@ -299,6 +322,18 @@ mod tests {
         // Genuine text that merely contains "at_" after its first char survives.
         assert!(normalize_candidate("Bat_signal is lit tonight").is_some());
         assert!(normalize_candidate("Look at_ this weird underscore").is_some());
+    }
+
+    /// Bare-UUID attribute values (sticker/attachment message GUIDs) leak as
+    /// text with or without their length byte ('$' = 36) — both filtered.
+    #[test]
+    fn test_bare_uuid_values_are_filtered() {
+        assert!(normalize_candidate("DB19B098-9804-4E16-B3B4-AB3E4F539B6D").is_none());
+        assert!(normalize_candidate("$FE7B0D17-69CF-43EF-8C34-BD96AD2A4037").is_none());
+        // A UUID inside a sentence is fine — humans paste IDs sometimes.
+        assert!(
+            normalize_candidate("the id is DB19B098-9804-4E16-B3B4-AB3E4F539B6D ok").is_some()
+        );
     }
 
     /// End-to-end: a realistic attachment-only blob (structure mirrors a real
