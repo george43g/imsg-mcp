@@ -116,6 +116,16 @@ export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx
           </Text>
         </Box>
 
+        {/* Send failure */}
+        {m.sendError !== undefined && (
+          <Box>
+            <Label>Status</Label>
+            <Text color={theme.edited} bold>
+              NOT DELIVERED — send failed (error {m.sendError})
+            </Text>
+          </Box>
+        )}
+
         {/* Edited */}
         {m.isEdited && (
           <Box>

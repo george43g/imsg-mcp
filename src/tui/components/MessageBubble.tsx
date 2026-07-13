@@ -135,8 +135,8 @@ export function MessageBubble({
          * e.g. `9:49 PM ◀` rendered as `9:49 P◀` (M and trailing space
          * eaten), `Me: ` rendered as `Me:` (running into the message body).
          * Wrapped in a Box with flexShrink={0} so the prefix never loses
-         * a char; the message <Text> below (with wrap="truncate") is the
-         * sole shrinkable element on the row.
+         * a char; the message <Text> below (wrap="wrap") is the sole
+         * shrinkable element on the row.
          */}
         <Box flexShrink={0}>
           <Text>
@@ -199,6 +199,15 @@ export function MessageBubble({
 
         {/* Edited indicator */}
         {m.isEdited && <Text color={theme.edited}> ✎</Text>}
+
+        {/* Send-failure indicator — Messages.app shows "Not Delivered"; a
+            failed from-me message must not render like a normal sent one. */}
+        {m.sendError !== undefined && (
+          <Text color={theme.edited} bold>
+            {" "}
+            ✗ not delivered
+          </Text>
+        )}
       </Box>
 
       {/* Reply context — always render the indicator when isReply, even if

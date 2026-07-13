@@ -41,6 +41,11 @@ export const MessageSchema = z.object({
   dateDelivered: z.string().nullable(),
   isRead: z.boolean(),
   isDelivered: z.boolean(),
+  sendError: z
+    .number()
+    .int()
+    .optional()
+    .describe("Non-zero chat.db error code — this from-me message FAILED to send."),
   chatId: z.string(),
   service: z.enum(["iMessage", "SMS"]),
   isReaction: z.boolean(),

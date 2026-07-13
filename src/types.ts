@@ -59,6 +59,8 @@ export interface Message {
   dateDelivered: Date | null;
   isRead: boolean;
   isDelivered: boolean;
+  /** chat.db `error` code when a from-me message failed to send (e.g. 22 = wrong-service iMessage attempt). Undefined = sent fine. */
+  sendError?: number;
   chatId: string;
   service: "iMessage" | "SMS";
 

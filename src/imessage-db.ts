@@ -668,6 +668,7 @@ export class IMessageDB {
         m.is_read,
         m.date_read,
         m.is_delivered,
+        m.error,
         m.date_delivered,
         m.associated_message_type,
         m.associated_message_guid,
@@ -786,6 +787,37 @@ export class IMessageDB {
   async getLastMessage(chatIdentifier: string): Promise<Message | null> {
     const messages = await this.getMessagesForChat(chatIdentifier, 1);
     return messages.length > 0 ? messages[messages.length - 1] : null;
+  }
+
+  /**
+   * The service the conversation ACTUALLY works on, judged by delivery
+   * evidence: the most recent message that either came FROM the other party
+   * (any service they use reaches us) or was sent by us WITHOUT error.
+   * Failed sends are excluded — otherwise one wrong-service attempt (e.g. an
+   * iMessage 'sent' to an SMS-only number, error 22) mints a phantom leg,
+   * flips the thread's apparent service, and every later send repeats the
+   * mistake. Returns null when the conversation has no usable evidence.
+   */
+  getPreferredSendService(chatIdentifier: string): "iMessage" | "SMS" | null {
+    const chats = this.resolveChatsForConversation(chatIdentifier);
+    if (chats.length === 0) return null;
+    const placeholders = chats.map(() => "?").join(",");
+    const row = this.raw
+      .prepare(
+        `SELECT m.service
+         FROM ${Tables.MESSAGE} m
+         JOIN ${Tables.CHAT_MESSAGE_JOIN} j ON j.message_id = m.ROWID
+         WHERE j.chat_id IN (${placeholders})
+           AND (m.associated_message_type = 0 OR m.associated_message_type IS NULL)
+           AND (m.is_from_me = 0 OR m.error = 0 OR m.error IS NULL)
+           AND m.service IN ('iMessage', 'SMS')
+         ORDER BY m.date DESC, m.ROWID DESC
+         LIMIT 1`,
+      )
+      .get(...chats.map((c) => c.ROWID)) as { service: string } | undefined;
+    if (row?.service === "SMS") return "SMS";
+    if (row?.service === "iMessage") return "iMessage";
+    return null;
   }
 
   /**
@@ -1755,6 +1787,10 @@ export class IMessageDB {
       dateDelivered: macTimestampToDate(ext.date_delivered ?? null),
       isRead: ext.is_read != null ? Boolean(ext.is_read) : true,
       isDelivered: ext.is_delivered != null ? Boolean(ext.is_delivered) : true,
+      // Send failure surface: chat.db sets error != 0 (and is_sent = 0) on
+      // from-me messages that never went out — e.g. an iMessage attempt to an
+      // SMS-only number. Messages.app shows "Not Delivered"; so must we.
+      sendError: raw.is_from_me && ext.error ? ext.error : undefined,
       chatId: chatId,
       service: this.detectServiceForMessage(ext) as "iMessage" | "SMS",
       isReaction,
@@ -1849,6 +1885,7 @@ export class IMessageDB {
         m.is_read,
         m.date_read,
         m.is_delivered,
+        m.error,
         m.date_delivered,
         h.id as handle_id,
         h.service as handle_service,
@@ -1887,7 +1924,8 @@ export class IMessageDB {
       const stmt = this.raw.prepare(`
         SELECT
           m.ROWID as _rowid,
-          m.is_read, m.date_read, m.is_delivered, m.date_delivered,
+          m.is_read, m.date_read, m.is_delivered,
+        m.error, m.date_delivered,
           h.id as handle_id, h.service as handle_service,
           m.associated_message_type, m.associated_message_guid,
           m.associated_message_emoji, m.thread_originator_guid,
@@ -1924,7 +1962,8 @@ export class IMessageDB {
     const cutoffNanos = Math.floor((cutoffMs / 1000 - MAC_EPOCH_OFFSET) * NANOS_PER_SECOND);
     const sql = `
       SELECT m.ROWID, m.guid, m.text, m.attributedBody, m.date, m.date_read, m.date_delivered,
-             m.is_read, m.is_delivered, m.is_from_me, h.id as handle_id,
+             m.is_read, m.is_delivered,
+        m.error, m.is_from_me, h.id as handle_id,
              h.service as handle_service,
              m.cache_has_attachments, m.associated_message_type,
              m.associated_message_guid, m.associated_message_emoji,
@@ -2269,6 +2308,7 @@ interface ExtendedMessageData {
   is_read?: number;
   date_read?: number;
   is_delivered?: number;
+  error?: number;
   date_delivered?: number;
   handle_id?: string | null;
   handle_service?: string | null;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hasNativeModule } from "../../native-bridge.js";
-import { readWatchdogState } from "../../watchdog.js";
+import { onMemorySample, readWatchdogState } from "../../watchdog.js";
 
 export interface DevStatsData {
   engine: "Rust parser + TS DB" | "TS";
@@ -53,7 +53,6 @@ export function useDevStats(visible: boolean): {
   const lastQueryMsRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!visible) return;
     const sample = () => {
       const now = Date.now();
       const elapsed = now - lastTimeRef.current;
@@ -85,13 +84,24 @@ export function useDevStats(visible: boolean): {
       });
     };
 
-    // Paint real numbers as soon as the panel opens — without this the panel
-    // shows 0MB / 0s until the first interval tick lands.
+    // Paint real numbers immediately either way (pre-fix the footer showed
+    // "0% 0MB" until the full panel was opened once).
     sample();
-    const timer = setInterval(sample, 2000);
-    timer.unref();
 
-    return () => clearInterval(timer);
+    if (visible) {
+      // Full panel open: live 2s sampling.
+      const timer = setInterval(sample, 2000);
+      timer.unref();
+      return () => clearInterval(timer);
+    }
+
+    // Panel closed: the footer CompactStats is still visible, but a 2s
+    // setState here re-renders the ENTIRE app 30×/min forever — measured at
+    // ~17-20MB/min of heap churn/retention in two real rss_exceeded kills
+    // (2026-07-12). Ride the watchdog's existing 60s memory sample instead:
+    // the footer stays fresh to within a minute at 1/30th the render rate.
+    const unsubscribe = onMemorySample(() => sample());
+    return unsubscribe;
   }, [visible]);
 
   const recordQueryTime = useCallback((ms: number) => {

@@ -216,6 +216,8 @@ function formatMessage(msg: Message, conversationLabel?: string): string {
   let status = "";
   if (!msg.isFromMe && !msg.isRead) {
     status = " [UNREAD]";
+  } else if (msg.isFromMe && msg.sendError) {
+    status = ` [NOT DELIVERED — send failed (error ${msg.sendError})]`;
   } else if (msg.isFromMe) {
     if (msg.dateRead) {
       status = ` [Read ${msg.dateRead.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}]`;
@@ -975,7 +977,12 @@ export class IMessageMCPServer {
           },
         );
       }
-      preferredService = slugRecord.service === "SMS" ? "SMS" : "iMessage";
+      // Delivery evidence beats the slug store's canonical service: a failed
+      // wrong-service send mints a phantom leg that can flip the canonical
+      // service, and blindly trusting it would repeat the failure forever.
+      preferredService =
+        this.db.getPreferredSendService(slugRecord.chatIdentifier) ??
+        (slugRecord.service === "SMS" ? "SMS" : "iMessage");
 
       if (slugRecord.isGroup) {
         if (slugRecord.displayName && !slugRecord.displayName.startsWith("chat")) {
@@ -998,7 +1005,9 @@ export class IMessageMCPServer {
       // signal. New recipients (no history) default to iMessage-first.
       const existingChat = await this.db.findChatByHandle(normalizedRecipient!);
       if (existingChat && !existingChat.isGroupChat) {
-        preferredService = existingChat.serviceType === "SMS" ? "SMS" : "iMessage";
+        preferredService =
+          this.db.getPreferredSendService(existingChat.chatIdentifier) ??
+          (existingChat.serviceType === "SMS" ? "SMS" : "iMessage");
       }
       result = await sendMessageReliable(normalizedRecipient!, message, preferredService);
       if (!result.success) {

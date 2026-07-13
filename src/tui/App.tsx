@@ -33,11 +33,11 @@ export function App() {
   const { exit } = useApp();
   const { width: columns, height: rows } = useScreenSize();
   const imsg = useImsg();
-  // Always sample: the stats are visible in one form at all times — the full
-  // panel when showDevStats, otherwise CompactStats in the status bar. Gating
-  // on showDevStats left the footer frozen at its initial zeros ("0% 0MB")
-  // until the panel was opened once.
-  const { stats: devStats, recordQueryTime } = useDevStats(true);
+  // `visible` gates the SAMPLING RATE, not whether stats exist: panel open =
+  // live 2s ticks; panel closed = the footer rides the watchdog's 60s memory
+  // sample (a 2s always-on setState re-rendered the whole app 30×/min and
+  // drove ~20MB/min heap growth — two real rss_exceeded kills on 2026-07-12).
+  const { stats: devStats, recordQueryTime } = useDevStats(state.showDevStats);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const moveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ggPendingRef = useRef(false); // tracks if 'g' was pressed, waiting for second 'g'
@@ -234,11 +234,23 @@ export function App() {
         try {
           const msgs = await imsg.loadMessages(selected.chatIdentifier);
           const found = msgs.some((m) => m.isFromMe && m.text?.includes(text));
-          if (found) {
+          const failed = msgs.some(
+            (m) => m.isFromMe && m.sendError !== undefined && m.text?.includes(text),
+          );
+          if (failed) {
+            // The row landed but with a send error (e.g. wrong-service
+            // attempt) — surface the failure instead of a green bubble.
+            dispatch({ type: "SET_MESSAGES", data: msgs });
+            dispatch({ type: "FAIL_PENDING", text });
+          } else if (found) {
             dispatch({ type: "SET_MESSAGES", data: msgs });
             dispatch({ type: "RESOLVE_PENDING", text });
           } else if (attempt < 7) {
             pollTimerRef.current = setTimeout(poll, 1500);
+          } else {
+            // Poll exhausted without ever seeing our message — don't leave
+            // the bubble spinning in "sending" forever.
+            dispatch({ type: "FAIL_PENDING", text });
           }
         } catch {
           // Poll iteration failed (DB locked, transient I/O); drop the

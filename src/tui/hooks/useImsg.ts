@@ -95,7 +95,9 @@ export function useImsg() {
       // attempt to an SMS-only number "succeeds", never delivers (error 22 in
       // chat.db), and mints a phantom iMessage chat leg. The slug store knows
       // which service the conversation actually lives on — send there first.
-      const preferred: SendService = slugRecord.service === "SMS" ? "SMS" : "iMessage";
+      const preferred: SendService =
+        db.getPreferredSendService(slugRecord.chatIdentifier) ??
+        (slugRecord.service === "SMS" ? "SMS" : "iMessage");
       return sendMessageReliable(slugRecord.chatIdentifier, text, preferred);
     },
     [getDb],
@@ -136,9 +138,13 @@ export function useImsg() {
       }
       // Existing conversation knows its real service (see `send` above);
       // brand-new recipients default to iMessage-first with SMS fallback.
-      const conv = await getDb().findChatByHandle(resolution.handle);
+      const db = getDb();
+      const conv = await db.findChatByHandle(resolution.handle);
       const preferred: SendService | undefined =
-        conv && !conv.isGroupChat ? (conv.serviceType === "SMS" ? "SMS" : "iMessage") : undefined;
+        conv && !conv.isGroupChat
+          ? (db.getPreferredSendService(conv.chatIdentifier) ??
+            (conv.serviceType === "SMS" ? "SMS" : "iMessage"))
+          : undefined;
       return sendMessageReliable(resolution.handle, text, preferred);
     },
     [resolveRecipientInput, getDb],
