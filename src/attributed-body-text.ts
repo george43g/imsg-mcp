@@ -18,6 +18,9 @@ function getNativeParser(): ((blob: Buffer) => string | null) | null {
 function nativeResultLooksTrustworthy(text: string): boolean {
   // Attachment GUID markers — never user-visible text
   if (/at_\d+_[0-9A-F-]{8,}/i.test(text)) return false;
+  // Bare/length-byte-leaked UUID attribute values.
+  if (/^.?[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(text)) return false;
+  if (/^.?at_[0-9A-F][0-9A-F_-]{19,}$/i.test(text)) return false;
   // Apple internal attribute name markers
   if (/__kIM[A-Z]/.test(text)) return false;
   // Class / archiver metadata
@@ -50,6 +53,13 @@ const METADATA_PATTERNS = [
   /^NSNumber$/,
   /^NSValue$/,
   /^at_\d+_[0-9A-F-]+$/i,
+  // Bare-UUID attribute values (sticker/attachment GUIDs), optionally with the
+  // leaked typedstream length byte in front ("$FE7B0D17-…", '$' = 0x24 = 36 =
+  // a UUID's length). No human message is exactly a bare UUID.
+  /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i,
+  /^.[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i,
+  // Transfer-GUID with leaked length byte ("Mat_BDA9FB97-…", 'M' = 77).
+  /^.at_[0-9A-F][0-9A-F_-]{19,}$/i,
   /FileTransferGUIDAttributeName/i,
   /BaseWritingDirectionAttributeName/i,
   /^\d{2}.*��/,
@@ -138,10 +148,25 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
   // Phase 1: structured NSString parsing — these have correct length bytes,
   // so they avoid the "leading length-byte" artifact (e.g. "OYes lmk..." for a 79-char string).
   // Boost their score so they win over byte-scan fallbacks.
+  let structuredTrusted = false;
   try {
     if (Date.now() < deadline) {
+      const strings = parser.parseAllNSStrings();
+      // A well-parsed NSString IS the message text (or "\uFFFC" for
+      // attachment-only messages — deliberately empty). Everything else in
+      // the blob is attribute METADATA — transfer GUIDs, attachment UUIDs,
+      // attribute names — which the byte-scan phases kept resurrecting in
+      // new shapes ("Mat_<uuid>", "$<uuid>", "EmojiImageAttributeName"…).
+      // Trust the structured parse (and skip the scans) only when it yields
+      // usable text or a pure attachment placeholder — a parse that produces
+      // only garbage means the blob's framing is one we don't understand,
+      // and the scans remain the fallback for exactly that case.
+      structuredTrusted = strings.some(
+        (entry) =>
+          normalizeCandidate(entry.content) !== null || /^[\uFFFC\s]+$/.test(entry.content),
+      );
       remember(
-        parser.parseAllNSStrings().map((entry) => entry.content),
+        strings.map((entry) => entry.content),
         STRUCTURED_BOOST,
       );
     }
@@ -149,19 +174,21 @@ export function extractAttributedBodyText(blob: Buffer | null): string | undefin
     // Ignore parser failures — continue with fallback strategies
   }
 
-  // Phase 2: heuristic text extraction (byte-by-byte scan)
-  // Lower priority — may pick up length bytes as text artifacts.
-  try {
-    if (Date.now() < deadline) {
-      remember(parser.extractReadableText());
+  if (!structuredTrusted) {
+    // Phase 2: heuristic text extraction (byte-by-byte scan)
+    // Lower priority — may pick up length bytes as text artifacts.
+    try {
+      if (Date.now() < deadline) {
+        remember(parser.extractReadableText());
+      }
+    } catch {
+      // Ignore parser failures — continue with fallback strategies
     }
-  } catch {
-    // Ignore parser failures — continue with fallback strategies
-  }
 
-  // Phase 3: raw UTF-8 split (always works, cheapest fallback)
-  if (Date.now() < deadline) {
-    remember(blob.toString("utf8").split(CONTROL_SPLIT_RE));
+    // Phase 3: raw UTF-8 split (always works, cheapest fallback)
+    if (Date.now() < deadline) {
+      remember(blob.toString("utf8").split(CONTROL_SPLIT_RE));
+    }
   }
 
   const best = [...candidates.entries()].sort((a, b) => b[1] - a[1])[0];

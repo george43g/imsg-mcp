@@ -49,7 +49,7 @@ imsg export <slug-or-handle>
 
 ## MCP tools
 
-15 production tools. 5 additional dev-only tools (`health_check`, `get_logs`, `get_last_send_error`, `run_build`, `request_restart`) are gated by `IMSG_DEV=1` — see `src/mcp-tools.ts`.
+16 production tools. 5 additional dev-only tools (`health_check`, `get_logs`, `get_last_send_error`, `run_build`, `request_restart`) are gated by `IMSG_DEV=1` — see `src/mcp-tools.ts`.
 
 ### Reading
 
@@ -66,8 +66,8 @@ imsg export <slug-or-handle>
 
 | Tool | Required args | Notes |
 |---|---|---|
-| `send_message` | `message` + (`recipient` or `threadSlug`) | Optional `attachments[]` array of file paths. Routes on the thread's real service from chat.db (SMS threads send as SMS/MMS, iMessage threads as iMessage); new recipients with no history default to iMessage-first. |
-| `wait_for_reply` | `chatIdentifier` or `threadSlug` | `timeoutSeconds`, `pollIntervalSeconds`, `afterMessageId`. Honors `notifications/cancelled`. |
+| `send_message` | `message` + (`recipient` or `threadSlug`) | Optional `attachments[]` array of file paths — files are staged into `~/Library/Messages/imsg-mcp-staging/` before sending (macOS 15+ Messages silently drops sends from paths outside its sandbox); staged copies are swept after an hour. Routes on the thread's real service from chat.db (SMS threads send as SMS/MMS, iMessage threads as iMessage); new recipients with no history default to iMessage-first. |
+| `wait_for_reply` | `chatIdentifier` or `threadSlug` | `timeoutSeconds`, `pollIntervalSeconds`, `afterMessageId`, `includeSelf` (default true — also returns the user's own interjections from other devices; the agent's just-sent message never echoes). Honors `notifications/cancelled`. |
 
 ### Exporting
 
@@ -80,7 +80,7 @@ imsg export <slug-or-handle>
 | Tool | Required args | Notes |
 |---|---|---|
 | `search_attachments` | — | `mimePrefix`, `chatIdentifier`, `since`, `until`, `limit`. Returns metadata only. |
-| `get_attachment` | `rowId` | Returns bytes inline if small (default ≤5MB), otherwise just the path. HEIC auto-converts to PNG inline. |
+| `get_attachment` | `rowId` | **Images**: real MCP image content block (≤1536px downscale, HEIC→PNG) so the model can see it, plus full-size base64 when ≤5MB. **Video**: QuickLook poster frame image block + duration/resolution + path. **Audio**: metadata + path, transcript when `hear`/`yap`/`whisper-cli` is installed. |
 
 ### Contacts
 
@@ -100,7 +100,10 @@ imsg export <slug-or-handle>
 | Tool | Notes |
 |---|---|
 | `check_imessage_availability` | Preflight a handle — returns `service: "iMessage"\|"SMS"\|"unknown"` + `hint`. Authoritative when conversation history exists; best-effort for never-messaged handles. |
-| `chat_analytics` | `type` + window. 6 priority types shipped; 20 reserved (see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types)). Cached per-window. |
+| `chat_analytics` | `type` + window. 7 types shipped incl. `relationship_leaderboard` (top relationships by volume × reciprocity × recency); 20 reserved (see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types)). Cached per-window. |
+| `init_human` | Scaffold a humans/v1 relationship file (`~/.agents/humans/<person>.md`) for a `contact`, `threadSlug`, or `top: N` relationships. Prefills identity + history stats; never overwrites; the AGENT writes the summaries (see [skills/humans/SKILL.md](../skills/humans/SKILL.md)). |
+
+**Humans-file hints:** once a relationship file exists, tools that touch that person surface it automatically so agents actually use it — `get_messages` and `wait_for_reply` include a `humans` block (file path(s) — one per participant for groups — plus standing guidance: consult before replying, append milestones to the Log, suggest Summary updates to the user for approval, never share contents), `get_contact` includes `humansFile` (or an init_human pointer when none exists), and `list_conversations` rows carry `humansFiles` paths.
 
 ### Dev-only (require `IMSG_DEV=1`)
 
@@ -214,6 +217,6 @@ Resolution order: CLI flag → `IMSG_TUI_*` env → config file → defaults.
 
 ## Tool timeouts
 
-In `src/index.ts:TOOL_TIMEOUTS_MS`. Default 30s per tool. `wait_for_reply` has its own `timeoutSeconds` arg (no wrapper). `health_check` capped at 5s.
+In `src/mcp-tools.ts:TOOL_TIMEOUTS_MS`. Default 30s per tool. `wait_for_reply` has its own `timeoutSeconds` arg (no wrapper). `health_check` capped at 5s.
 
 On timeout the server returns `isError: true` so the host unblocks immediately, even if the underlying SQL keeps running.

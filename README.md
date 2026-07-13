@@ -65,7 +65,7 @@ Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 ## MCP tools
 
 <details>
-<summary><b>15 tools shipped (click to expand)</b></summary>
+<summary><b>16 tools shipped (click to expand)</b></summary>
 
 | Tool | Purpose |
 |------|---------|
@@ -74,7 +74,7 @@ Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 | `list_conversations` | Chats with `threadSlug`, snippets, unread counts. |
 | `search_messages` | Fuzzy + literal search across history. |
 | `send_message` | Send via Messages.app (text + attachments). |
-| `wait_for_reply` | Poll for the next reply. |
+| `wait_for_reply` | Poll for the next reply — includes the user's own interjections from other devices. |
 | `export_messages` | Stream a chat to file (md/csv/json/ndjson). |
 | `search_attachments` | Find attachments by mime/date/chat. |
 | `get_attachment` | Fetch attachment bytes (inline or path). |
@@ -83,6 +83,7 @@ Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 | `list_contacts` / `search_contacts` | Browse/search contacts (name, phone, email). |
 | `get_contact` | One contact with all handles **+ the thread slug per handle**. |
 | `resolve_handle` | Phone/email → contact name. |
+| `init_human` | Scaffold a [humans/v1 relationship file](skills/humans/SKILL.md) for a contact or your top N relationships. |
 
 </details>
 

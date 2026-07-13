@@ -7,6 +7,8 @@ interface Props {
   message: Message;
   width: number;
   height: number;
+  /** Which attachment j/k has selected (only meaningful when >1). */
+  selectedAttachmentIdx?: number;
 }
 
 function formatFullDate(date: Date): string {
@@ -38,9 +40,10 @@ function Label({ children }: { children: string }) {
   );
 }
 
-export function MessageDrawer({ message: m, width, height }: Props) {
+export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx = 0 }: Props) {
   const theme = useTheme();
   const hasAttachments = m.attachments && m.attachments.length > 0;
+  const multiAttachment = (m.attachments?.length ?? 0) > 1;
 
   return (
     <Box
@@ -113,6 +116,16 @@ export function MessageDrawer({ message: m, width, height }: Props) {
           </Text>
         </Box>
 
+        {/* Send failure */}
+        {m.sendError !== undefined && (
+          <Box>
+            <Label>Status</Label>
+            <Text color={theme.edited} bold>
+              NOT DELIVERED — send failed (error {m.sendError})
+            </Text>
+          </Box>
+        )}
+
         {/* Edited */}
         {m.isEdited && (
           <Box>
@@ -146,27 +159,43 @@ export function MessageDrawer({ message: m, width, height }: Props) {
             <Text color={theme.attachment} bold>
               Attachments ({m.attachments!.length}):
             </Text>
-            {m.attachments!.map((att) => {
+            {m.attachments!.map((att, i) => {
+              const isSel = multiAttachment && i === selectedAttachmentIdx;
               return (
                 <Box
                   key={`${att.filename}-${att.transferName ?? ""}-${att.mimeType ?? ""}-${att.totalBytes}`}
                   flexDirection="column"
-                  paddingLeft={1}
                 >
-                  <Text color={theme.drawer.value} wrap="truncate">
-                    {att.transferName ?? att.filename}
-                  </Text>
-                  <Text color={theme.drawer.label}>
-                    {att.mimeType ?? "unknown"} ·{" "}
-                    {att.totalBytes > 0 ? formatBytes(att.totalBytes) : "?"}
-                    <Text color={theme.senderName}> (press o to preview)</Text>
-                  </Text>
+                  <Box>
+                    <Box flexShrink={0}>
+                      <Text color={isSel ? theme.sent.bg : theme.drawer.label}>
+                        {multiAttachment ? (isSel ? "▸" : " ") : " "}
+                      </Text>
+                    </Box>
+                    <Text color={theme.drawer.value} bold={isSel} wrap="truncate">
+                      {att.transferName ?? att.filename}
+                    </Text>
+                  </Box>
+                  <Box paddingLeft={1}>
+                    <Text color={theme.drawer.label}>
+                      {att.mimeType ?? "unknown"} ·{" "}
+                      {att.totalBytes > 0 ? formatBytes(att.totalBytes) : "?"}
+                    </Text>
+                  </Box>
                 </Box>
               );
             })}
-            <Box marginTop={1}>
-              <Text color={theme.help.key}>o</Text>
-              <Text color={theme.help.desc}>: open attachment</Text>
+            <Box marginTop={1} flexDirection="column">
+              {multiAttachment && (
+                <Text color={theme.help.desc}>
+                  <Text color={theme.help.key}>j/k</Text>: select attachment
+                </Text>
+              )}
+              <Text color={theme.help.desc}>
+                <Text color={theme.help.key}>o</Text>: open{"  "}
+                <Text color={theme.help.key}>s</Text>: save to ~/Downloads{"  "}
+                <Text color={theme.help.key}>y</Text>: copy path
+              </Text>
             </Box>
           </Box>
         )}

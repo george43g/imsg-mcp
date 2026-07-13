@@ -125,6 +125,11 @@ describe("handleSendMessage service routing (chat.db ground truth)", () => {
       threadSlug: "test~sms~beef",
       participants: [],
     });
+    // Resolve the post-send confirm poll immediately: the just-sent from-me
+    // row "lands" on the first getMessagesForChat scan.
+    server.db.getMessagesForChat = async () => [
+      { id: 1, text: "hi", isFromMe: true, date: new Date(), hasAttachments: false },
+    ];
     await server.handleSendMessage({ recipient: "+15550009999", message: "hi" });
     expect(reliableSpy).toHaveBeenCalledWith("+15550009999", "hi", "SMS");
   });

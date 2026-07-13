@@ -5,6 +5,16 @@ function normalizeText(value: string | undefined): string | undefined {
   return normalized && normalized.length >= 4 ? normalized : undefined;
 }
 
+/**
+ * Heuristic output must look like human text: mostly word characters and at
+ * least one two-letter run. Binary-plist structural bytes routinely form
+ * short printable runs ("(I_d~") that leaked into sidebar snippets.
+ */
+function isPlausibleHumanText(s: string): boolean {
+  const wordish = (s.match(/[\p{L}\p{N}\s]/gu) ?? []).length;
+  return wordish / s.length >= 0.7 && /\p{L}{2}/u.test(s);
+}
+
 export function extractNullPaddedAsciiText(blob: Buffer | null): string | undefined {
   if (!blob) return undefined;
 
@@ -33,7 +43,8 @@ export function extractNullPaddedAsciiText(blob: Buffer | null): string | undefi
 
   flush();
 
-  return normalizeText(best);
+  const normalized = normalizeText(best);
+  return normalized && isPlausibleHumanText(normalized) ? normalized : undefined;
 }
 
 export function extractArchivedAttributedStringText(blob: Buffer | null): string | undefined {

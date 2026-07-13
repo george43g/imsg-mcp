@@ -35,7 +35,9 @@ export interface AppState {
   pending: PendingMessage[];
   loading: boolean;
   status: string;
-  numBuffer: string; // for vim-style number prefix (e.g. "12j")
+  numBuffer: string;
+  /** Selected attachment within the drawer's attachment list. */
+  drawerAttachmentIdx: number; // for vim-style number prefix (e.g. "12j")
   showDevStats: boolean;
 
   // Lazy-loading bookkeeping
@@ -94,6 +96,7 @@ export type Action =
   | { type: "EXIT_FILTER" }
   | { type: "OPEN_DRAWER" }
   | { type: "CLOSE_DRAWER" }
+  | { type: "SET_DRAWER_ATTACHMENT"; index: number }
   | { type: "SET_NUM_BUFFER"; value: string }
   | { type: "TOGGLE_DEV_STATS" }
   | { type: "APPEND_CONVERSATIONS"; data: Conversation[]; loadedCount: number }
@@ -140,6 +143,7 @@ export const initialState: AppState = {
   status: "Loading...",
   numBuffer: "",
   showDevStats: false,
+  drawerAttachmentIdx: 0,
   conversationLoadedCount: 0,
   conversationLoadingMore: false,
   messageOldestLoadedId: null,
@@ -487,9 +491,11 @@ export function reducer(state: AppState, action: Action): AppState {
     case "EXIT_FILTER":
       return { ...state, mode: "browse", filterQuery: "" };
     case "OPEN_DRAWER":
-      return { ...state, mode: "drawer" };
+      return { ...state, mode: "drawer", drawerAttachmentIdx: 0 };
     case "CLOSE_DRAWER":
       return { ...state, mode: "browse" };
+    case "SET_DRAWER_ATTACHMENT":
+      return { ...state, drawerAttachmentIdx: Math.max(0, action.index) };
     case "SET_NUM_BUFFER":
       return { ...state, numBuffer: action.value };
     case "TOGGLE_DEV_STATS":

@@ -6,7 +6,7 @@ import { useScreenSize } from "fullscreen-ink";
 import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { registerCleanup } from "../shutdown.js";
-import { minMessageId } from "../types.js";
+import { type Conversation, minMessageId } from "../types.js";
 import { getInstalledChatApps } from "../url-schemes.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { ComposeRecipientModal } from "./components/ComposeRecipientModal.js";
@@ -33,6 +33,10 @@ export function App() {
   const { exit } = useApp();
   const { width: columns, height: rows } = useScreenSize();
   const imsg = useImsg();
+  // `visible` gates the SAMPLING RATE, not whether stats exist: panel open =
+  // live 2s ticks; panel closed = the footer rides the watchdog's 60s memory
+  // sample (a 2s always-on setState re-rendered the whole app 30×/min and
+  // drove ~20MB/min heap growth — two real rss_exceeded kills on 2026-07-12).
   const { stats: devStats, recordQueryTime } = useDevStats(state.showDevStats);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const moveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -71,8 +75,13 @@ export function App() {
   // ── Data loading ───────────────────────────────────────────────────
 
   const loadMessages = useCallback(
-    async (idx: number) => {
-      const conv = state.conversations[idx];
+    async (idx: number, convOverride?: Conversation) => {
+      // convOverride exists because this callback closes over the render's
+      // state.conversations — on mount (and right after a refresh dispatch)
+      // that closure is STALE (empty on first load), so indexing into it
+      // silently no-ops and the initially selected thread shows
+      // "No messages" until the user navigates away and back.
+      const conv = convOverride ?? state.conversations[idx];
       if (!conv) return;
       dispatch({
         type: "SET_LOADING",
@@ -94,11 +103,18 @@ export function App() {
     dispatch({ type: "SET_CONVERSATIONS", data: convs });
     if (convs.length > 0) {
       const prevSlug = selected?.threadSlug;
+      let targetIdx = Math.min(Math.max(state.selectedIdx, 0), convs.length - 1);
       if (prevSlug) {
         const idx = convs.findIndex((c) => c.threadSlug === prevSlug);
-        if (idx >= 0) dispatch({ type: "SELECT", index: idx, visibleCount: sidebarVisibleCount });
+        if (idx >= 0) {
+          dispatch({ type: "SELECT", index: idx, visibleCount: sidebarVisibleCount });
+          targetIdx = idx;
+        }
       }
-      await loadMessages(state.selectedIdx);
+      // Pass the fresh conversation object — the loadMessages closure's
+      // state.conversations is stale here (empty on mount, pre-refresh
+      // otherwise), which left the initial thread stuck on "No messages".
+      await loadMessages(targetIdx, convs[targetIdx]);
     }
     imsg.refresh();
     dispatch({ type: "SET_LOADING", loading: false, status: "" });
@@ -218,11 +234,23 @@ export function App() {
         try {
           const msgs = await imsg.loadMessages(selected.chatIdentifier);
           const found = msgs.some((m) => m.isFromMe && m.text?.includes(text));
-          if (found) {
+          const failed = msgs.some(
+            (m) => m.isFromMe && m.sendError !== undefined && m.text?.includes(text),
+          );
+          if (failed) {
+            // The row landed but with a send error (e.g. wrong-service
+            // attempt) — surface the failure instead of a green bubble.
+            dispatch({ type: "SET_MESSAGES", data: msgs });
+            dispatch({ type: "FAIL_PENDING", text });
+          } else if (found) {
             dispatch({ type: "SET_MESSAGES", data: msgs });
             dispatch({ type: "RESOLVE_PENDING", text });
           } else if (attempt < 7) {
             pollTimerRef.current = setTimeout(poll, 1500);
+          } else {
+            // Poll exhausted without ever seeing our message — don't leave
+            // the bubble spinning in "sending" forever.
+            dispatch({ type: "FAIL_PENDING", text });
           }
         } catch {
           // Poll iteration failed (DB locked, transient I/O); drop the
@@ -364,11 +392,30 @@ export function App() {
 
     // Drawer mode
     if (state.mode === "drawer") {
+      const attCount = selectedMsg?.attachments?.length ?? 0;
       if (key.escape || input === "q") {
         dispatch({ type: "CLOSE_DRAWER" });
+      } else if ((input === "j" || key.downArrow) && attCount > 1) {
+        dispatch({
+          type: "SET_DRAWER_ATTACHMENT",
+          index: Math.min(state.drawerAttachmentIdx + 1, attCount - 1),
+        });
+      } else if ((input === "k" || key.upArrow) && attCount > 1) {
+        dispatch({ type: "SET_DRAWER_ATTACHMENT", index: state.drawerAttachmentIdx - 1 });
       } else if (input === "o" && selectedMsg) {
-        // Open attachment in external viewer
-        openAttachment(selectedMsg);
+        // Open the SELECTED attachment in external viewer
+        openAttachment(selectedMsg, state.drawerAttachmentIdx);
+      } else if (input === "s" && selectedMsg) {
+        saveAttachment(selectedMsg, state.drawerAttachmentIdx);
+      } else if (input === "y" && selectedMsg) {
+        const att = selectedMsg.attachments?.[state.drawerAttachmentIdx];
+        if (att?.filename) {
+          const filepath = att.filename.replace(/^~/, process.env.HOME ?? "~");
+          execSync("pbcopy", { input: filepath });
+          dispatch({ type: "SET_STATUS", status: "Attachment path copied." });
+        } else {
+          dispatch({ type: "SET_STATUS", status: "No attachment to copy." });
+        }
       }
       return;
     }
@@ -688,10 +735,19 @@ export function App() {
       } else if (input === "o") {
         // Open attachment for selected message. Always call so the no-msg/
         // no-attachment toast fires when the user presses `o` without a
-        // valid selection — silent no-op is confusing UX.
-        openAttachment(
-          state.selectedMsgIdx >= 0 ? state.messages[state.selectedMsgIdx] : undefined,
-        );
+        // valid selection — silent no-op is confusing UX. Messages with
+        // MULTIPLE attachments open the drawer instead, where j/k selects
+        // which one to open/save.
+        const msg = state.selectedMsgIdx >= 0 ? state.messages[state.selectedMsgIdx] : undefined;
+        if (msg && (msg.attachments?.length ?? 0) > 1) {
+          dispatch({ type: "OPEN_DRAWER" });
+          dispatch({
+            type: "SET_STATUS",
+            status: `${msg.attachments?.length} attachments — j/k select, o open, s save`,
+          });
+        } else {
+          openAttachment(msg);
+        }
       }
     }
   });
@@ -807,7 +863,7 @@ export function App() {
 
   // ── Open attachment ────────────────────────────────────────────────
 
-  function openAttachment(msg: import("../types.js").Message | undefined) {
+  function openAttachment(msg: import("../types.js").Message | undefined, attIdx = 0) {
     // Surface UX feedback when `o` can't do anything — previously this
     // silently no-op'd, leaving the user wondering if the key worked.
     if (!msg) {
@@ -818,7 +874,7 @@ export function App() {
       dispatch({ type: "SET_STATUS", status: "No attachment on this message." });
       return;
     }
-    const att = msg.attachments[0];
+    const att = msg.attachments[attIdx] ?? msg.attachments[0];
     if (!att.filename) {
       dispatch({ type: "SET_STATUS", status: "Attachment has no file path." });
       return;
@@ -842,6 +898,37 @@ export function App() {
       } else {
         spawnQuickLook();
       }
+    });
+  }
+
+  /** Copy the selected attachment to ~/Downloads with a collision-safe name. */
+  function saveAttachment(msg: import("../types.js").Message, attIdx: number) {
+    const att = msg.attachments?.[attIdx];
+    if (!att?.filename) {
+      dispatch({ type: "SET_STATUS", status: "No attachment to save." });
+      return;
+    }
+    const src = att.filename.replace(/^~/, process.env.HOME ?? "~");
+    import("node:fs").then((fs) => {
+      import("node:path").then((path) => {
+        try {
+          const base = att.transferName ?? path.basename(src);
+          const dir = join(homedir(), "Downloads");
+          const ext = path.extname(base);
+          const stem = base.slice(0, base.length - ext.length);
+          let dest = path.join(dir, base);
+          for (let n = 1; fs.existsSync(dest); n++) {
+            dest = path.join(dir, `${stem}-${n}${ext}`);
+          }
+          fs.copyFileSync(src, dest);
+          dispatch({ type: "SET_STATUS", status: `Saved to ${dest.replace(homedir(), "~")}` });
+        } catch (e) {
+          dispatch({
+            type: "SET_STATUS",
+            status: `Save failed: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        }
+      });
     });
   }
 
@@ -961,7 +1048,12 @@ export function App() {
           />
         )}
         {state.mode === "drawer" && selectedMsg && (
-          <MessageDrawer message={selectedMsg} width={drawerWidth} height={bodyHeight} />
+          <MessageDrawer
+            message={selectedMsg}
+            width={drawerWidth}
+            height={bodyHeight}
+            selectedAttachmentIdx={state.drawerAttachmentIdx}
+          />
         )}
         {state.showDevStats && <DevStats stats={devStats} width={devStatsWidth} />}
       </Box>

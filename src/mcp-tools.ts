@@ -22,6 +22,7 @@ export const ReplyContextSchema = z.object({
 });
 
 export const AttachmentSchema = z.object({
+  rowId: z.number().int().optional().describe("Feed to get_attachment to fetch/view the file."),
   filename: z.string(),
   mimeType: z.string().nullable(),
   transferName: z.string().nullable(),
@@ -40,6 +41,11 @@ export const MessageSchema = z.object({
   dateDelivered: z.string().nullable(),
   isRead: z.boolean(),
   isDelivered: z.boolean(),
+  sendError: z
+    .number()
+    .int()
+    .optional()
+    .describe("Non-zero chat.db error code — this from-me message FAILED to send."),
   chatId: z.string(),
   service: z.enum(["iMessage", "SMS"]),
   isReaction: z.boolean(),
@@ -67,6 +73,24 @@ export const ConversationSchema = z.object({
   threadSlug: z.string(),
   isGroupChat: z.boolean(),
   serviceType: z.enum(["iMessage", "SMS"]),
+  humansFiles: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Paths to humans/v1 relationship files for participants of this conversation, when they exist. Read for context; see skills/humans/SKILL.md.",
+    ),
+});
+
+/** Agent-facing pointer to humans/v1 relationship files (skills/humans/SKILL.md). */
+export const HumansHintSchema = z.object({
+  files: z.array(
+    z.object({
+      handle: z.string(),
+      name: z.string(),
+      path: z.string(),
+    }),
+  ),
+  guidance: z.string(),
 });
 
 export const GetMessagesSchema = z.object({
@@ -93,6 +117,7 @@ export const GetMessagesOutputSchema = z.object({
   count: z.number().int(),
   hasMore: z.boolean(),
   oldestMessageId: z.number().int().optional(),
+  humans: HumansHintSchema.optional(),
 });
 
 export const ExportMessagesSchema = z.object({
@@ -152,6 +177,12 @@ export const SendMessageOutputSchema = z.object({
   timestamp: z.string().nullable().optional(),
   threadSlug: z.string().optional(),
   lastMessageId: z.number().int().optional(),
+  sendConfirmed: z
+    .boolean()
+    .optional()
+    .describe(
+      "True when the sent message was observed in chat.db before returning — lastMessageId then points exactly at the sent message.",
+    ),
   attachments: z
     .array(
       z.object({
@@ -169,12 +200,20 @@ export const WaitForReplySchema = z.object({
   timeoutSeconds: z.number().min(10).max(3600).default(300),
   pollIntervalSeconds: z.number().min(5).max(60).default(10),
   afterMessageId: z.number().int().positive().optional(),
+  includeSelf: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Also return messages the user sends from their own account (other devices) — they may be addressing the agent. The agent's own just-sent messages are always excluded. false = incoming-only (legacy behavior).",
+    ),
 });
 
 export const WaitForReplyOutputSchema = z.object({
   received: z.boolean().optional(),
   messages: z.array(MessageSchema).optional(),
   count: z.number().int().optional(),
+  selfCount: z.number().int().optional(),
+  humans: HumansHintSchema.optional(),
   timedOut: z.boolean().optional(),
   timeoutSeconds: z.number().optional(),
   threadSlug: z.string().optional(),
@@ -335,6 +374,10 @@ export const GetContactOutputSchema = z.object({
       threadSlug: z.string().nullable(),
     }),
   ),
+  /** Path to this person's humans/v1 relationship file, when one exists. */
+  humansFile: z.string().nullable().optional(),
+  /** Standing instruction for using (or creating) the relationship file. */
+  humansGuidance: z.string().optional(),
 });
 
 export const ResolveHandleSchema = z.object({
@@ -394,6 +437,40 @@ export const SearchAttachmentsOutputSchema = z.object({
   count: z.number().int(),
 });
 
+export const InitHumanSchema = z
+  .object({
+    contact: nonEmptyString(
+      "Contact name, phone, email, or contact:N selector from a prior search_contacts",
+    ).optional(),
+    threadSlug: nonEmptyString("Thread slug from list_conversations").optional(),
+    top: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(25)
+      .optional()
+      .describe(
+        "Scaffold files for the user's top N relationships (ranked by the relationship_leaderboard analytic over the last year).",
+      ),
+  })
+  .refine((d) => [d.contact, d.threadSlug, d.top].filter((v) => v !== undefined).length === 1, {
+    message: "Provide exactly one of: contact, threadSlug, or top.",
+  });
+
+export const InitHumanOutputSchema = z.object({
+  results: z.array(
+    z.object({
+      slug: z.string(),
+      name: z.string(),
+      path: z.string(),
+      created: z.boolean(),
+      messageCount: z.number().int().optional(),
+    }),
+  ),
+  count: z.number().int(),
+  humansDir: z.string(),
+});
+
 export const ChatAnalyticsSchema = z.object({
   type: z
     .enum([
@@ -403,6 +480,7 @@ export const ChatAnalyticsSchema = z.object({
       "daily_heatmap",
       "tapback_summary",
       "year_in_review_wrapped",
+      "relationship_leaderboard",
     ])
     .describe(
       "Which analytic to compute. Six priority types are implemented; 20 more are reserved for future versions and return a structured 'not_yet_implemented' error.",
@@ -441,6 +519,18 @@ export const GetAttachmentOutputSchema = z.object({
   inline: z.boolean(),
   base64: z.string().optional(),
   converted: z.string().optional().describe("Set when source was HEIC and we converted to PNG."),
+  mediaInfo: z
+    .string()
+    .optional()
+    .describe("Compact duration/dimensions/codec summary for audio/video (via mdls)."),
+  transcript: z
+    .string()
+    .optional()
+    .describe("Audio transcript when an optional transcriber (hear/yap/whisper-cli) is installed."),
+  imageBlockIncluded: z
+    .boolean()
+    .optional()
+    .describe("True when the tool result carries a real MCP image content block."),
 });
 
 export type ToolName = keyof typeof TOOL_SCHEMAS;
@@ -466,6 +556,7 @@ export const TOOL_SCHEMAS = {
   search_attachments: SearchAttachmentsSchema,
   get_attachment: GetAttachmentSchema,
   chat_analytics: ChatAnalyticsSchema,
+  init_human: InitHumanSchema,
 } as const;
 
 export const OUTPUT_SCHEMAS = {
@@ -489,6 +580,7 @@ export const OUTPUT_SCHEMAS = {
   search_attachments: SearchAttachmentsOutputSchema,
   get_attachment: GetAttachmentOutputSchema,
   chat_analytics: ChatAnalyticsOutputSchema,
+  init_human: InitHumanOutputSchema,
 } as const;
 
 type JsonSchema = Tool["inputSchema"];
@@ -530,6 +622,8 @@ const annotations = {
 
 export const TOOL_TIMEOUTS_MS: Record<string, number> = {
   wait_for_reply: 0,
+  init_human: 120_000, // top-N path runs a year-window analytic
+
   run_build: 120_000,
   search_messages: 60_000,
   get_messages: 60_000,
@@ -561,7 +655,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_messages",
     description:
-      "Get recent iMessages. Optionally filter by conversation. Response footer includes oldestMessageId for beforeMessageId pagination; use export_messages for very large histories.",
+      "Get recent iMessages. Optionally filter by conversation. Response footer includes oldestMessageId for beforeMessageId pagination; use export_messages for very large histories. When a humans/v1 relationship file exists for the conversation's participants, the response includes its path and usage guidance (`humans`).",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -644,7 +738,7 @@ export const TOOLS: Tool[] = [
   {
     name: "wait_for_reply",
     description:
-      "Wait for a new incoming message in a conversation until timeout or client cancellation.",
+      "Wait for new messages in a conversation until timeout or client cancellation. Returns the other party's replies AND (by default) messages the user sends from their own account on other devices — marked isFromMe: true, counted in selfCount — since the user may be interjecting to address the agent. The agent's own just-sent message never echoes back. Pass includeSelf: false for incoming-only. When a humans/v1 relationship file exists for the participants, the response includes its path and usage guidance (`humans`) — consult it before composing a reply.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -662,6 +756,12 @@ export const TOOLS: Tool[] = [
           description: "Polling interval in seconds, 5-60",
         },
         afterMessageId: { type: "number", description: "Only return messages after this id" },
+        includeSelf: {
+          type: "boolean",
+          default: true,
+          description:
+            "Also return the user's own messages sent from other devices (the agent's own sends are always excluded). false = incoming-only.",
+        },
       },
     },
     // @ts-expect-error
@@ -800,7 +900,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_contact",
     description:
-      "Fetch a single contact by handle (phone/email) or by numeric id, including each handle's thread slug (for send_message/get_messages). Returns null if not found.",
+      "Fetch a single contact by handle (phone/email) or by numeric id, including each handle's thread slug (for send_message/get_messages). Returns null if not found. Includes `humansFile` — the path to this person's humans/v1 relationship file if one exists (read it for relationship context; init_human scaffolds one otherwise).",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -870,7 +970,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_attachment",
     description:
-      "Fetch an attachment by ROWID (from search_attachments). Returns base64 inline if ≤ inlineMaxBytes (default 5MB); otherwise returns the resolved path only. HEIC images are auto-converted to PNG via macOS sips.",
+      "Fetch an attachment by ROWID (from search_attachments or a message's attachments[].rowId). IMAGES: returned as a real MCP image content block (downscaled ≤1536px, HEIC auto-converted) so the model can SEE it — plus full-size base64 in structuredContent when ≤ inlineMaxBytes (default 5MB). VIDEO: QuickLook poster frame as an image block + duration/resolution metadata + file path. AUDIO (voice memos): metadata + file path, and a transcript when a transcriber (hear, yap, or whisper-cli) is installed on PATH.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -886,7 +986,7 @@ export const TOOLS: Tool[] = [
   {
     name: "chat_analytics",
     description:
-      "Compute analytics over your chat history. Pick a `type`: messaging_streaks, double_texts, response_time_stats, daily_heatmap, tapback_summary, or year_in_review_wrapped. Results are cached at ~/.imsg-mcp/analytics-cache.db keyed on (type, args, MAX(message.rowid)) so subsequent calls without new messages hit cache. 20 additional analytic types are reserved for future versions.",
+      "Compute analytics over your chat history. Pick a `type`: messaging_streaks, double_texts, response_time_stats, daily_heatmap, tapback_summary, year_in_review_wrapped, or relationship_leaderboard (top relationships by volume, reciprocity, and recency). Results are cached at ~/.imsg-mcp/analytics-cache.db keyed on (type, args, MAX(message.rowid)) so subsequent calls without new messages hit cache. 20 additional analytic types are reserved for future versions.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -901,6 +1001,7 @@ export const TOOLS: Tool[] = [
             "daily_heatmap",
             "tapback_summary",
             "year_in_review_wrapped",
+            "relationship_leaderboard",
           ],
         },
         windowDays: {
@@ -912,6 +1013,33 @@ export const TOOLS: Tool[] = [
     },
     // @ts-expect-error
     outputSchema: zodToJsonSchema(ChatAnalyticsOutputSchema),
+  },
+  {
+    name: "init_human",
+    description:
+      "Scaffold a humans/v1 relationship file (~/.agents/humans/<person>.md — see the humans skill) for a contact, a thread slug, or the user's top N relationships. Prefills identity (name, aliases, handles) from the Address Book and first/last contact + message counts from chat.db. NEVER overwrites an existing file — returns its path with created: false. The calling agent fills the sections (export_messages → summarize → edit the file directly); the file's contents are privacy: never-share.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        contact: {
+          type: "string",
+          description: "Contact name, phone, email, or contact:N selector.",
+        },
+        threadSlug: { type: "string", description: "Thread slug from list_conversations." },
+        top: {
+          type: "number",
+          description: "Scaffold the top N relationships (1-25) by importance.",
+        },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(InitHumanOutputSchema),
   },
 ];
 

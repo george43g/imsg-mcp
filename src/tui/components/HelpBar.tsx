@@ -91,8 +91,10 @@ const COMPOSE_NEW_KEYS = [
 const FILTER_KEYS = [["Enter/Esc", "exit filter"]];
 
 const DRAWER_KEYS = [
-  ["j/k", "scroll"],
-  ["o", "open attachment"],
+  ["j/k", "select attachment"],
+  ["o", "open"],
+  ["s", "save"],
+  ["y", "copy path"],
   ["Esc/q", "close"],
 ];
 

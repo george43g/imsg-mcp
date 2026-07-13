@@ -59,6 +59,8 @@ export interface Message {
   dateDelivered: Date | null;
   isRead: boolean;
   isDelivered: boolean;
+  /** chat.db `error` code when a from-me message failed to send (e.g. 22 = wrong-service iMessage attempt). Undefined = sent fine. */
+  sendError?: number;
   chatId: string;
   service: "iMessage" | "SMS";
 
@@ -90,6 +92,8 @@ export interface Message {
  * Represents an attachment
  */
 export interface Attachment {
+  /** attachment table ROWID — feed to get_attachment to fetch/view the file. */
+  rowId?: number;
   filename: string;
   mimeType: string | null;
   transferName: string | null;

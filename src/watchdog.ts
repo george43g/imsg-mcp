@@ -26,6 +26,7 @@
 
 import { writeFileSync } from "node:fs";
 import { type IntervalHistogram, monitorEventLoopDelay } from "node:perf_hooks";
+import { getHeapSpaceStatistics, getHeapStatistics } from "node:v8";
 import { error, info, warn } from "./logger.js";
 import { isShuttingDown, registerCleanup, shutdown } from "./shutdown.js";
 
@@ -261,6 +262,28 @@ export function installWatchdog(opts: WatchdogOpts = {}): void {
     }
 
     if (rssMb >= MAX_RSS_MB) {
+      // Forensics before dying: a real incident (2026-07-12) went 160MB →
+      // 1071MB inside one 60s sample window with no completed perf span to
+      // name the allocator. V8 heap-space stats are cheap and identify WHERE
+      // the memory sits (old space vs external vs malloc'd), which separates
+      // "JS object leak" from "native/Buffer growth" for the next occurrence.
+      try {
+        error("rss_kill_heap_forensics", {
+          heap_stats: getHeapStatistics(),
+          heap_spaces: getHeapSpaceStatistics().map((sp) => ({
+            name: sp.space_name,
+            used_mb: round1(sp.space_used_size / 1024 / 1024),
+          })),
+          memory_usage: {
+            rss_mb: rssMb,
+            heap_used_mb: heapMb,
+            external_mb: round1(mu.external / 1024 / 1024),
+            array_buffers_mb: round1(mu.arrayBuffers / 1024 / 1024),
+          },
+        });
+      } catch {
+        // Forensics must never block the kill.
+      }
       triggerKill("rss_exceeded", { rss_mb: rssMb, threshold_mb: MAX_RSS_MB });
       return;
     }

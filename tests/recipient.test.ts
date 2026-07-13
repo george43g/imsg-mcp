@@ -164,14 +164,13 @@ describe("resolveRecipient", () => {
     if (r.kind === "email") expect(r.handle).toBe("alice@icloud.com");
   });
 
-  it("resolves a unique contact name to a single recipient", () => {
+  it("resolves a unique contact name straight to their first phone (not ambiguous)", () => {
     const r = resolveRecipient("brian", { contacts });
-    // Brian has 1 phone + 1 email = 2 candidates, so it's ambiguous.
-    expect(r.kind).toBe("ambiguous");
-    if (r.kind === "ambiguous") {
-      expect(r.candidates.length).toBe(2);
-      expect(r.candidates.map((c) => c.handle)).toEqual(["+61411113227", "brian@example.com"]);
-    }
+    // Brian has 1 phone + 1 email — but they're the SAME person, so this is
+    // not ambiguous: prefer the dial-ready phone. (Pre-fix, "send to brian"
+    // listed his own two handles as competing matches.)
+    expect(r.kind).toBe("contact");
+    if (r.kind === "contact") expect(r.handle).toBe("+61411113227");
   });
 
   it("returns a single recipient when the contact has only one handle", () => {

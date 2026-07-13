@@ -90,7 +90,10 @@ One human conversation is often split across multiple `chat` rows (phone vs emai
 
 - **Types**: Shared types in `src/types.ts` (Message, Reaction, ReplyContext, etc.); align with DB schema in `docs/IMESSAGE_DB_SCHEMA.md`.
 - **DB layer**: `src/imessage-db.ts` – all SQLite access and message parsing; use Mac epoch for dates (see docs).
-- **Sending**: `src/applescript.ts` – AppleScript interface to Messages.app.
+- **Sending**: `src/applescript.ts` – AppleScript interface to Messages.app. Sends route on the thread's REAL service (slug store / existing conversation) — AppleScript cannot detect a wrong-service send (lazy participant resolution), so iMessage-first to an SMS-only number silently never delivers.
+- **Media**: `src/media.ts` – zero-dep macOS helpers (sips/qlmanage/mdls) turning attachments into MCP image blocks, video poster frames, and optional audio transcripts (hear/yap/whisper-cli detection).
+- **Echo suppression**: `src/sent-echo-registry.ts` – lets `wait_for_reply` return the user's own interjections without the agent's just-sent message echoing back (send confirm-poll pins the ROWID; registry is the backstop).
+- **Humans files**: `src/humans-scaffold.ts` + `skills/humans/SKILL.md` – humans/v1 per-person relationship files (`~/.agents/humans/`); imsg-mcp scaffolds + feeds stats, the calling agent writes all summaries. Never overwrite; Log is append-only; privacy: never-share.
 - **Tools**: Tool schemas and metadata in `src/mcp-tools.ts`; handlers in `src/index.ts`; validate inputs with Zod, keep tool list and schemas in sync.
 - **Tests**: Vitest; keep coverage for DB and tool behavior where it matters.
 - **Skills**: Canonical skill file is **`skills/imsg-mcp/SKILL.md`** — keep other skill files pointing to it.
