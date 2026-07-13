@@ -73,6 +73,24 @@ export const ConversationSchema = z.object({
   threadSlug: z.string(),
   isGroupChat: z.boolean(),
   serviceType: z.enum(["iMessage", "SMS"]),
+  humansFiles: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Paths to humans/v1 relationship files for participants of this conversation, when they exist. Read for context; see skills/humans/SKILL.md.",
+    ),
+});
+
+/** Agent-facing pointer to humans/v1 relationship files (skills/humans/SKILL.md). */
+export const HumansHintSchema = z.object({
+  files: z.array(
+    z.object({
+      handle: z.string(),
+      name: z.string(),
+      path: z.string(),
+    }),
+  ),
+  guidance: z.string(),
 });
 
 export const GetMessagesSchema = z.object({
@@ -99,6 +117,7 @@ export const GetMessagesOutputSchema = z.object({
   count: z.number().int(),
   hasMore: z.boolean(),
   oldestMessageId: z.number().int().optional(),
+  humans: HumansHintSchema.optional(),
 });
 
 export const ExportMessagesSchema = z.object({
@@ -194,6 +213,7 @@ export const WaitForReplyOutputSchema = z.object({
   messages: z.array(MessageSchema).optional(),
   count: z.number().int().optional(),
   selfCount: z.number().int().optional(),
+  humans: HumansHintSchema.optional(),
   timedOut: z.boolean().optional(),
   timeoutSeconds: z.number().optional(),
   threadSlug: z.string().optional(),
@@ -354,6 +374,10 @@ export const GetContactOutputSchema = z.object({
       threadSlug: z.string().nullable(),
     }),
   ),
+  /** Path to this person's humans/v1 relationship file, when one exists. */
+  humansFile: z.string().nullable().optional(),
+  /** Standing instruction for using (or creating) the relationship file. */
+  humansGuidance: z.string().optional(),
 });
 
 export const ResolveHandleSchema = z.object({
@@ -631,7 +655,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_messages",
     description:
-      "Get recent iMessages. Optionally filter by conversation. Response footer includes oldestMessageId for beforeMessageId pagination; use export_messages for very large histories.",
+      "Get recent iMessages. Optionally filter by conversation. Response footer includes oldestMessageId for beforeMessageId pagination; use export_messages for very large histories. When a humans/v1 relationship file exists for the conversation's participants, the response includes its path and usage guidance (`humans`).",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -714,7 +738,7 @@ export const TOOLS: Tool[] = [
   {
     name: "wait_for_reply",
     description:
-      "Wait for new messages in a conversation until timeout or client cancellation. Returns the other party's replies AND (by default) messages the user sends from their own account on other devices — marked isFromMe: true, counted in selfCount — since the user may be interjecting to address the agent. The agent's own just-sent message never echoes back. Pass includeSelf: false for incoming-only.",
+      "Wait for new messages in a conversation until timeout or client cancellation. Returns the other party's replies AND (by default) messages the user sends from their own account on other devices — marked isFromMe: true, counted in selfCount — since the user may be interjecting to address the agent. The agent's own just-sent message never echoes back. Pass includeSelf: false for incoming-only. When a humans/v1 relationship file exists for the participants, the response includes its path and usage guidance (`humans`) — consult it before composing a reply.",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
@@ -876,7 +900,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_contact",
     description:
-      "Fetch a single contact by handle (phone/email) or by numeric id, including each handle's thread slug (for send_message/get_messages). Returns null if not found.",
+      "Fetch a single contact by handle (phone/email) or by numeric id, including each handle's thread slug (for send_message/get_messages). Returns null if not found. Includes `humansFile` — the path to this person's humans/v1 relationship file if one exists (read it for relationship context; init_human scaffolds one otherwise).",
     annotations: annotations.read,
     inputSchema: {
       type: "object",

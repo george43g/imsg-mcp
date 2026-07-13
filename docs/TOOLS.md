@@ -103,6 +103,8 @@ imsg export <slug-or-handle>
 | `chat_analytics` | `type` + window. 7 types shipped incl. `relationship_leaderboard` (top relationships by volume × reciprocity × recency); 20 reserved (see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types)). Cached per-window. |
 | `init_human` | Scaffold a humans/v1 relationship file (`~/.agents/humans/<person>.md`) for a `contact`, `threadSlug`, or `top: N` relationships. Prefills identity + history stats; never overwrites; the AGENT writes the summaries (see [skills/humans/SKILL.md](../skills/humans/SKILL.md)). |
 
+**Humans-file hints:** once a relationship file exists, tools that touch that person surface it automatically so agents actually use it — `get_messages` and `wait_for_reply` include a `humans` block (file path(s) — one per participant for groups — plus standing guidance: consult before replying, append milestones to the Log, suggest Summary updates to the user for approval, never share contents), `get_contact` includes `humansFile` (or an init_human pointer when none exists), and `list_conversations` rows carry `humansFiles` paths.
+
 ### Dev-only (require `IMSG_DEV=1`)
 
 | Tool | Notes |

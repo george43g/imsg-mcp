@@ -38,6 +38,7 @@ import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
 import { normalizedPhoneVariants } from "./contacts-db.js";
 import { streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
+import { HUMANS_INIT_HINT, HumansIndex, humansHintText } from "./humans-hints.js";
 import { HumansScaffold } from "./humans-scaffold.js";
 import { IMessageDB } from "./imessage-db.js";
 import {
@@ -355,6 +356,7 @@ export class IMessageMCPServer {
   // Fingerprints of this process's own sends so wait_for_reply can return
   // the user's interjections without echoing the agent's just-sent message.
   private sentEchoes = new SentEchoRegistry();
+  private humansIndex = new HumansIndex();
 
   constructor() {
     this.server = new Server(
@@ -732,6 +734,7 @@ export class IMessageMCPServer {
 
     let messages: Message[];
     let threadHeader = "";
+    let humansHint: ReturnType<HumansIndex["hintFor"]> = null;
     if (chatIdentifier || threadSlug) {
       let targetIdentifier = chatIdentifier;
       if (threadSlug) {
@@ -749,6 +752,7 @@ export class IMessageMCPServer {
         const ident = conv.displayName ? ` (${conv.rawIdentifier})` : "";
         const kind = conv.isGroupChat ? "Group" : "1-on-1";
         threadHeader = `Thread: ${conv.threadSlug} | ${name}${ident} | ${conv.serviceType} | ${kind}\n\n`;
+        humansHint = this.humansIndex.hintFor(conv.participants);
       }
     } else {
       messages = await this.db.getRecentMessages(limit);
@@ -772,13 +776,15 @@ export class IMessageMCPServer {
         ? `\n_Pagination: oldestMessageId=${oldestId}, hasMore=${hasMore}${wasCapped ? ` (capped at ${HARD_PAGE_CAP} per call — use beforeMessageId or export_messages)` : ""}_`
         : "";
     const perfLine = `\n_Engine: ${engineLabel()} | Query: ${durMs.toFixed(0)}ms | Messages: ${messages.length}_`;
+    const humansLine = humansHint ? humansHintText(humansHint) : "";
     return toolText(
-      `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${paginationLine}${perfLine}`,
+      `${threadHeader}Found ${messages.length} message(s):\n\n${formatted}${paginationLine}${perfLine}${humansLine}`,
       {
         messages: messages.map(messageToStructured),
         count: messages.length,
         hasMore,
         oldestMessageId: chatIdentifier || threadSlug ? oldestId : undefined,
+        ...(humansHint ? { humans: humansHint } : {}),
       },
     );
   }
@@ -1213,11 +1219,14 @@ export class IMessageMCPServer {
             ? `Received ${visible.length} new message(s) — ${selfCount} sent by the user from their own account (another device), ${visible.length - selfCount} from the other party:`
             : `Received ${visible.length} new message(s):`;
         const formatted = visible.map((m) => formatMessage(m)).join("\n");
-        return toolText(`${header}\n\n${formatted}`, {
+        const humansHint = this.humansIndex.hintFor(chat.participants);
+        const humansLine = humansHint ? humansHintText(humansHint) : "";
+        return toolText(`${header}\n\n${formatted}${humansLine}`, {
           received: true,
           messages: visible.map(messageToStructured),
           count: visible.length,
           selfCount,
+          ...(humansHint ? { humans: humansHint } : {}),
         });
       }
       if (newMessages.length > 0) {
@@ -1301,11 +1310,15 @@ export class IMessageMCPServer {
       .join("\n");
 
     return toolText(`Found ${results.length} conversation(s):\n\n${formatted}`, {
-      conversations: results.map((conversation) => ({
-        ...conversation,
-        lastMessageDate: conversation.lastMessageDate?.toISOString() ?? null,
-        lastMessageSnippet: sanitizeUserText(conversation.lastMessageSnippet),
-      })),
+      conversations: results.map((conversation) => {
+        const humanFiles = this.humansIndex.lookup(conversation.participants).map((f) => f.path);
+        return {
+          ...conversation,
+          lastMessageDate: conversation.lastMessageDate?.toISOString() ?? null,
+          lastMessageSnippet: sanitizeUserText(conversation.lastMessageSnippet),
+          ...(humanFiles.length > 0 ? { humansFiles: humanFiles } : {}),
+        };
+      }),
       count: results.length,
       hasMore,
       nextOffset: hasMore ? startAfter : null,
@@ -1496,9 +1509,18 @@ export class IMessageMCPServer {
         ? `\nThreads:\n${withThreads.map((t) => `  ${t.handle} → ${t.threadSlug}`).join("\n")}`
         : "";
 
+    const humansHint = this.humansIndex.hintFor([...contact.phoneNumbers, ...contact.emails]);
+    const humansFile = humansHint?.files[0]?.path ?? null;
+    const humansLine = humansHint ? humansHintText(humansHint) : `\n\n_${HUMANS_INIT_HINT}_`;
+
     return toolText(
-      `${sanitizeUserText(contact.displayName)} (id ${contact.id})${phones}${emails}${org}${threadLines}`,
-      { contact, threads },
+      `${sanitizeUserText(contact.displayName)} (id ${contact.id})${phones}${emails}${org}${threadLines}${humansLine}`,
+      {
+        contact,
+        threads,
+        humansFile,
+        humansGuidance: humansHint?.guidance ?? HUMANS_INIT_HINT,
+      },
     );
   }
 

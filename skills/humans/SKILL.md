@@ -116,3 +116,21 @@ before drafting. `list of people: ls ~/.agents/humans/`.
 
 **Update (after significant exchanges):** append a dated Log entry; when
 Log grows unwieldy, distill into sections (workflow rule 2).
+
+## Discovery: tool-output hints
+
+You don't have to remember these files exist. Once a file exists for a
+person, imsg-mcp points at it wherever that person shows up:
+
+- `get_messages` / `wait_for_reply` responses include a `humans` block —
+  the matching file path(s) (one per participant for group chats) plus
+  the standing guidance.
+- `get_contact` includes `humansFile` (path or `null`); when no file
+  exists it suggests `init_human`.
+- `list_conversations` rows carry `humansFiles` paths.
+
+When you see the hint: read the file before composing; append notable
+events to Log; if the exchange contains a major milestone or an important
+relationship change, propose the Summary / Current State edit to the user
+and wait for approval — Log appends are routine, section rewrites are
+permission-gated.
