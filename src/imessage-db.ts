@@ -832,7 +832,11 @@ export class IMessageDB {
     const placeholders = chats.map(() => "?").join(",");
     const row = this.raw
       .prepare(
-        `SELECT COUNT(*) as count, MIN(m.date) as first, MAX(m.date) as last
+        // COUNT(DISTINCT m.ROWID): a single message is often joined to more
+        // than one leg of a merged identity (Messages.app links it into both
+        // the iMessage and SMS chat rows). Plain COUNT(*) counted it once per
+        // leg and inflated the humans-file stats (e.g. +727 for one contact).
+        `SELECT COUNT(DISTINCT m.ROWID) as count, MIN(m.date) as first, MAX(m.date) as last
          FROM ${Tables.MESSAGE} m
          JOIN ${Tables.CHAT_MESSAGE_JOIN} j ON j.message_id = m.ROWID
          WHERE j.chat_id IN (${placeholders})
