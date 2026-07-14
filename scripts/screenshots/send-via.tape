@@ -13,9 +13,10 @@ Set Padding 5
 Set TypingSpeed 50ms
 
 Hide
-Type "IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
+Type "mkdir -p /tmp/imsg-demo && HOME=/tmp/imsg-demo IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
 Enter
-Sleep 2s
+Wait+Screen@15s /Conversations/
+Sleep 1s
 Show
 
 # Pick a single-handle DM (easier for the picker to enumerate options).
@@ -23,6 +24,10 @@ Type "j"
 Sleep 200ms
 Type "j"
 Sleep 800ms
+
+# The picker binds in the THREAD pane — Tab focus over first.
+Tab
+Sleep 500ms
 
 # Open the send-via picker
 Type "S"

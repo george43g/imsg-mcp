@@ -12,14 +12,13 @@ Set Padding 5
 Set TypingSpeed 50ms
 
 Hide
-Type "IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
+Type "mkdir -p /tmp/imsg-demo && HOME=/tmp/imsg-demo IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
 Enter
-Sleep 2s
+Wait+Screen@15s /Conversations/
+Sleep 1s
 Show
 
 # Find a chat with attachments. The synthetic fixture generates some.
-Type "j"
-Sleep 200ms
 Type "j"
 Sleep 200ms
 Type "j"
@@ -27,12 +26,13 @@ Sleep 500ms
 Tab
 Sleep 500ms
 
-# Move down a few messages to land on one with content worth previewing.
-Type "j"
-Sleep 200ms
-Type "j"
-Sleep 200ms
-Type "j"
+# Jump up to a message that carries an attachment (📎) so the drawer's
+# attachment section + o/s/y keys are actually visible. The fixture is
+# deterministic; if generate-fixtures.ts changes its RNG draws, re-derive
+# this offset (sidebar row / messages-from-bottom of the nearest 📎 row).
+Type "4"
+Sleep 100ms
+Type "k"
 Sleep 500ms
 
 # Open the drawer

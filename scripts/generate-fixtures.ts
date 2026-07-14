@@ -689,6 +689,24 @@ function makeChatDb(
   const insertChatMsg = db.prepare(
     "INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (?, ?, ?)",
   );
+  // Real attachment rows for flagged messages — cache_has_attachments alone
+  // draws the 📎 marker, but the drawer/attachment tools read the join table.
+  const insertAttachment = db.prepare(`
+    INSERT INTO attachment (guid, created_date, filename, uti, mime_type,
+      transfer_name, total_bytes, original_guid)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertMsgAttachment = db.prepare(
+    "INSERT INTO message_attachment_join (message_id, attachment_id) VALUES (?, ?)",
+  );
+  const ATTACHMENT_KINDS = [
+    { ext: "heic", uti: "public.heic", mime: "image/heic" },
+    { ext: "jpeg", uti: "public.jpeg", mime: "image/jpeg" },
+    { ext: "png", uti: "public.png", mime: "image/png" },
+    { ext: "mov", uti: "com.apple.quicktime-movie", mime: "video/quicktime" },
+    { ext: "caf", uti: "com.apple.coreaudio-format", mime: "audio/x-caf" },
+  ] as const;
+  let attachmentRowid = 1;
 
   // Mac timestamp = nanoseconds since 2001-01-01
   const MAC_EPOCH_OFFSET_S = 978307200;
@@ -761,8 +779,13 @@ function makeChatDb(
           macNs,
           isFromMe ? macNs : 0,
           isFromMe ? macNs : 0,
-          isFromMe ? 1 : rng.bool(0.95) ? 1 : 0,
-          rng.bool(0.9) ? 1 : 0,
+          // is_from_me must mirror the sender draw exactly — a stray truthy
+          // here marks received messages as sent and every doc screenshot
+          // renders as a wall of "Me:" bubbles.
+          isFromMe ? 1 : 0,
+          // is_read: own messages are always "read"; received ~90% read so
+          // the sidebar keeps its unread badges.
+          isFromMe ? 1 : rng.bool(0.9) ? 1 : 0,
           1,
           hasAttachment ? 1 : 0,
           "iMessage",
@@ -771,6 +794,27 @@ function makeChatDb(
         );
 
         insertChatMsg.run(ch.rowid, messageRowid, macNs);
+        if (hasAttachment) {
+          // 1-2 attachments per flagged message so the drawer's j/k
+          // attachment cursor has something to select.
+          const n = rng.bool(0.3) ? 2 : 1;
+          for (let a = 0; a < n; a++) {
+            const kind = ATTACHMENT_KINDS[rng.int(0, ATTACHMENT_KINDS.length)];
+            const name = `IMG_${String(1000 + attachmentRowid).slice(1)}.${kind.ext}`;
+            insertAttachment.run(
+              `synthetic-att-${attachmentRowid}`,
+              macNs,
+              `~/Library/Messages/Attachments/fixture/${name}`,
+              kind.uti,
+              kind.mime,
+              name,
+              rng.int(40_000, 4_000_000),
+              `synthetic-att-orig-${attachmentRowid}`,
+            );
+            insertMsgAttachment.run(messageRowid, attachmentRowid);
+            attachmentRowid++;
+          }
+        }
         guids.push(guid);
         messageRowid++;
       }
