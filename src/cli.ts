@@ -182,7 +182,7 @@ async function runConsoleCommand(
       } else if (verb === "top") {
         await printToolResult(client, "chat_analytics", {
           type: "relationship_leaderboard",
-          windowDays: Number(args[1] ?? 365),
+          windowDays: Number(args[1] ?? 1825),
         });
       } else {
         throw new Error(`Unknown humans verb: ${verb}. Use init|top.`);
@@ -622,8 +622,8 @@ humansCommand
 
 humansCommand
   .command("top")
-  .description("Show the relationship leaderboard (volume × reciprocity × recency, last year)")
-  .argument("[windowDays]", "Days of history to rank", "365")
+  .description("Show the relationship leaderboard (volume × reciprocity × recency, last 5 years)")
+  .argument("[windowDays]", "Days of history to rank", "1825")
   .action(async (windowDays: string) => {
     await withClient((c) =>
       printToolResult(c, "chat_analytics", {

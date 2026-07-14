@@ -464,10 +464,14 @@ export function computeRelationshipLeaderboard(messages: Message[]): {
       received: acc.received,
       reciprocity: Math.round(reciprocity * 100) / 100,
       daysSinceLast: Math.round(daysSinceLast * 10) / 10,
-      score: Math.round(score * 1000) / 1000,
+      score,
     });
   }
+  // Sort on the RAW score, round only for output. The exp recency decay
+  // pushes old-history scores below 1e-3 — rounding before the sort made
+  // every long-quiet relationship tie at 0 and the ranking arbitrary.
   leaderboard.sort((a, b) => b.score - a.score);
+  for (const row of leaderboard) row.score = Math.round(row.score * 1e6) / 1e6;
   return { leaderboard: leaderboard.slice(0, 50) };
 }
 

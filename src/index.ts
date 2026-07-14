@@ -1807,14 +1807,18 @@ export class IMessageMCPServer {
       }
       targets.push(targetFromHandle(resolution.handle, contact));
     } else if (top !== undefined) {
-      const cutoffMs = Date.now() - 365 * 86_400_000;
+      // 5-year window, not 1: the score already decays on recency, so the
+      // window only needs to be wide enough that long-quiet relationships
+      // (the ones most worth a relationship file) still rank at all. Bounded
+      // so a decade-deep chat.db doesn't get loaded wholesale into memory.
+      const cutoffMs = Date.now() - 5 * 365 * 86_400_000;
       const messages = await this.db.getMessagesInWindow(cutoffMs);
       const { leaderboard } = computeRelationshipLeaderboard(messages);
       for (const entry of leaderboard.slice(0, top)) {
         targets.push(targetFromHandle(entry.handle, entry.contact));
       }
       if (targets.length === 0) {
-        return toolError("No ranked relationships found in the last year.", { top });
+        return toolError("No ranked relationships found in the last 5 years.", { top });
       }
     }
 

@@ -252,6 +252,9 @@ function LeaderboardView({
   const theme = useTheme();
   const rows = result.leaderboard.slice(0, Math.max(height - 3, 5));
   if (rows.length === 0) return <NoData />;
+  // Raw scores are exp-decayed floats that collapse toward 0 for old data —
+  // display them relative to the leader (top = 100) so ranking stays legible.
+  const max = rows[0]?.score || 0;
   return (
     <Box flexDirection="column">
       {rows.map((r, i) => (
@@ -262,7 +265,8 @@ function LeaderboardView({
           </Text>
           <Text color={theme.info.label}>
             {r.total} msgs · {Math.round(r.reciprocity * 100)}% recip ·{" "}
-            {Math.round(r.daysSinceLast)}d ago · score {r.score}
+            {Math.round(r.daysSinceLast)}d ago · score{" "}
+            {max > 0 ? Math.round((r.score / max) * 100) : 0}
           </Text>
         </Box>
       ))}
