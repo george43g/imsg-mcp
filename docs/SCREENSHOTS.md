@@ -27,7 +27,31 @@ Press `Enter` on a highlighted message:
 
 ![Message drawer](screenshots/message-drawer.png)
 
-Shows full text, reply context, attachments (with size + mime), reactions, edit history. `o` opens the first attachment in Quick Look.
+Shows full text, reply context, attachments (with size + mime), reactions, edit history. With more than one attachment, `j`/`k` move the attachment cursor; `o` opens the selected attachment in Quick Look, `s` saves it to `~/Downloads`, `y` copies its path.
+
+### Filter conversations
+
+Press `/`:
+
+![Filter](screenshots/filter.png)
+
+Live-filters the sidebar by name, slug, or handle. `Enter` jumps the cursor to the first match; `Esc` cancels and restores the pre-filter position.
+
+### Compose to a new thread
+
+Press `N`:
+
+![Compose](screenshots/compose.png)
+
+Recipient autocomplete against your macOS contacts — type a name and pick a numbered match (each handle listed separately). `c` instead replies within the selected conversation.
+
+### Relationship leaderboard
+
+Open the command palette (`Ctrl-P`) → **Analytics: Relationship Leaderboard**:
+
+![Relationship leaderboard](screenshots/analytics-leaderboard.png)
+
+Ranks your relationships by a weighted score (message volume × reciprocity × recency decay), scored relative to the top relationship (100). Powers `init_human --top N`. `[`/`]` cycle the time window.
 
 ### Date-jump modal
 
@@ -54,6 +78,18 @@ Lists every installed compatible app (Messages, SMS, FaceTime, Signal, WhatsApp,
 ![Workflow GIF](screenshots/workflow-find-export.gif)
 
 The canonical workflow demoed end-to-end: launch the TUI, filter to a group, copy its slug, quit, paste into `imsg export`.
+
+### Visual select → export
+
+![Visual select + export GIF](screenshots/visual-select-export.gif)
+
+Press `V` to enter visual-select mode, extend the selection with `j`/`k`, then `e` to open the export modal (Tab cycles Markdown/CSV/JSON) or `y` to copy the selected messages to the clipboard.
+
+### Relationship leaderboard → scaffold humans files (CLI)
+
+![CLI humans GIF](screenshots/cli-humans.gif)
+
+`imsg humans top` ranks your relationships; `imsg humans init --top N` scaffolds a `humans/v1` relationship file for each of the top N (the agent writes the summaries — see the [humans skill](../skills/humans/SKILL.md)).
 
 ---
 
