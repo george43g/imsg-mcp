@@ -1137,6 +1137,16 @@ export class IMessageDB {
       result = this.getPreviousConversationSnippet(last);
     }
 
+    // When the last message carries no text at all — an UNSENT message (empty
+    // attributedBody + retract markers in message_summary_info), or any other
+    // tombstone — the same-sender/60s scan above bails immediately. Fall back
+    // to the most recent message in the chat that DOES have text, regardless of
+    // sender, so the preview stays useful (and never surfaces chat-properties
+    // noise). Messages.app similarly reverts the list preview after an unsend.
+    if (result == null) {
+      result = this.getLastTextfulSnippet(last);
+    }
+
     if (result == null) {
       result = pickConversationSnippet({
         summaryText: extractChatSummaryText(last.chatProperties) ?? null,
@@ -1145,6 +1155,43 @@ export class IMessageDB {
 
     this.cachedSnippets.set(last.lastMessageId, result);
     return result;
+  }
+
+  /**
+   * Most recent message in the chat (any sender) with real extractable text,
+   * looking back from the current last message. Unlike
+   * getPreviousConversationSnippet this does NOT stop at a sender change or a
+   * time gap — it exists for the "last message is a text-less tombstone"
+   * (unsent/retracted) case, where the useful preview is simply the previous
+   * real message.
+   */
+  private getLastTextfulSnippet(last: LastConversationRow): string | null {
+    const rows = this.raw
+      .prepare(`
+      SELECT m.text, m.attributedBody, m.ROWID
+      FROM ${Tables.MESSAGE} m
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON cmj.message_id = m.ROWID
+      WHERE cmj.chat_id = ?
+        AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
+        AND (m.date < ? OR (m.date = ? AND m.ROWID < ?))
+      ORDER BY m.date DESC, m.ROWID DESC
+      LIMIT 10
+    `)
+      .all(last.chatId, last.lastDate, last.lastDate, last.lastMessageId) as Array<{
+      text: string | null;
+      attributedBody: Buffer | null;
+      ROWID: number;
+    }>;
+
+    for (const row of rows) {
+      const snippet = pickConversationSnippet({
+        rawText: row.text,
+        parsedText: this.extractMessageText(row),
+      });
+      if (snippet && !isMetadataOnlySnippet(snippet)) return snippet;
+    }
+    return null;
   }
 
   private shouldFallbackToPreviousSnippet(snippet: string, last: LastConversationRow): boolean {

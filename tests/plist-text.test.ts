@@ -3,6 +3,7 @@ import {
   extractArchivedAttributedStringText,
   extractChatSummaryText,
   extractNullPaddedAsciiText,
+  isPlausibleHumanText,
 } from "../src/plist-text.js";
 
 const STAGE_SUMMARY_ARCHIVE = Buffer.from(
@@ -45,5 +46,31 @@ describe("chat summary plist parsing", () => {
     expect(extractChatSummaryText(STAGE_CHAT_SUMMARY)).toBe(
       "Stage 17 “Sanctuary Precinct” selling; land in Pakenham East from $355k.",
     );
+  });
+
+  it("does NOT scan raw bplist bytes when the structured summary is absent", () => {
+    // Real regression: an unsent-message chat's `properties` blob had a
+    // null-padded "#DWm" run and no chatSummaryDictionary. The old raw-byte
+    // fallback surfaced "#DWm" → the sidebar showed "DWm". Now: undefined.
+    const noSummary = Buffer.concat([
+      Buffer.from("bplist00somethingelse", "utf8"),
+      Buffer.from([0, 0x23, 0, 0x44, 0, 0x57, 0, 0x6d]), // null-padded "#DWm"
+      Buffer.from("moretokens", "utf8"),
+    ]);
+    expect(extractChatSummaryText(noSummary)).toBeUndefined();
+  });
+});
+
+describe("isPlausibleHumanText", () => {
+  it("rejects short decoded-bplist fragments", () => {
+    for (const junk of ["#DWm", "DWm", "-0Qdz", "(I_d~", "$aB2"]) {
+      expect(isPlausibleHumanText(junk), junk).toBe(false);
+    }
+  });
+
+  it("keeps genuine words and sentences (including short ones)", () => {
+    for (const real of ["Okay", "Lmao", "Yepp", "LOL", "hello there", "see you at 5", "Text"]) {
+      expect(isPlausibleHumanText(real), real).toBe(true);
+    }
   });
 });
