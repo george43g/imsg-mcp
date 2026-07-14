@@ -56,7 +56,7 @@ async function printToolResult(
 
 // ── Interactive console ────────────────────────────────────────────────
 
-function parseConsoleInput(line: string): { cmd: string; args: string[] } {
+export function parseConsoleInput(line: string): { cmd: string; args: string[] } {
   const parts: string[] = [];
   let current = "";
   let quote: string | null = null;
@@ -83,7 +83,7 @@ function parseConsoleInput(line: string): { cmd: string; args: string[] } {
   return { cmd: parts[0]?.toLowerCase() ?? "", args: parts.slice(1) };
 }
 
-async function runConsoleCommand(
+export async function runConsoleCommand(
   cmd: string,
   args: string[],
   client: LocalMcpClient,
@@ -259,14 +259,27 @@ async function runInteractiveConsole(): Promise<void> {
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-  const prompt = () =>
-    rl.question(color.cyan("imsg> "), async (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        prompt();
-        return;
-      }
+  // Event-driven line loop (not recursive rl.question): each command is async
+  // (an MCP round-trip), so lines are queued and processed one at a time. This
+  // is what makes piped/scripted input reliable — with recursive rl.question,
+  // EOF ("close") raced the in-flight await and killed the command before its
+  // output printed. Here EOF only exits AFTER the queue has drained.
+  const queue: string[] = [];
+  let processing = false;
+  let closed = false;
 
+  const finish = () => {
+    client.close();
+    process.exit(0);
+  };
+
+  const drain = async () => {
+    if (processing) return;
+    processing = true;
+    while (queue.length > 0) {
+      const line = queue.shift()!;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
       const { cmd, args } = parseConsoleInput(trimmed);
       try {
         await runConsoleCommand(cmd, args, client);
@@ -274,10 +287,25 @@ async function runInteractiveConsole(): Promise<void> {
         log(error instanceof Error ? error.message : String(error), "err");
       }
       console.log("");
-      prompt();
-    });
+    }
+    processing = false;
+    if (closed) finish();
+    else rl.prompt();
+  };
 
-  prompt();
+  rl.setPrompt(color.cyan("imsg> "));
+  rl.prompt();
+  rl.on("line", (line) => {
+    queue.push(line);
+    void drain();
+  });
+  // Ctrl-D / EOF (or a piped script running out of lines): exit once any
+  // in-flight command and the queue have drained. Without this the MCP server
+  // subprocess keeps the event loop alive and the console would hang.
+  rl.on("close", () => {
+    closed = true;
+    if (!processing && queue.length === 0) finish();
+  });
 
   installShutdownHandlers();
   registerCleanup(() => client.close());
