@@ -2004,9 +2004,16 @@ export class IMessageDB {
    * chat_analytics tool — bounded by date, not by per-chat limit. Reactions
    * are included (tapback analytics need them); hidden system items dropped.
    */
-  async getMessagesInWindow(cutoffMs: number, capPerWindow = 200_000): Promise<Message[]> {
+  async getMessagesInWindow(cutoffMs: number, capPerWindow = 80_000): Promise<Message[]> {
     const span = perf("getMessagesInWindow");
     const cutoffNanos = Math.floor((cutoffMs / 1000 - MAC_EPOCH_OFFSET) * NANOS_PER_SECOND);
+    // Fetch the most-recent `capPerWindow` messages in the window (DESC + LIMIT),
+    // then hand analytics the ASC slice they expect. Loading the OLDEST N (plain
+    // ASC LIMIT) both starved recency-weighted analytics and — at the old 200k
+    // cap — materialized ~200k parsed Message objects (~960MB RSS on a large
+    // chat.db), which added to the TUI baseline tripped the 1024MB watchdog kill
+    // when a user opened an "all"-range analytic. The lower cap keeps the peak
+    // bounded; the DESC window keeps a capped load meaningful.
     const sql = `
       SELECT m.ROWID, m.guid, m.text, m.attributedBody, m.date, m.date_read, m.date_delivered,
              m.is_read, m.is_delivered,
@@ -2023,10 +2030,10 @@ export class IMessageDB {
       LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
       LEFT JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
       WHERE m.date >= ?
-      ORDER BY m.date ASC
+      ORDER BY m.date DESC
       LIMIT ?
     `;
-    const rows = this.raw.prepare(sql).all(cutoffNanos, capPerWindow) as any[];
+    const rows = (this.raw.prepare(sql).all(cutoffNanos, capPerWindow) as any[]).reverse();
     const out: Message[] = [];
     for (const r of rows) {
       if (isHiddenSystemItem(r.item_type)) continue;
