@@ -380,6 +380,15 @@ export function App() {
       return;
     }
 
+    // Compose-to-new-thread modal: ComposeRecipientModal owns ALL input
+    // (recipient typing, digit match-select, Enter to advance, Esc to cancel).
+    // Ink fires every useInput handler, so without this early return the
+    // browse-mode keys below still fire — most dangerously `q` (quit) when a
+    // recipient name contains a "q", which silently killed the whole TUI.
+    if (state.mode === "compose-new") {
+      return;
+    }
+
     // Confirm mode
     if (state.mode === "confirm") {
       if (key.return) {
