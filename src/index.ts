@@ -1704,7 +1704,7 @@ export class IMessageMCPServer {
         lines.push(
           detectTranscriber()
             ? "Transcription produced no text."
-            : "No transcriber installed — `brew install hear` enables on-device transcription.",
+            : "No transcriber installed — `brew install yap` (macOS 26+) or `brew install sveinbjornt/hear/hear` enables on-device transcription.",
         );
       }
       lines.push(`Path: ${resolvedPath}`);

@@ -14,6 +14,7 @@ import {
   imageBlockFromFile,
   mediaMetadata,
   resetTranscriberCache,
+  TRANSCRIBERS,
   transcribeAudio,
   videoPosterFrame,
 } from "../src/media.js";
@@ -91,5 +92,14 @@ describe("transcriber detection", () => {
 
   it("transcribeAudio returns null for missing files", () => {
     expect(transcribeAudio(join(work, "missing.caf"))).toBeNull();
+  });
+
+  it("builds correct argv for each transcriber (subcommand / device-only flags)", () => {
+    const byName = Object.fromEntries(TRANSCRIBERS.map((t) => [t.name, t.args("/x.caf")]));
+    // yap needs its `transcribe` subcommand; bare `yap <file>` is invalid.
+    expect(byName.yap).toEqual(["transcribe", "/x.caf"]);
+    // hear must pass -d so recognition stays on-device (no upload to Apple).
+    expect(byName.hear).toContain("-d");
+    expect(byName["whisper-cli"]).toEqual(["-f", "/x.caf", "-np", "-nt"]);
   });
 });
