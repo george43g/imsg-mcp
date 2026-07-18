@@ -144,12 +144,7 @@ describe.skipIf(!READY)("CLI end-to-end (fixtures)", () => {
   });
 
   it("analytics --yaml emits a leading structural key", async () => {
-    const { code, stdout } = await runCli([
-      "analytics",
-      "messaging_streaks",
-      "1825",
-      "--yaml",
-    ]);
+    const { code, stdout } = await runCli(["analytics", "messaging_streaks", "1825", "--yaml"]);
     expect(code).toBe(0);
     expect(stdout).toMatch(/^type: messaging_streaks/m);
     expect(stdout).toContain("data:");
