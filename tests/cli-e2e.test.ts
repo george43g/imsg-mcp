@@ -80,16 +80,19 @@ describe.skipIf(!READY)("CLI end-to-end (fixtures)", () => {
     const { code, stdout } = await runCli(["list", "3"]);
     expect(code).toBe(0);
     expect(stdout).toMatch(/conversation\(s\)/);
-    // Fixture chats carry ~name~imsg~hash slugs.
-    expect(stdout).toMatch(/~imsg~[0-9a-f]{4}/);
+    // Each row leads with a bracketed handle — a `~imsg~hash` thread slug once
+    // the slug store is warm, or the raw chat_identifier on a cold slugs.db
+    // (single-shot CLI exits before the background slug sync persists).
+    expect(stdout).toMatch(/•\s*\[[^\]]+\]/);
   });
 
-  it("messages by slug returns a thread", async () => {
-    // Pull a real slug from `list` output, then fetch its messages.
+  it("messages by <token> returns a thread", async () => {
+    // Pull the first bracketed token from `list` (thread slug OR raw
+    // identifier — both are valid `imsg messages` targets) and fetch it.
     const list = await runCli(["list", "5"]);
-    const slug = list.stdout.match(/\[([a-z0-9-]+~imsg~[0-9a-f]{4})\]/)?.[1];
-    expect(slug, "no slug found in list output").toBeTruthy();
-    const { code, stdout } = await runCli(["messages", slug!, "5"]);
+    const token = list.stdout.match(/•\s*\[([^\]]+)\]/)?.[1];
+    expect(token, "no bracketed handle found in list output").toBeTruthy();
+    const { code, stdout } = await runCli(["messages", token!, "5"]);
     expect(code).toBe(0);
     expect(stdout).toMatch(/message\(s\)|No messages/);
   });
