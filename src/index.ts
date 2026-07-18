@@ -18,11 +18,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import {
+  type AnalyticType,
   computeRelationshipLeaderboard,
   dispatchAnalytic,
-  type RelationshipScore,
 } from "./analytics.js";
 import { lookupCache, storeCache } from "./analytics-cache.js";
+import { renderAnalyticText } from "./analytics-render.js";
 import {
   checkImessageAvailability,
   checkMessagesAvailable,
@@ -145,21 +146,13 @@ function round1(n: number): number {
 }
 
 /**
- * Human-readable text rendering for analytics whose data matters on the CLI.
- * Only relationship_leaderboard gets rows for now; other types keep their
- * JSON-only structured payloads.
+ * Human-readable text rendering for every analytic, shared with the CLI via
+ * src/analytics-render.ts so the agent (tool text) and a person (`imsg
+ * analytics …`) see the same summary.
  */
-function analyticTextSummary(type: string, data: unknown): string {
-  if (type !== "relationship_leaderboard") return "";
-  const rows = (data as { leaderboard?: RelationshipScore[] })?.leaderboard ?? [];
-  if (rows.length === 0) return "\n(no ranked relationships in window)";
-  const lines = rows
-    .slice(0, 20)
-    .map(
-      (r, i) =>
-        `${String(i + 1).padStart(2)}. ${sanitizeUserText(r.contact)}  —  ${r.total} msgs, ${Math.round(r.reciprocity * 100)}% reciprocity, last ${Math.round(r.daysSinceLast)}d ago (score ${r.score})`,
-    );
-  return `\n\n${lines.join("\n")}`;
+function analyticTextSummary(type: AnalyticType, data: unknown): string {
+  const rendered = renderAnalyticText(type, data);
+  return rendered ? `\n\n${rendered}` : "";
 }
 
 /** Format a millisecond duration as e.g. "1h 23m" or "5s". */

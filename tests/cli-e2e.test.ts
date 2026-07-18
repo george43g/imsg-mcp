@@ -119,6 +119,42 @@ describe.skipIf(!READY)("CLI end-to-end (fixtures)", () => {
     expect(stdout).toContain("get_messages");
   });
 
+  it("analytics <type> renders each implemented analytic", async () => {
+    // Wide window so the fixture's dated messages fall inside it.
+    const { code, stdout } = await runCli(["analytics", "relationship_leaderboard", "1825"]);
+    expect(code).toBe(0);
+    expect(stdout).toMatch(/Computed relationship_leaderboard|Cached relationship_leaderboard/);
+  });
+
+  it("analytics --json emits valid parseable JSON", async () => {
+    const { code, stdout } = await runCli([
+      "analytics",
+      "relationship_leaderboard",
+      "1825",
+      "--json",
+    ]);
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout);
+    expect(parsed.type).toBe("relationship_leaderboard");
+    expect(Array.isArray(parsed.data.leaderboard)).toBe(true);
+    // Handles must survive as strings, not be coerced to numbers.
+    if (parsed.data.leaderboard.length > 0) {
+      expect(typeof parsed.data.leaderboard[0].handle).toBe("string");
+    }
+  });
+
+  it("analytics --yaml emits a leading structural key", async () => {
+    const { code, stdout } = await runCli([
+      "analytics",
+      "messaging_streaks",
+      "1825",
+      "--yaml",
+    ]);
+    expect(code).toBe(0);
+    expect(stdout).toMatch(/^type: messaging_streaks/m);
+    expect(stdout).toContain("data:");
+  });
+
   it("an unknown subcommand exits non-zero", async () => {
     const { code } = await runCli(["definitely-not-a-command"]);
     expect(code).not.toBe(0);

@@ -139,6 +139,24 @@ describe("runConsoleCommand routing", () => {
     });
   });
 
+  it("analytics <type> routes to chat_analytics with the type's default window", async () => {
+    expect((await route("analytics messaging_streaks"))[0]).toEqual({
+      name: "chat_analytics",
+      args: { type: "messaging_streaks", windowDays: 365 },
+    });
+    // Explicit window overrides the default.
+    expect((await route("analytics daily_heatmap 30"))[0]).toEqual({
+      name: "chat_analytics",
+      args: { type: "daily_heatmap", windowDays: 30 },
+    });
+    // A trailing json/yaml token is a format, not a window.
+    expect((await route("analytics tapback_summary json"))[0]).toEqual({
+      name: "chat_analytics",
+      args: { type: "tapback_summary", windowDays: 365 },
+    });
+    await expect(route("analytics bogus_type")).rejects.toThrow(/Usage: analytics/);
+  });
+
   it("unknown command throws a helpful error", async () => {
     await expect(route("frobnicate")).rejects.toThrow();
   });

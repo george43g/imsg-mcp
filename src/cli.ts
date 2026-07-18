@@ -3,6 +3,8 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
+import { ANALYTIC_INFO, type AnalyticType, IMPLEMENTED_TYPES } from "./analytics.js";
+import { toYaml } from "./analytics-render.js";
 import { LocalMcpClient } from "./mcp-client.js";
 import { APP_VERSION } from "./meta.js";
 import { installShutdownHandlers, registerCleanup } from "./shutdown.js";
@@ -47,11 +49,26 @@ async function printToolResult(
   name: string,
   args: object,
   timeoutMs?: number,
+  format?: "pretty" | "json" | "yaml",
 ) {
   const result = await client.callTool(name, args, timeoutMs);
   const text = result.content?.[0]?.text ?? JSON.stringify(result, null, 2);
   if (result.isError) throw new Error(text);
+  if (format === "json" || format === "yaml") {
+    // Structured output for scripting. Prefer the tool's structuredContent
+    // (the machine-readable payload) over the human text block.
+    const payload = (result as { structuredContent?: unknown }).structuredContent ?? result;
+    console.log(format === "json" ? JSON.stringify(payload, null, 2) : toYaml(payload));
+    return;
+  }
   console.log(text);
+}
+
+/** Resolve a commander --json/--yaml option pair to a format. */
+function pickFormat(opts: { json?: boolean; yaml?: boolean }): "pretty" | "json" | "yaml" {
+  if (opts.json) return "json";
+  if (opts.yaml) return "yaml";
+  return "pretty";
 }
 
 // ── Interactive console ────────────────────────────────────────────────
@@ -189,6 +206,20 @@ export async function runConsoleCommand(
       }
       return;
     }
+    case "analytics":
+    case "stats": {
+      const type = args[0] as AnalyticType | undefined;
+      if (!type || !IMPLEMENTED_TYPES.includes(type)) {
+        throw new Error(`Usage: analytics <${IMPLEMENTED_TYPES.join("|")}> [windowDays]`);
+      }
+      // Trailing `json`/`yaml` token picks the output format in the console.
+      const fmtArg = args[args.length - 1];
+      const format = fmtArg === "json" ? "json" : fmtArg === "yaml" ? "yaml" : "pretty";
+      const windowDays =
+        args[1] && /^\d+$/.test(args[1]) ? Number(args[1]) : ANALYTIC_INFO[type].defaultWindowDays;
+      await printToolResult(client, "chat_analytics", { type, windowDays }, undefined, format);
+      return;
+    }
     case "logs":
       await printToolResult(client, "get_logs", args[0] ? { tail: Number(args[0]) } : {});
       return;
@@ -238,6 +269,8 @@ Available commands:
   send <target> <msg>  Send a message
   contacts [verb]      Contacts: list [n] [offset] | search <q> [n] | resolve <handle> | show <handle-or-id>
   humans <verb>        Relationship files: init <contact|slug> | init top [n] | top [days]
+  analytics <type> [days] [json|yaml]
+                       Analytics: ${IMPLEMENTED_TYPES.join(" | ")}
   logs [tail]          Show server debug logs
   last-error           Show last send failure
   tools                List available MCP tools
@@ -652,14 +685,48 @@ humansCommand
   .command("top")
   .description("Show the relationship leaderboard (volume × reciprocity × recency, last 5 years)")
   .argument("[windowDays]", "Days of history to rank", "1825")
-  .action(async (windowDays: string) => {
+  .option("--json", "Output structured JSON")
+  .option("--yaml", "Output structured YAML")
+  .action(async (windowDays: string, opts: { json?: boolean; yaml?: boolean }) => {
     await withClient((c) =>
-      printToolResult(c, "chat_analytics", {
-        type: "relationship_leaderboard",
-        windowDays: Number(windowDays),
-      }),
+      printToolResult(
+        c,
+        "chat_analytics",
+        { type: "relationship_leaderboard", windowDays: Number(windowDays) },
+        undefined,
+        pickFormat(opts),
+      ),
     );
   });
+
+// `imsg analytics <type> [windowDays] [--json|--yaml]` — every implemented
+// analytic, not just the leaderboard. Each type gets its own subcommand so
+// `--help` and shell completion enumerate them.
+const analyticsCommand = program
+  .command("analytics")
+  .alias("stats")
+  .description("Run chat analytics (streaks, response times, heatmap, tapbacks, wrapped, …)");
+
+for (const type of IMPLEMENTED_TYPES) {
+  const info = ANALYTIC_INFO[type];
+  analyticsCommand
+    .command(type)
+    .description(info.description)
+    .argument("[windowDays]", "Days of history to analyze", String(info.defaultWindowDays))
+    .option("--json", "Output structured JSON")
+    .option("--yaml", "Output structured YAML")
+    .action(async (windowDays: string, opts: { json?: boolean; yaml?: boolean }) => {
+      await withClient((c) =>
+        printToolResult(
+          c,
+          "chat_analytics",
+          { type, windowDays: Number(windowDays) },
+          undefined,
+          pickFormat(opts),
+        ),
+      );
+    });
+}
 
 program
   .command("logs")
