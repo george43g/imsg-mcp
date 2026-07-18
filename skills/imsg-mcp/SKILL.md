@@ -46,6 +46,27 @@ Stable, human-readable IDs for conversations: `{name}~{service}~{4-hex}` (e.g. `
 
 Production MCP tools: `search_contacts` (name/phone/email substring), `list_contacts` (paginated), `get_contact` (all handles **+ per-handle `threads[].threadSlug`** — chain into `send_message`/`get_messages`), `resolve_handle` (handle → name). CLI: `imsg contacts <list|search|resolve|show>`.
 
+### Resolving a mentioned name → thread slug (canonical flow)
+
+When the user says something like **"check Selena's messages"** or "text mum",
+resolve the name to a `threadSlug` with this exact two-step flow — don't page
+through `list_conversations` hunting for the name:
+
+1. `search_contacts("selena")` → pick the matching contact. Multiple matches
+   come back as numbered candidates; if it's ambiguous, ask the user or use the
+   `contact:N` selector.
+2. `get_contact({handle})` (or `{id}`) → returns `threads: [{handle,
+   threadSlug}]` (already merged across phone/email/SMS-iMessage legs) **and**
+   `humansFile`. Use that `threadSlug` for `get_messages` / `send_message` /
+   `wait_for_reply` / `export_messages`.
+
+If the name isn't in Contacts (a nickname, or an unsaved number), fall back to
+`list_conversations` (its rows carry resolved `displayName` + `threadSlug`) and,
+for "who mentioned X" style questions, `search_messages` (content search).
+Contact-name search (`search_contacts`) and message-content search
+(`search_messages`) are separate — use the former to reach a person, the latter
+to find what was said.
+
 ## Binaries
 
 | Binary | Purpose |
