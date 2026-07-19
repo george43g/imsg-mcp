@@ -140,6 +140,13 @@ export async function runConsoleCommand(
         limit: Number(args[1] ?? 20),
       });
       return;
+    case "resolve":
+      if (!args[0]) throw new Error("Usage: resolve <name-or-phrase> [limit]");
+      await printToolResult(client, "resolve_conversation", {
+        query: args[0],
+        limit: Number(args[1] ?? 10),
+      });
+      return;
     case "wait":
       if (!args[0]) throw new Error("Usage: wait <chat> [timeoutSeconds]");
       await printToolResult(
@@ -265,6 +272,7 @@ Available commands:
   messages [chat] [n]  Show recent messages
   unread [n]           Show unread messages
   search <query> [n]   Search messages
+  resolve <name> [n]   Resolve a name/phrase to ranked conversations
   wait <chat> [secs]   Wait for a reply (default 60s)
   send <target> <msg>  Send a message
   contacts [verb]      Contacts: list [n] [offset] | search <q> [n] | resolve <handle> | show <handle-or-id>
@@ -576,6 +584,25 @@ program
   .argument("[limit]", "Number of results", "20")
   .action(async (query: string, limit: string) => {
     await withClient((c) => printToolResult(c, "search_messages", { query, limit: Number(limit) }));
+  });
+
+program
+  .command("resolve")
+  .description("Resolve a free-form name/phrase to ranked conversations (contacts + threads)")
+  .argument("<query>", 'Name or phrase, e.g. "Selena"')
+  .argument("[limit]", "Max ranked matches", "10")
+  .option("--json", "Output structured JSON")
+  .option("--yaml", "Output structured YAML")
+  .action(async (query: string, limit: string, opts: { json?: boolean; yaml?: boolean }) => {
+    await withClient((c) =>
+      printToolResult(
+        c,
+        "resolve_conversation",
+        { query, limit: Number(limit) },
+        undefined,
+        pickFormat(opts),
+      ),
+    );
   });
 
 program

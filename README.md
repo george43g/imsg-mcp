@@ -73,7 +73,7 @@ Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 ## MCP tools
 
 <details>
-<summary><b>16 tools shipped (click to expand)</b></summary>
+<summary><b>17 tools shipped (click to expand)</b></summary>
 
 | Tool | Purpose |
 |------|---------|
@@ -90,12 +90,13 @@ Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 | `chat_analytics` | Pre-aggregated stats (heatmaps, leaderboards, etc). |
 | `list_contacts` / `search_contacts` | Browse/search contacts (name, phone, email). |
 | `get_contact` | One contact with all handles **+ the thread slug per handle**. |
+| `resolve_conversation` | Free-form name/phrase → ranked threads (contacts + thread names + message content) in one call. |
 | `resolve_handle` | Phone/email → contact name. |
 | `init_human` | Scaffold a [humans/v1 relationship file](skills/humans/SKILL.md) for a contact or your top N relationships. |
 
 </details>
 
-Contacts are also on the CLI: `imsg contacts search <query>`, `imsg contacts show <handle-or-id>` (handles → thread slugs), `imsg contacts resolve <handle>`, `imsg contacts list`.
+Contacts are also on the CLI: `imsg contacts search <query>`, `imsg contacts show <handle-or-id>` (handles → thread slugs), `imsg contacts resolve <handle>`, `imsg contacts list`. Turn a name into a thread in one shot with `imsg resolve "selena"` (add `--json`/`--yaml` to script it).
 
 Full reference (CLI subcommands + MCP tools + every flag): [**docs/TOOLS.md**](docs/TOOLS.md).
 

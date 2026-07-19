@@ -67,6 +67,7 @@ import {
   parseAssociatedMessageGuid as schemaParseAssociatedMessageGuid,
   Tables,
 } from "./db-schema.js";
+import { fuzzyScore } from "./fuzzy.js";
 import { perf } from "./logger.js";
 import { extractChatSummaryText, isUnsentMessage } from "./plist-text.js";
 import { type SlugRecord, SlugStore } from "./slug-store.js";
@@ -77,6 +78,7 @@ import type {
   Message,
   Reaction,
   ReplyContext,
+  ResolvedConversation,
   RichContentType,
   TapbackType,
 } from "./types.js";
@@ -1107,6 +1109,108 @@ export class IMessageDB {
       returned: messages.length,
     });
     return messages;
+  }
+
+  /**
+   * Resolve a free-form query ("Selena", "the plumber", "mum") to ranked
+   * conversations. Fuses three signals so an agent lands the right thread in
+   * one call instead of chaining search_contacts → get_contact:
+   *   1. contacts  — authoritative names from the Address Book (strongest)
+   *   2. thread    — recent-conversation display names / group names
+   *   3. message   — conversations whose message text matches (weakest)
+   * Deduped per thread (slug), keeping the strongest signal, sorted by score
+   * then recency.
+   */
+  async resolveConversation(query: string, limit = 10): Promise<ResolvedConversation[]> {
+    const q = query.trim();
+    if (!q) return [];
+    const MIN_SCORE = 0.4;
+    const PRIORITY: Record<ResolvedConversation["matchType"], number> = {
+      contact: 3,
+      thread: 2,
+      message: 1,
+    };
+
+    const convs = await this.listConversations(200);
+    const bySlug = new Map<string, Conversation>();
+    const byIdentifier = new Map<string, Conversation>();
+    for (const c of convs) {
+      bySlug.set(c.threadSlug, c);
+      byIdentifier.set(c.chatIdentifier, c);
+      for (const p of c.participants) if (!byIdentifier.has(p)) byIdentifier.set(p, c);
+    }
+
+    const results = new Map<string, ResolvedConversation>();
+    const isBetter = (a: ResolvedConversation, b: ResolvedConversation) =>
+      a.score !== b.score ? a.score > b.score : PRIORITY[a.matchType] > PRIORITY[b.matchType];
+    const consider = (key: string, cand: ResolvedConversation) => {
+      const prev = results.get(key);
+      if (!prev || isBetter(cand, prev)) results.set(key, cand);
+    };
+
+    // 1. Thread-name matches (display name or, for un-named chats, identifier).
+    for (const c of convs) {
+      const name = c.displayName ?? c.chatIdentifier;
+      const score = fuzzyScore(q, name);
+      if (score >= MIN_SCORE) {
+        consider(c.threadSlug, {
+          name,
+          threadSlug: c.threadSlug,
+          chatIdentifier: c.chatIdentifier,
+          lastMessageDate: c.lastMessageDate,
+          matchType: "thread",
+          score,
+        });
+      }
+    }
+
+    // 2. Contact matches — authoritative names resolved to a thread via handle.
+    for (const contact of this.contacts.searchContacts(q).slice(0, 25)) {
+      let matched: Conversation | null = null;
+      for (const handle of [...contact.phoneNumbers, ...contact.emails]) {
+        const conv = await this.findChatByHandle(handle);
+        if (conv?.threadSlug) {
+          // Prefer the enriched conversation (carries lastMessageDate).
+          matched = bySlug.get(conv.threadSlug) ?? conv;
+          break;
+        }
+      }
+      if (!matched) continue;
+      consider(matched.threadSlug, {
+        name: contact.displayName,
+        threadSlug: matched.threadSlug,
+        chatIdentifier: matched.chatIdentifier,
+        lastMessageDate: matched.lastMessageDate ?? null,
+        matchType: "contact",
+        // Contacts are a strong signal; floor the fuzzy score so an exact
+        // Address-Book hit outranks an incidental thread-name substring.
+        score: Math.max(fuzzyScore(q, contact.displayName), 0.9),
+      });
+    }
+
+    // 3. Message-content matches — only surface threads not already found by a
+    //    stronger signal, so a name query stays name-first.
+    const msgs = await this.searchMessages(q, 20);
+    for (const m of msgs) {
+      const slug = this.getSlugForChatIdentifier(m.chatId) ?? m.chatId;
+      if (results.has(slug)) continue;
+      const conv = bySlug.get(slug) ?? byIdentifier.get(m.chatId);
+      consider(slug, {
+        name: conv?.displayName ?? m.displayName ?? m.chatId,
+        threadSlug: conv?.threadSlug ?? (slug.includes("~") ? slug : null),
+        chatIdentifier: conv?.chatIdentifier ?? m.chatId,
+        lastMessageDate: conv?.lastMessageDate ?? m.date,
+        matchType: "message",
+        score: 0.5,
+      });
+    }
+
+    return [...results.values()]
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return (b.lastMessageDate?.getTime() ?? 0) - (a.lastMessageDate?.getTime() ?? 0);
+      })
+      .slice(0, limit);
   }
 
   /**

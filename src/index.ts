@@ -73,6 +73,7 @@ import {
   isDevMode,
   ListContactsSchema,
   ListConversationsSchema,
+  ResolveConversationSchema,
   ResolveHandleSchema,
   resolveLimit,
   SearchAttachmentsSchema,
@@ -549,6 +550,8 @@ export class IMessageMCPServer {
         return await this.handleSearchContacts(args);
       case "get_contact":
         return await this.handleGetContact(args);
+      case "resolve_conversation":
+        return await this.handleResolveConversation(args);
       case "resolve_handle":
         return await this.handleResolveHandle(args);
       case "check_imessage_availability":
@@ -1516,6 +1519,54 @@ export class IMessageMCPServer {
         humansFile,
         humansGuidance: humansHint?.guidance ?? HUMANS_INIT_HINT,
       },
+    );
+  }
+
+  private async handleResolveConversation(args: unknown) {
+    const { query, limit } = ResolveConversationSchema.parse(args);
+    const HARD_CAP = 50;
+    const resolvedLimit = Math.min(resolveLimit(limit) || HARD_CAP, HARD_CAP);
+    const matches = await this.db.resolveConversation(query, resolvedLimit);
+
+    const structured = {
+      query,
+      matches: matches.map((m) => ({
+        name: sanitizeUserText(m.name),
+        threadSlug: m.threadSlug,
+        chatIdentifier: m.chatIdentifier,
+        lastMessageDate: m.lastMessageDate?.toISOString() ?? null,
+        matchType: m.matchType,
+        score: Math.round(m.score * 1000) / 1000,
+      })),
+      count: matches.length,
+    };
+
+    if (matches.length === 0) {
+      return toolText(
+        `No conversation matches "${query}". Try search_contacts for a broader name search.`,
+        structured,
+      );
+    }
+
+    const TYPE_LABEL: Record<string, string> = {
+      contact: "contact",
+      thread: "thread",
+      message: "message match",
+    };
+    const lines = matches
+      .map((m, i) => {
+        const when = m.lastMessageDate ? ` · last ${relativeDate(m.lastMessageDate)}` : "";
+        const slug = m.threadSlug ? ` [${m.threadSlug}]` : ` (${m.chatIdentifier})`;
+        return `[${i + 1}] ${sanitizeUserText(m.name)}${slug} — ${TYPE_LABEL[m.matchType]}${when}`;
+      })
+      .join("\n");
+    const top = matches[0];
+    const hint = top.threadSlug
+      ? `\n\nBest match: send with threadSlug "${top.threadSlug}", or read with get_messages chatIdentifier "${top.chatIdentifier}".`
+      : `\n\nBest match: read with get_messages chatIdentifier "${top.chatIdentifier}".`;
+    return toolText(
+      `Resolved "${query}" to ${matches.length} conversation(s):\n\n${lines}${hint}`,
+      structured,
     );
   }
 

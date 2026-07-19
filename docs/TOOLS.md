@@ -21,6 +21,7 @@ imsg <subcommand> [args] [--flags]
 | `imsg messages [chat] [limit]` | Recent messages from a chat. |
 | `imsg unread [limit]` | All unread across chats. |
 | `imsg search <query> [limit]` | Search history. |
+| `imsg resolve <name> [limit] [--json\|--yaml]` | Resolve a free-form name/phrase to ranked conversations (contacts + thread names + message content). |
 | `imsg wait <chat> [timeout]` | Block until a new reply arrives. |
 | `imsg send <target> <message>` | Send via Messages.app. |
 | **`imsg export <slug-or-handle>`** | **Stream a conversation to disk (md/csv/json/ndjson) + optional attachments.** See flags below. |
@@ -109,11 +110,12 @@ Output is pretty text with color by default; pass `--json` or `--yaml` for machi
 | `list_contacts` | — | `limit` (default 20, internal safety cap 5000), `offset` for paging |
 | `search_contacts` | `query` | `limit` (default 20, `0`=unlimited capped at 1000) |
 | `get_contact` | `handle` or `id` | Includes `threads: [{handle, threadSlug}]` — each handle's conversation slug |
+| `resolve_conversation` | `query` | `limit` (default 10, cap 50). Ranked `[{name, threadSlug, chatIdentifier, lastMessageDate, matchType, score}]` fusing contacts + thread names + message content |
 | `resolve_handle` | `handle` | — |
 
 `contact:N` selector: when a search has multiple matches, the result lists numbered candidates. Subsequent tool calls can pass `contact:1` / `contact:2` / etc. (process-wide LRU; resets on server restart).
 
-**Typical agent workflow:** `search_contacts "alex"` → pick a match → `get_contact` (returns every phone/email **and the thread slug for each**) → `send_message {threadSlug}` or `get_messages`/`export_messages` with the handle. The same flow is available on the CLI: `imsg contacts search alex`, `imsg contacts show <handle-or-id>`, `imsg contacts resolve <handle>`, `imsg contacts list [limit] [offset]`.
+**Typical agent workflow:** for a free-form name ("check Selena's messages"), `resolve_conversation "selena"` gets you a ranked thread list in one call — use the top match's `threadSlug`/`chatIdentifier` directly. When you need the full contact record or a disambiguation menu, fall back to `search_contacts "alex"` → pick a match → `get_contact` (returns every phone/email **and the thread slug for each**) → `send_message {threadSlug}` or `get_messages`/`export_messages`. The same flow is on the CLI: `imsg resolve "selena"`, `imsg contacts search alex`, `imsg contacts show <handle-or-id>`, `imsg contacts resolve <handle>`, `imsg contacts list [limit] [offset]`.
 
 ### Diagnostics
 

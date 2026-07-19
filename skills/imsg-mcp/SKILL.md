@@ -49,8 +49,15 @@ Production MCP tools: `search_contacts` (name/phone/email substring), `list_cont
 ### Resolving a mentioned name → thread slug (canonical flow)
 
 When the user says something like **"check Selena's messages"** or "text mum",
-resolve the name to a `threadSlug` with this exact two-step flow — don't page
-through `list_conversations` hunting for the name:
+**reach for `resolve_conversation("selena")` first** — one call that fuses
+contacts + recent-thread names + message content and returns ranked
+`[{name, threadSlug, chatIdentifier, lastMessageDate, matchType, score}]`
+(strongest first). Use the top match's `threadSlug` for `send_message` /
+`wait_for_reply` / `export_messages`, or `chatIdentifier` for `get_messages`.
+CLI: `imsg resolve "selena"` (`--json`/`--yaml` to script it).
+
+If you need the full contact record (all handles, `humansFile`) or a
+disambiguation menu, the underlying two-step flow still works:
 
 1. `search_contacts("selena")` → pick the matching contact. Multiple matches
    come back as numbered candidates; if it's ambiguous, ask the user or use the
@@ -60,12 +67,10 @@ through `list_conversations` hunting for the name:
    `humansFile`. Use that `threadSlug` for `get_messages` / `send_message` /
    `wait_for_reply` / `export_messages`.
 
-If the name isn't in Contacts (a nickname, or an unsaved number), fall back to
-`list_conversations` (its rows carry resolved `displayName` + `threadSlug`) and,
-for "who mentioned X" style questions, `search_messages` (content search).
-Contact-name search (`search_contacts`) and message-content search
-(`search_messages`) are separate — use the former to reach a person, the latter
-to find what was said.
+`resolve_conversation` already blends the fallbacks — `list_conversations` rows
+(resolved `displayName` + `threadSlug`) for unsaved numbers/nicknames, and
+`search_messages` (content) for "who mentioned X". Reach for those individually
+only when you want that one signal in isolation.
 
 ## Binaries
 
