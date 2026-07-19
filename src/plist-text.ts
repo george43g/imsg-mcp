@@ -8,11 +8,21 @@ function normalizeText(value: string | undefined): string | undefined {
 /**
  * Heuristic output must look like human text: mostly word characters and at
  * least one two-letter run. Binary-plist structural bytes routinely form
- * short printable runs ("(I_d~") that leaked into sidebar snippets.
+ * short printable runs ("(I_d~", "DWm") that leaked into sidebar snippets.
+ * Exported so every plist-derived snippet path can share the same gate.
  */
-function isPlausibleHumanText(s: string): boolean {
+export function isPlausibleHumanText(s: string): boolean {
   const wordish = (s.match(/[\p{L}\p{N}\s]/gu) ?? []).length;
-  return wordish / s.length >= 0.7 && /\p{L}{2}/u.test(s);
+  if (wordish / s.length < 0.7 || !/\p{L}{2}/u.test(s)) return false;
+  // Single-token candidates (no whitespace) are the leak-prone case: a decoded
+  // bplist fragment like "#DWm" or "-0Qdz" survives the ratio check but isn't a
+  // word. A genuine one-word snippet is clean-cased — Title/lower/UPPER/digits,
+  // nothing weird mid-word — so require that shape once punctuation is stripped.
+  if (!/\s/.test(s.trim())) {
+    const core = s.replace(/^[^\p{L}\p{N}]+/u, "");
+    if (!/^(\p{Lu}?\p{Ll}+|\p{Lu}+|\p{N}+)$/u.test(core)) return false;
+  }
+  return true;
 }
 
 export function extractNullPaddedAsciiText(blob: Buffer | null): string | undefined {
@@ -88,8 +98,14 @@ export function extractChatSummaryText(blob: Buffer | null): string | undefined 
       return extractArchivedAttributedStringText(chatSummary);
     }
   } catch {
-    // Fall back to heuristic extraction below.
+    // No structured chatSummary — fall through to undefined.
   }
 
-  return extractNullPaddedAsciiText(blob);
+  // Intentionally NO raw-byte fallback here. A chat's `properties` bplist is
+  // dense with base64/UUID/token bytes; scanning it for null-padded ASCII
+  // reliably leaked short fragments ("#DWm" → "DWm") into sidebar snippets
+  // whenever the real chatSummary was absent (the common case). The structured
+  // field above is the only trustworthy source; when it's missing, callers
+  // fall back to the previous real message instead.
+  return undefined;
 }

@@ -146,13 +146,16 @@ export function App() {
       selected.chatIdentifier,
       state.messageOldestLoadedId,
     );
-    if (olderMsgs.length === 0) {
-      // Chat history exhausted — keep flag clear, mark id at -1 sentinel so we
-      // don't keep retrying on every cursor move at the top.
+    const newOldestId = minMessageId(olderMsgs) ?? -1;
+    // Exhausted when the batch is empty OR it fails to reach further back than
+    // the cursor we asked before (a non-empty batch that fully dedups, or a
+    // beforeMessageId that didn't advance). Without the second guard the -1
+    // sentinel never trips, the near-top effect keeps re-firing, and the whole
+    // message list re-renders in a tight loop — a runaway-heap footgun.
+    if (olderMsgs.length === 0 || newOldestId < 0 || newOldestId >= state.messageOldestLoadedId) {
       dispatch({ type: "PREPEND_MESSAGES", data: [], oldestId: -1 });
       return;
     }
-    const newOldestId = minMessageId(olderMsgs) ?? -1;
     dispatch({ type: "PREPEND_MESSAGES", data: olderMsgs, oldestId: newOldestId });
   }, [imsg, selected, state.messageLoadingOlder, state.messageOldestLoadedId]);
 
@@ -377,6 +380,15 @@ export function App() {
       } else if (key.return && state.composeText.trim()) {
         dispatch({ type: "CONFIRM_SEND" });
       }
+      return;
+    }
+
+    // Compose-to-new-thread modal: ComposeRecipientModal owns ALL input
+    // (recipient typing, digit match-select, Enter to advance, Esc to cancel).
+    // Ink fires every useInput handler, so without this early return the
+    // browse-mode keys below still fire — most dangerously `q` (quit) when a
+    // recipient name contains a "q", which silently killed the whole TUI.
+    if (state.mode === "compose-new") {
       return;
     }
 

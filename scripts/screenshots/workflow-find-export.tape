@@ -13,9 +13,10 @@ Set TypingSpeed 60ms
 Set Framerate 24
 
 Hide
-Type "IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
+Type "mkdir -p /tmp/imsg-demo && HOME=/tmp/imsg-demo IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
 Enter
-Sleep 2s
+Wait+Screen@15s /Conversations/
+Sleep 1s
 Show
 
 # Open the filter

@@ -1,0 +1,33 @@
+# Compose — `N` opens the new-message modal with recipient autocomplete
+# against macOS contacts (`c` replies to the selected conversation).
+# Run: vhs scripts/screenshots/compose.tape
+
+Output docs/screenshots/compose.png
+
+Set FontSize 13
+Set FontFamily "JetBrains Mono"
+Set Width 1400
+Set Height 800
+Set Padding 5
+Set TypingSpeed 80ms
+
+Hide
+Type "mkdir -p /tmp/imsg-demo && HOME=/tmp/imsg-demo IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
+Enter
+Wait+Screen@15s /Conversations/
+Sleep 1s
+Show
+
+Type "N"
+Sleep 800ms
+Type "quinn"
+Sleep 1500ms
+
+Screenshot docs/screenshots/compose.png
+
+Escape
+Sleep 200ms
+Escape
+Sleep 200ms
+Type "q"
+Sleep 200ms

@@ -129,4 +129,51 @@ describe.skipIf(!haveFixture)("getMessagesInWindow includes reaction context", (
       await db.close();
     }
   });
+
+  it("returns ASC by date and a capped load keeps the MOST RECENT window", async () => {
+    // Insert 6 messages at strictly increasing dates, then cap to 3.
+    const sqlite = new Database(dbPath);
+    const chatRow = sqlite.prepare("SELECT chat_id FROM chat_message_join LIMIT 1").get() as
+      | { chat_id: number }
+      | undefined;
+    const base = 900_000_000_000_000_000; // far future ns so these sort last
+    for (let i = 0; i < 6; i++) {
+      const guid = `ordertest-${i}`;
+      const date = base + i * 1_000_000_000;
+      sqlite
+        .prepare(`
+          INSERT INTO message (guid, text, handle_id, date, is_from_me, is_read,
+            is_delivered, service, item_type, associated_message_type, cache_has_attachments)
+          VALUES (?, ?, NULL, ?, 0, 1, 1, 'iMessage', 0, 0, 0)
+        `)
+        .run(guid, `msg ${i}`, date);
+      const rid = Number(
+        (sqlite.prepare("SELECT last_insert_rowid() AS r").get() as { r: number }).r,
+      );
+      if (chatRow) {
+        sqlite
+          .prepare(
+            "INSERT INTO chat_message_join (chat_id, message_id, message_date) VALUES (?, ?, ?)",
+          )
+          .run(chatRow.chat_id, rid, date);
+      }
+    }
+    sqlite.close();
+
+    const db = new IMessageDB(dbPath, undefined, slugsPath);
+    try {
+      // Cap to 3 over a window that starts just before our 6 messages.
+      const cutoffMs = (base / 1_000_000_000 + 978_307_200) * 1000 - 60_000;
+      const msgs = await db.getMessagesInWindow(cutoffMs, 3);
+      const ours = msgs.filter((m) => m.guid.startsWith("ordertest-"));
+      // Cap keeps the most recent 3 (indices 3,4,5), returned oldest→newest.
+      expect(ours.map((m) => m.guid)).toEqual(["ordertest-3", "ordertest-4", "ordertest-5"]);
+      // Global ordering is ascending by date.
+      for (let i = 1; i < msgs.length; i++) {
+        expect(msgs[i].date.getTime()).toBeGreaterThanOrEqual(msgs[i - 1].date.getTime());
+      }
+    } finally {
+      await db.close();
+    }
+  });
 });

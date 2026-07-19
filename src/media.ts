@@ -163,13 +163,17 @@ export interface Transcriber {
   args: (path: string) => string[];
 }
 
-const TRANSCRIBERS: Transcriber[] = [
-  // sveinbjornt/hear — on-device Apple Speech (macOS 10.15+).
-  { name: "hear", args: (p) => ["-i", p] },
-  // finnvoor/yap — SpeechAnalyzer (macOS 26+).
-  { name: "yap", args: (p) => [p] },
-  // whisper.cpp CLI.
+export const TRANSCRIBERS: Transcriber[] = [
+  // finnvoor/yap — Apple SpeechAnalyzer (macOS 26+), fully on-device. Needs the
+  // `transcribe` subcommand; `yap <file>` alone is not a valid invocation.
+  // Preferred first: fastest and highest quality where available.
+  { name: "yap", args: (p) => ["transcribe", p] },
+  // whisper.cpp CLI — fully offline, no Apple/cloud involvement.
   { name: "whisper-cli", args: (p) => ["-f", p, "-np", "-nt"] },
+  // sveinbjornt/hear — macOS Speech framework. `-d` forces DEVICE-ONLY
+  // recognition; without it hear may send the audio to Apple's servers, which
+  // is wrong for a privacy-focused tool reading the user's private voice notes.
+  { name: "hear", args: (p) => ["-d", "-i", p] },
 ];
 
 let cachedTranscriber: Transcriber | null | undefined;

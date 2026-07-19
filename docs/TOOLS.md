@@ -24,6 +24,8 @@ imsg <subcommand> [args] [--flags]
 | `imsg wait <chat> [timeout]` | Block until a new reply arrives. |
 | `imsg send <target> <message>` | Send via Messages.app. |
 | **`imsg export <slug-or-handle>`** | **Stream a conversation to disk (md/csv/json/ndjson) + optional attachments.** See flags below. |
+| **`imsg analytics <type> [windowDays] [--json\|--yaml]`** | **Run any of the 7 analytics** (see below). Pretty text by default; `--json`/`--yaml` for scripting. Aliased as `imsg stats`. |
+| `imsg humans top [windowDays] [--json\|--yaml]` | Relationship leaderboard (also `imsg analytics relationship_leaderboard`). |
 | `imsg logs [tail]` | Server debug logs. |
 | `imsg last-error` | Detail on the most recent send failure. |
 | `imsg tools` | List MCP tools exposed by the local server. |
@@ -44,6 +46,24 @@ imsg export <slug-or-handle>
 ```
 
 `<slug-or-handle>` accepts a `threadSlug` (from `imsg tui` `y` or `list_conversations`), a phone number, an email, or a raw `chat_identifier`.
+
+### `imsg analytics` types
+
+```
+imsg analytics <type> [windowDays] [--json|--yaml]
+```
+
+| Type | What it shows | Default window |
+|---|---|---|
+| `messaging_streaks` | Longest & current daily-message streaks per contact | 365d |
+| `double_texts` | Consecutive messages sent without a reply | 90d |
+| `response_time_stats` | Reply latency per contact (median, p95, mean) | 90d |
+| `daily_heatmap` | 7×24 activity grid (weekday × hour), ASCII-rendered | 90d |
+| `tapback_summary` | Tapback reactions sent per contact | 365d |
+| `year_in_review_wrapped` | Wrapped summary: top contacts, peak day, totals (pinned 365d) | 365d |
+| `relationship_leaderboard` | Top relationships by volume × reciprocity × recency | 1825d |
+
+Output is pretty text with color by default; pass `--json` or `--yaml` for machine-readable output (handles/phone numbers stay strings). Results are cached per `(type, window, DB state)`, so repeat calls are instant until a new message arrives. The same set is available interactively: `imsg cli` → `analytics <type> [days] [json|yaml]`, and to agents via the `chat_analytics` MCP tool.
 
 ---
 

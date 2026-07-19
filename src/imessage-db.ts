@@ -832,7 +832,11 @@ export class IMessageDB {
     const placeholders = chats.map(() => "?").join(",");
     const row = this.raw
       .prepare(
-        `SELECT COUNT(*) as count, MIN(m.date) as first, MAX(m.date) as last
+        // COUNT(DISTINCT m.ROWID): a single message is often joined to more
+        // than one leg of a merged identity (Messages.app links it into both
+        // the iMessage and SMS chat rows). Plain COUNT(*) counted it once per
+        // leg and inflated the humans-file stats (e.g. +727 for one contact).
+        `SELECT COUNT(DISTINCT m.ROWID) as count, MIN(m.date) as first, MAX(m.date) as last
          FROM ${Tables.MESSAGE} m
          JOIN ${Tables.CHAT_MESSAGE_JOIN} j ON j.message_id = m.ROWID
          WHERE j.chat_id IN (${placeholders})
@@ -1137,6 +1141,16 @@ export class IMessageDB {
       result = this.getPreviousConversationSnippet(last);
     }
 
+    // When the last message carries no text at all — an UNSENT message (empty
+    // attributedBody + retract markers in message_summary_info), or any other
+    // tombstone — the same-sender/60s scan above bails immediately. Fall back
+    // to the most recent message in the chat that DOES have text, regardless of
+    // sender, so the preview stays useful (and never surfaces chat-properties
+    // noise). Messages.app similarly reverts the list preview after an unsend.
+    if (result == null) {
+      result = this.getLastTextfulSnippet(last);
+    }
+
     if (result == null) {
       result = pickConversationSnippet({
         summaryText: extractChatSummaryText(last.chatProperties) ?? null,
@@ -1145,6 +1159,43 @@ export class IMessageDB {
 
     this.cachedSnippets.set(last.lastMessageId, result);
     return result;
+  }
+
+  /**
+   * Most recent message in the chat (any sender) with real extractable text,
+   * looking back from the current last message. Unlike
+   * getPreviousConversationSnippet this does NOT stop at a sender change or a
+   * time gap — it exists for the "last message is a text-less tombstone"
+   * (unsent/retracted) case, where the useful preview is simply the previous
+   * real message.
+   */
+  private getLastTextfulSnippet(last: LastConversationRow): string | null {
+    const rows = this.raw
+      .prepare(`
+      SELECT m.text, m.attributedBody, m.ROWID
+      FROM ${Tables.MESSAGE} m
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON cmj.message_id = m.ROWID
+      WHERE cmj.chat_id = ?
+        AND m.associated_message_type = ${AssociatedMessageType.NORMAL}
+        AND COALESCE(m.item_type, 0) = 0
+        AND (m.date < ? OR (m.date = ? AND m.ROWID < ?))
+      ORDER BY m.date DESC, m.ROWID DESC
+      LIMIT 10
+    `)
+      .all(last.chatId, last.lastDate, last.lastDate, last.lastMessageId) as Array<{
+      text: string | null;
+      attributedBody: Buffer | null;
+      ROWID: number;
+    }>;
+
+    for (const row of rows) {
+      const snippet = pickConversationSnippet({
+        rawText: row.text,
+        parsedText: this.extractMessageText(row),
+      });
+      if (snippet && !isMetadataOnlySnippet(snippet)) return snippet;
+    }
+    return null;
   }
 
   private shouldFallbackToPreviousSnippet(snippet: string, last: LastConversationRow): boolean {
@@ -1957,9 +2008,16 @@ export class IMessageDB {
    * chat_analytics tool — bounded by date, not by per-chat limit. Reactions
    * are included (tapback analytics need them); hidden system items dropped.
    */
-  async getMessagesInWindow(cutoffMs: number, capPerWindow = 200_000): Promise<Message[]> {
+  async getMessagesInWindow(cutoffMs: number, capPerWindow = 80_000): Promise<Message[]> {
     const span = perf("getMessagesInWindow");
     const cutoffNanos = Math.floor((cutoffMs / 1000 - MAC_EPOCH_OFFSET) * NANOS_PER_SECOND);
+    // Fetch the most-recent `capPerWindow` messages in the window (DESC + LIMIT),
+    // then hand analytics the ASC slice they expect. Loading the OLDEST N (plain
+    // ASC LIMIT) both starved recency-weighted analytics and — at the old 200k
+    // cap — materialized ~200k parsed Message objects (~960MB RSS on a large
+    // chat.db), which added to the TUI baseline tripped the 1024MB watchdog kill
+    // when a user opened an "all"-range analytic. The lower cap keeps the peak
+    // bounded; the DESC window keeps a capped load meaningful.
     const sql = `
       SELECT m.ROWID, m.guid, m.text, m.attributedBody, m.date, m.date_read, m.date_delivered,
              m.is_read, m.is_delivered,
@@ -1976,10 +2034,10 @@ export class IMessageDB {
       LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
       LEFT JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
       WHERE m.date >= ?
-      ORDER BY m.date ASC
+      ORDER BY m.date DESC
       LIMIT ?
     `;
-    const rows = this.raw.prepare(sql).all(cutoffNanos, capPerWindow) as any[];
+    const rows = (this.raw.prepare(sql).all(cutoffNanos, capPerWindow) as any[]).reverse();
     const out: Message[] = [];
     for (const r of rows) {
       if (isHiddenSystemItem(r.item_type)) continue;

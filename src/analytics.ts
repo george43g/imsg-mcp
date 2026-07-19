@@ -464,10 +464,14 @@ export function computeRelationshipLeaderboard(messages: Message[]): {
       received: acc.received,
       reciprocity: Math.round(reciprocity * 100) / 100,
       daysSinceLast: Math.round(daysSinceLast * 10) / 10,
-      score: Math.round(score * 1000) / 1000,
+      score,
     });
   }
+  // Sort on the RAW score, round only for output. The exp recency decay
+  // pushes old-history scores below 1e-3 — rounding before the sort made
+  // every long-quiet relationship tie at 0 and the ranking arbitrary.
   leaderboard.sort((a, b) => b.score - a.score);
+  for (const row of leaderboard) row.score = Math.round(row.score * 1e6) / 1e6;
   return { leaderboard: leaderboard.slice(0, 50) };
 }
 
@@ -515,6 +519,49 @@ export const IMPLEMENTED_TYPES: AnalyticType[] = [
   "year_in_review_wrapped",
   "relationship_leaderboard",
 ];
+
+/** Label + one-line description + sensible default window, per analytic. Shared
+ * by the CLI/console (help text) and the TUI palette so they never drift. */
+export const ANALYTIC_INFO: Record<
+  AnalyticType,
+  { label: string; description: string; defaultWindowDays: number }
+> = {
+  messaging_streaks: {
+    label: "Messaging Streaks",
+    description: "Longest and current daily-message streaks per contact",
+    defaultWindowDays: 365,
+  },
+  double_texts: {
+    label: "Double Texts",
+    description: "Consecutive messages sent without a reply",
+    defaultWindowDays: 90,
+  },
+  response_time_stats: {
+    label: "Response Times",
+    description: "Reply latency per contact (median, p95, mean)",
+    defaultWindowDays: 90,
+  },
+  daily_heatmap: {
+    label: "Daily Heatmap",
+    description: "7×24 grid of activity by weekday × hour",
+    defaultWindowDays: 90,
+  },
+  tapback_summary: {
+    label: "Tapback Summary",
+    description: "Tapback reactions sent per contact",
+    defaultWindowDays: 365,
+  },
+  year_in_review_wrapped: {
+    label: "Year in Review (Wrapped)",
+    description: "Wrapped summary: top contacts, peak day, totals (pinned to 365d)",
+    defaultWindowDays: 365,
+  },
+  relationship_leaderboard: {
+    label: "Relationship Leaderboard",
+    description: "Top relationships by volume × reciprocity × recency",
+    defaultWindowDays: 1825,
+  },
+};
 
 export function dispatchAnalytic(
   type: AnalyticType,

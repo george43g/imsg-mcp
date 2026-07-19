@@ -11,9 +11,10 @@ Set Padding 5
 Set TypingSpeed 50ms
 
 Hide
-Type "IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
+Type "mkdir -p /tmp/imsg-demo && HOME=/tmp/imsg-demo IMSG_TUI_THEME=safe node --env-file=.env.test dist/cli.js tui"
 Enter
-Sleep 2s
+Wait+Screen@15s /Conversations/
+Sleep 1s
 Show
 
 # Move into the sidebar and pick a heavy thread.

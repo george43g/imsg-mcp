@@ -3,6 +3,8 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
+import { ANALYTIC_INFO, type AnalyticType, IMPLEMENTED_TYPES } from "./analytics.js";
+import { toYaml } from "./analytics-render.js";
 import { LocalMcpClient } from "./mcp-client.js";
 import { APP_VERSION } from "./meta.js";
 import { installShutdownHandlers, registerCleanup } from "./shutdown.js";
@@ -47,16 +49,31 @@ async function printToolResult(
   name: string,
   args: object,
   timeoutMs?: number,
+  format?: "pretty" | "json" | "yaml",
 ) {
   const result = await client.callTool(name, args, timeoutMs);
   const text = result.content?.[0]?.text ?? JSON.stringify(result, null, 2);
   if (result.isError) throw new Error(text);
+  if (format === "json" || format === "yaml") {
+    // Structured output for scripting. Prefer the tool's structuredContent
+    // (the machine-readable payload) over the human text block.
+    const payload = (result as { structuredContent?: unknown }).structuredContent ?? result;
+    console.log(format === "json" ? JSON.stringify(payload, null, 2) : toYaml(payload));
+    return;
+  }
   console.log(text);
+}
+
+/** Resolve a commander --json/--yaml option pair to a format. */
+function pickFormat(opts: { json?: boolean; yaml?: boolean }): "pretty" | "json" | "yaml" {
+  if (opts.json) return "json";
+  if (opts.yaml) return "yaml";
+  return "pretty";
 }
 
 // ── Interactive console ────────────────────────────────────────────────
 
-function parseConsoleInput(line: string): { cmd: string; args: string[] } {
+export function parseConsoleInput(line: string): { cmd: string; args: string[] } {
   const parts: string[] = [];
   let current = "";
   let quote: string | null = null;
@@ -83,7 +100,7 @@ function parseConsoleInput(line: string): { cmd: string; args: string[] } {
   return { cmd: parts[0]?.toLowerCase() ?? "", args: parts.slice(1) };
 }
 
-async function runConsoleCommand(
+export async function runConsoleCommand(
   cmd: string,
   args: string[],
   client: LocalMcpClient,
@@ -182,11 +199,25 @@ async function runConsoleCommand(
       } else if (verb === "top") {
         await printToolResult(client, "chat_analytics", {
           type: "relationship_leaderboard",
-          windowDays: Number(args[1] ?? 365),
+          windowDays: Number(args[1] ?? 1825),
         });
       } else {
         throw new Error(`Unknown humans verb: ${verb}. Use init|top.`);
       }
+      return;
+    }
+    case "analytics":
+    case "stats": {
+      const type = args[0] as AnalyticType | undefined;
+      if (!type || !IMPLEMENTED_TYPES.includes(type)) {
+        throw new Error(`Usage: analytics <${IMPLEMENTED_TYPES.join("|")}> [windowDays]`);
+      }
+      // Trailing `json`/`yaml` token picks the output format in the console.
+      const fmtArg = args[args.length - 1];
+      const format = fmtArg === "json" ? "json" : fmtArg === "yaml" ? "yaml" : "pretty";
+      const windowDays =
+        args[1] && /^\d+$/.test(args[1]) ? Number(args[1]) : ANALYTIC_INFO[type].defaultWindowDays;
+      await printToolResult(client, "chat_analytics", { type, windowDays }, undefined, format);
       return;
     }
     case "logs":
@@ -238,6 +269,8 @@ Available commands:
   send <target> <msg>  Send a message
   contacts [verb]      Contacts: list [n] [offset] | search <q> [n] | resolve <handle> | show <handle-or-id>
   humans <verb>        Relationship files: init <contact|slug> | init top [n] | top [days]
+  analytics <type> [days] [json|yaml]
+                       Analytics: ${IMPLEMENTED_TYPES.join(" | ")}
   logs [tail]          Show server debug logs
   last-error           Show last send failure
   tools                List available MCP tools
@@ -259,14 +292,27 @@ async function runInteractiveConsole(): Promise<void> {
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-  const prompt = () =>
-    rl.question(color.cyan("imsg> "), async (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        prompt();
-        return;
-      }
+  // Event-driven line loop (not recursive rl.question): each command is async
+  // (an MCP round-trip), so lines are queued and processed one at a time. This
+  // is what makes piped/scripted input reliable — with recursive rl.question,
+  // EOF ("close") raced the in-flight await and killed the command before its
+  // output printed. Here EOF only exits AFTER the queue has drained.
+  const queue: string[] = [];
+  let processing = false;
+  let closed = false;
 
+  const finish = () => {
+    client.close();
+    process.exit(0);
+  };
+
+  const drain = async () => {
+    if (processing) return;
+    processing = true;
+    while (queue.length > 0) {
+      const line = queue.shift()!;
+      const trimmed = line.trim();
+      if (!trimmed) continue;
       const { cmd, args } = parseConsoleInput(trimmed);
       try {
         await runConsoleCommand(cmd, args, client);
@@ -274,10 +320,25 @@ async function runInteractiveConsole(): Promise<void> {
         log(error instanceof Error ? error.message : String(error), "err");
       }
       console.log("");
-      prompt();
-    });
+    }
+    processing = false;
+    if (closed) finish();
+    else rl.prompt();
+  };
 
-  prompt();
+  rl.setPrompt(color.cyan("imsg> "));
+  rl.prompt();
+  rl.on("line", (line) => {
+    queue.push(line);
+    void drain();
+  });
+  // Ctrl-D / EOF (or a piped script running out of lines): exit once any
+  // in-flight command and the queue have drained. Without this the MCP server
+  // subprocess keeps the event loop alive and the console would hang.
+  rl.on("close", () => {
+    closed = true;
+    if (!processing && queue.length === 0) finish();
+  });
 
   installShutdownHandlers();
   registerCleanup(() => client.close());
@@ -622,16 +683,50 @@ humansCommand
 
 humansCommand
   .command("top")
-  .description("Show the relationship leaderboard (volume × reciprocity × recency, last year)")
-  .argument("[windowDays]", "Days of history to rank", "365")
-  .action(async (windowDays: string) => {
+  .description("Show the relationship leaderboard (volume × reciprocity × recency, last 5 years)")
+  .argument("[windowDays]", "Days of history to rank", "1825")
+  .option("--json", "Output structured JSON")
+  .option("--yaml", "Output structured YAML")
+  .action(async (windowDays: string, opts: { json?: boolean; yaml?: boolean }) => {
     await withClient((c) =>
-      printToolResult(c, "chat_analytics", {
-        type: "relationship_leaderboard",
-        windowDays: Number(windowDays),
-      }),
+      printToolResult(
+        c,
+        "chat_analytics",
+        { type: "relationship_leaderboard", windowDays: Number(windowDays) },
+        undefined,
+        pickFormat(opts),
+      ),
     );
   });
+
+// `imsg analytics <type> [windowDays] [--json|--yaml]` — every implemented
+// analytic, not just the leaderboard. Each type gets its own subcommand so
+// `--help` and shell completion enumerate them.
+const analyticsCommand = program
+  .command("analytics")
+  .alias("stats")
+  .description("Run chat analytics (streaks, response times, heatmap, tapbacks, wrapped, …)");
+
+for (const type of IMPLEMENTED_TYPES) {
+  const info = ANALYTIC_INFO[type];
+  analyticsCommand
+    .command(type)
+    .description(info.description)
+    .argument("[windowDays]", "Days of history to analyze", String(info.defaultWindowDays))
+    .option("--json", "Output structured JSON")
+    .option("--yaml", "Output structured YAML")
+    .action(async (windowDays: string, opts: { json?: boolean; yaml?: boolean }) => {
+      await withClient((c) =>
+        printToolResult(
+          c,
+          "chat_analytics",
+          { type, windowDays: Number(windowDays) },
+          undefined,
+          pickFormat(opts),
+        ),
+      );
+    });
+}
 
 program
   .command("logs")

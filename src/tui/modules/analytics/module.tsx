@@ -33,12 +33,16 @@ let instanceCounter = 0;
 
 function makeInstance(type: AnalyticType): ModuleInstance {
   instanceCounter += 1;
-  const state: AnalyticsState = { type, range: "30d", chatIdentifier: null };
+  // The leaderboard bakes recency into its score (exp decay on last contact),
+  // so windowing it to 30d is redundant and usually starves it of data —
+  // default that one to all-time; [/] still cycles ranges.
+  const range: AnalyticsRange = type === "relationship_leaderboard" ? "all" : "30d";
+  const state: AnalyticsState = { type, range, chatIdentifier: null };
   return {
     id: `analytics.${type}-${Date.now()}-${instanceCounter}`,
     moduleId: "analytics",
     title: `Analytics: ${ANALYTIC_LABEL[type]}`,
-    subtitle: "range: 30d",
+    subtitle: `range: ${range}`,
     state,
   };
 }

@@ -18,11 +18,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import {
+  type AnalyticType,
   computeRelationshipLeaderboard,
   dispatchAnalytic,
-  type RelationshipScore,
 } from "./analytics.js";
 import { lookupCache, storeCache } from "./analytics-cache.js";
+import { renderAnalyticText } from "./analytics-render.js";
 import {
   checkImessageAvailability,
   checkMessagesAvailable,
@@ -145,21 +146,13 @@ function round1(n: number): number {
 }
 
 /**
- * Human-readable text rendering for analytics whose data matters on the CLI.
- * Only relationship_leaderboard gets rows for now; other types keep their
- * JSON-only structured payloads.
+ * Human-readable text rendering for every analytic, shared with the CLI via
+ * src/analytics-render.ts so the agent (tool text) and a person (`imsg
+ * analytics …`) see the same summary.
  */
-function analyticTextSummary(type: string, data: unknown): string {
-  if (type !== "relationship_leaderboard") return "";
-  const rows = (data as { leaderboard?: RelationshipScore[] })?.leaderboard ?? [];
-  if (rows.length === 0) return "\n(no ranked relationships in window)";
-  const lines = rows
-    .slice(0, 20)
-    .map(
-      (r, i) =>
-        `${String(i + 1).padStart(2)}. ${sanitizeUserText(r.contact)}  —  ${r.total} msgs, ${Math.round(r.reciprocity * 100)}% reciprocity, last ${Math.round(r.daysSinceLast)}d ago (score ${r.score})`,
-    );
-  return `\n\n${lines.join("\n")}`;
+function analyticTextSummary(type: AnalyticType, data: unknown): string {
+  const rendered = renderAnalyticText(type, data);
+  return rendered ? `\n\n${rendered}` : "";
 }
 
 /** Format a millisecond duration as e.g. "1h 23m" or "5s". */
@@ -1704,7 +1697,7 @@ export class IMessageMCPServer {
         lines.push(
           detectTranscriber()
             ? "Transcription produced no text."
-            : "No transcriber installed — `brew install hear` enables on-device transcription.",
+            : "No transcriber installed — `brew install yap` (macOS 26+) or `brew install sveinbjornt/hear/hear` enables on-device transcription.",
         );
       }
       lines.push(`Path: ${resolvedPath}`);
@@ -1807,14 +1800,18 @@ export class IMessageMCPServer {
       }
       targets.push(targetFromHandle(resolution.handle, contact));
     } else if (top !== undefined) {
-      const cutoffMs = Date.now() - 365 * 86_400_000;
+      // 5-year window, not 1: the score already decays on recency, so the
+      // window only needs to be wide enough that long-quiet relationships
+      // (the ones most worth a relationship file) still rank at all. Bounded
+      // so a decade-deep chat.db doesn't get loaded wholesale into memory.
+      const cutoffMs = Date.now() - 5 * 365 * 86_400_000;
       const messages = await this.db.getMessagesInWindow(cutoffMs);
       const { leaderboard } = computeRelationshipLeaderboard(messages);
       for (const entry of leaderboard.slice(0, top)) {
         targets.push(targetFromHandle(entry.handle, entry.contact));
       }
       if (targets.length === 0) {
-        return toolError("No ranked relationships found in the last year.", { top });
+        return toolError("No ranked relationships found in the last 5 years.", { top });
       }
     }
 
