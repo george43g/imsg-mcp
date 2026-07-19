@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+## [1.6.1](https://github.com/george43g/imsg-mcp/compare/v1.6.0...v1.6.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* **test:** strip a stray NUL byte that made a test file binary + guard it ([535b413](https://github.com/george43g/imsg-mcp/commit/535b413c361410337a58b040fc7ceb0983959b99)), closes [#20](https://github.com/george43g/imsg-mcp/issues/20)
+
 # [1.6.0](https://github.com/george43g/imsg-mcp/compare/v1.5.0...v1.6.0) (2026-07-19)
 
 
