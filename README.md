@@ -58,6 +58,14 @@ imsg export weekend-crew~imsg~d4e5 \
   --output ~/weekend-crew.md
 ```
 
+Relationship analytics from the CLI (all 7 types; add `--json` / `--yaml` to script them):
+
+```bash
+imsg analytics relationship_leaderboard      # top relationships by volume × reciprocity × recency
+imsg analytics daily_heatmap                 # ASCII 7×24 activity grid
+imsg analytics messaging_streaks --json      # machine-readable for pipelines
+```
+
 Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 
 ---
