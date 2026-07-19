@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.6.0](https://github.com/george43g/imsg-mcp/compare/v1.5.0...v1.6.0) (2026-07-19)
+
+
+### Bug Fixes
+
+* **cli:** friendlier windowDays + humans usage; add `resolve` console verb ([4a5f389](https://github.com/george43g/imsg-mcp/commit/4a5f3892d6ca9d0683c49c44b9052190552bc7f9))
+* **db:** detect unsent messages via content-absence, not the lying date columns ([8a2c5e2](https://github.com/george43g/imsg-mcp/commit/8a2c5e2544f5393f7380a1fb4126e782e81e111c))
+* **tui:** filter-commit (Enter) loads the matched thread, not just the cursor ([3666d4a](https://github.com/george43g/imsg-mcp/commit/3666d4a1a6febbdae935fb1406fcf4a39cd9f1ab))
+
+
+### Features
+
+* **mcp:** resolve_conversation — free-form name → ranked threads in one call ([68485ab](https://github.com/george43g/imsg-mcp/commit/68485ab470b7b7a555719769169107d17c94a1cd))
+
 # [1.5.0](https://github.com/george43g/imsg-mcp/compare/v1.4.0...v1.5.0) (2026-07-19)
 
 
