@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.5.0](https://github.com/george43g/imsg-mcp/compare/v1.4.0...v1.5.0) (2026-07-19)
+
+
+### Bug Fixes
+
+* **analytics:** bound getMessagesInWindow so opening a pane can't OOM-kill ([708ba7a](https://github.com/george43g/imsg-mcp/commit/708ba7ab223d8c8a6f2d37b51979490630b5f24a))
+* **analytics:** make the relationship leaderboard actually rank ([60159ee](https://github.com/george43g/imsg-mcp/commit/60159ee52776077b8ee5ef6019ec464b3e92c87d))
+* **humans:** getChatStats double-counted messages shared across legs ([e1a17cb](https://github.com/george43g/imsg-mcp/commit/e1a17cbe3a2570249122a4c7a86c69dbabf82ec8))
+* **media:** correct yap/hear transcriber invocations ([f272e15](https://github.com/george43g/imsg-mcp/commit/f272e15aa34d2fc9db5ecbf344025d6aeb3a57a1))
+* **snippets:** unsent last message no longer leaks "DWm" into the preview ([185d073](https://github.com/george43g/imsg-mcp/commit/185d0738d43a5386682e5dc0fbc25e706c1edcea))
+* **test:** make CLI e2e cold-safe (no dependency on a warm slugs.db) ([a00b1a8](https://github.com/george43g/imsg-mcp/commit/a00b1a86f854e7ba8e96ddc9230460f8bab929d7))
+* **tui:** compose-new modal no longer quits the TUI on a "q" recipient ([78589b1](https://github.com/george43g/imsg-mcp/commit/78589b10184ccedc31796a8e840b91245f1a8149))
+* **tui:** stop the near-top loader re-firing when it can't page back further ([1639698](https://github.com/george43g/imsg-mcp/commit/1639698b88e19aa090a64f396810fc400e21542d))
+
+
+### Features
+
+* **analytics:** expose all 7 analytics via CLI + console with json/yaml ([ac619e9](https://github.com/george43g/imsg-mcp/commit/ac619e904ef7b1aaea6becaa00b896f932d737fc))
+
 # [1.4.0](https://github.com/george43g/imsg-mcp/compare/v1.3.2...v1.4.0) (2026-07-13)
 
 
