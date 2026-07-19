@@ -380,6 +380,25 @@ export const GetContactOutputSchema = z.object({
   humansGuidance: z.string().optional(),
 });
 
+export const ResolveConversationSchema = z.object({
+  query: nonEmptyString('Free-form name/phrase to match, e.g. "Selena" or "the plumber".'),
+  limit: z.number().int().min(0).default(10).describe("Max ranked matches. 0 = unlimited."),
+});
+export const ResolveConversationOutputSchema = z.object({
+  query: z.string(),
+  matches: z.array(
+    z.object({
+      name: z.string(),
+      threadSlug: z.string().nullable(),
+      chatIdentifier: z.string(),
+      lastMessageDate: z.string().nullable(),
+      matchType: z.enum(["contact", "thread", "message"]),
+      score: z.number(),
+    }),
+  ),
+  count: z.number().int(),
+});
+
 export const ResolveHandleSchema = z.object({
   handle: nonEmptyString("Phone number or email to resolve to a contact name."),
 });
@@ -551,6 +570,7 @@ export const TOOL_SCHEMAS = {
   list_contacts: ListContactsSchema,
   search_contacts: SearchContactsSchema,
   get_contact: GetContactSchema,
+  resolve_conversation: ResolveConversationSchema,
   resolve_handle: ResolveHandleSchema,
   check_imessage_availability: CheckImessageAvailabilitySchema,
   search_attachments: SearchAttachmentsSchema,
@@ -575,6 +595,7 @@ export const OUTPUT_SCHEMAS = {
   list_contacts: ListContactsOutputSchema,
   search_contacts: SearchContactsOutputSchema,
   get_contact: GetContactOutputSchema,
+  resolve_conversation: ResolveConversationOutputSchema,
   resolve_handle: ResolveHandleOutputSchema,
   check_imessage_availability: CheckImessageAvailabilityOutputSchema,
   search_attachments: SearchAttachmentsOutputSchema,
@@ -638,6 +659,7 @@ export const TOOL_TIMEOUTS_MS: Record<string, number> = {
   list_contacts: 10_000,
   search_contacts: 10_000,
   get_contact: 5_000,
+  resolve_conversation: 10_000,
   resolve_handle: 5_000,
   check_imessage_availability: 10_000,
   search_attachments: 30_000,
@@ -911,6 +933,25 @@ export const TOOLS: Tool[] = [
     },
     // @ts-expect-error
     outputSchema: zodToJsonSchema(GetContactOutputSchema),
+  },
+  {
+    name: "resolve_conversation",
+    description:
+      "Resolve a free-form name or phrase (e.g. \"check Selena's messages\") to ranked conversations in ONE call — fuses contacts, recent-thread names, and message content. Returns `[{name, threadSlug, chatIdentifier, lastMessageDate, matchType, score}]` (strongest first). Use the top match's threadSlug with send_message/wait_for_reply or chatIdentifier with get_messages, instead of chaining search_contacts → get_contact.",
+    annotations: annotations.read,
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: {
+          type: "string",
+          description: 'Free-form name/phrase, e.g. "Selena" or "the plumber".',
+        },
+        limit: { type: "number", default: 10, description: "Max ranked matches. 0 = unlimited." },
+      },
+    },
+    // @ts-expect-error
+    outputSchema: zodToJsonSchema(ResolveConversationOutputSchema),
   },
   {
     name: "resolve_handle",

@@ -98,7 +98,7 @@ export function MessageBubble({
 }: Props) {
   const theme = useTheme();
   const isSent = m.isFromMe;
-  const text = m.text ?? "(attachment)";
+  const text = m.text ?? (m.isRetracted ? "(unsent)" : "(attachment)");
   const timestamp = relativeDate(m.date);
   const reactions = m.reactions ? formatReactions(m.reactions) : "";
   const hasAttachments = m.hasAttachments;
@@ -199,6 +199,14 @@ export function MessageBubble({
 
         {/* Edited indicator */}
         {m.isEdited && <Text color={theme.edited}> ✎</Text>}
+
+        {/* Unsent / retracted indicator — the sender took the message back. */}
+        {m.isRetracted && (
+          <Text color={theme.edited} dimColor>
+            {" "}
+            ⊘ unsent
+          </Text>
+        )}
 
         {/* Send-failure indicator — Messages.app shows "Not Delivered"; a
             failed from-me message must not render like a normal sent one. */}

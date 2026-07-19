@@ -122,6 +122,25 @@ export interface Conversation {
 }
 
 /**
+ * A ranked match for a free-form conversation query (resolve_conversation).
+ * Lets an agent turn "check Selena's messages" into a concrete thread in one
+ * call, instead of chaining search_contacts → get_contact.
+ */
+export interface ResolvedConversation {
+  /** Best display name for the match (contact name, group name, or handle). */
+  name: string;
+  /** Stable thread slug for send_message/wait_for_reply, or null if unknown. */
+  threadSlug: string | null;
+  /** Phone/email/group identifier for get_messages. */
+  chatIdentifier: string;
+  lastMessageDate: Date | null;
+  /** Which signal produced the match, strongest first. */
+  matchType: "contact" | "thread" | "message";
+  /** 0-1 relevance score (fuzzy match strength). */
+  score: number;
+}
+
+/**
  * Result of sending a message
  */
 export interface SendMessageResult {

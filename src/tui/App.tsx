@@ -360,7 +360,14 @@ export function App() {
         // without navigating, which made the filter feel inert.
         const matchIdx = firstFilterMatchIndex(state.conversations, state.filterQuery);
         if (matchIdx !== null) {
-          dispatch({ type: "SELECT", index: matchIdx });
+          dispatch({ type: "SELECT", index: matchIdx, visibleCount: sidebarVisibleCount });
+          // Committing the filter must also LOAD the matched thread — the
+          // SELECT above only moves the cursor (updating the header +
+          // chatIdentifier), so without this the message pane kept showing the
+          // previously-loaded conversation under the newly-selected header.
+          // Every other selection path (j/k, gg/G, group/numbered jump) loads
+          // via selectSidebarCombined; the filter-commit path was the one gap.
+          void loadMessages(matchIdx, state.conversations[matchIdx]);
         }
         dispatch({ type: "EXIT_FILTER" });
       } else if (key.escape) {

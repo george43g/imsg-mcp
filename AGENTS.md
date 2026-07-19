@@ -79,6 +79,7 @@ One human conversation is often split across multiple `chat` rows (phone vs emai
 | `wait_for_reply`       | **`chatIdentifier`** or **`threadSlug`**; `timeoutSeconds`, `pollIntervalSeconds`, optional `afterMessageId`. Honors MCP `notifications/cancelled`. |
 | `list_conversations`   | List chats with **`threadSlug`**, snippets, unread; `limit` (`0` = unlimited, default 20). |
 | `search_messages`      | Search text; `query`, `limit` (`0` = unlimited, default 20). |
+| `resolve_conversation` | Free-form name/phrase → ranked threads in ONE call (fuses contacts + recent-thread names + message content). Returns `[{name, threadSlug, chatIdentifier, lastMessageDate, matchType, score}]`. Solves "check Selena's messages" without chaining `search_contacts` → `get_contact`. |
 | `health_check`         | MCP vital signs (uptime, heap, RSS, event-loop lag, tool counts, engine). Returns instantly even when SQL is wedged — use this to verify the server is alive when other tools hang. |
 
 ### Tool limits & timeouts

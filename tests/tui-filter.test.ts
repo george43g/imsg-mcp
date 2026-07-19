@@ -3,6 +3,8 @@
  * App.tsx (Enter-to-navigate). Locks in the Enter-commits-cursor-to-first-match
  * fix surfaced by live TUI audit.
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { firstFilterMatchIndex, matchesConversationFilter } from "../src/tui/filter.js";
 import type { Conversation } from "../src/types.js";
@@ -72,5 +74,26 @@ describe("firstFilterMatchIndex", () => {
 
   it("is case-insensitive (trims and lowercases query)", () => {
     expect(firstFilterMatchIndex(convs, "  BRIAN  ")).toBe(1);
+  });
+});
+
+describe("App.tsx filter-commit loads the matched thread", () => {
+  // Regression (found via live TUI audit): committing the filter with Enter
+  // dispatched SELECT (moving the cursor → updating the header + chatIdentifier)
+  // but never called loadMessages, so the message pane kept showing the
+  // PREVIOUSLY-loaded conversation's messages under the newly-selected header —
+  // i.e. the wrong thread. Every other selection path loads its thread; this
+  // one didn't. Locked structurally (mirrors tui-compose-new-input-guard.test).
+  const SRC = readFileSync(resolve(__dirname, "../src/tui/App.tsx"), "utf8");
+
+  it("the Enter/commit branch both selects AND loads the matched conversation", () => {
+    const start = SRC.indexOf("firstFilterMatchIndex(state.conversations, state.filterQuery)");
+    expect(start, "filter-commit block not found in App.tsx").toBeGreaterThan(-1);
+    const end = SRC.indexOf("EXIT_FILTER", start);
+    const block = SRC.slice(start, end);
+    expect(block, "filter-commit must move the cursor").toMatch(/type:\s*"SELECT"/);
+    expect(block, "filter-commit must load the matched thread's messages").toMatch(
+      /loadMessages\(\s*matchIdx/,
+    );
   });
 });
