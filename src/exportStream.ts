@@ -14,8 +14,8 @@
  */
 
 import { createWriteStream, statSync } from "node:fs";
+import { toCSV, toMarkdown, toNDJSONLine } from "./export-formats.js";
 import type { IMessageDB, MessageExportCursor, UnmergedSiblingChat } from "./imessage-db.js";
-import { toCSV, toMarkdown, toNDJSONLine } from "./tui/exportFormats.js";
 
 export interface ExportOptions {
   db: IMessageDB;

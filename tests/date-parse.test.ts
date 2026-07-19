@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatJumpTarget, parseUserDate } from "../src/tui/dateParse.js";
+import { formatJumpTarget, parseUserDate } from "../src/date-parse.js";
 
 const NOW = new Date("2024-06-15T12:00:00.000Z");
 
