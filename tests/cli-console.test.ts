@@ -6,7 +6,7 @@
  * asserts the routed params).
  */
 import { describe, expect, it, vi } from "vitest";
-import { parseConsoleInput, runConsoleCommand } from "../src/cli.js";
+import { parseConsoleInput, parseWindowDays, runConsoleCommand } from "../src/cli.js";
 import type { LocalMcpClient } from "../src/mcp-client.js";
 
 function fakeClient() {
@@ -88,6 +88,18 @@ describe("runConsoleCommand routing", () => {
     await expect(route("search")).rejects.toThrow(/Usage: search/);
   });
 
+  it("resolve routes to resolve_conversation with a query + limit", async () => {
+    expect((await route("resolve selena"))[0]).toEqual({
+      name: "resolve_conversation",
+      args: { query: "selena", limit: 10 },
+    });
+    expect((await route("resolve selena 3"))[0]).toEqual({
+      name: "resolve_conversation",
+      args: { query: "selena", limit: 3 },
+    });
+    await expect(route("resolve")).rejects.toThrow(/Usage: resolve/);
+  });
+
   it("send routes recipient vs threadSlug and joins the message", async () => {
     expect((await route("send +15551234567 hello there"))[0]).toEqual({
       name: "send_message",
@@ -139,6 +151,13 @@ describe("runConsoleCommand routing", () => {
     });
   });
 
+  it("humans with no verb / help shows usage without leaking 'undefined'", async () => {
+    await expect(route("humans")).rejects.toThrow(/Usage:\s*\n\s*humans init/);
+    await expect(route("humans")).rejects.not.toThrow(/undefined/);
+    await expect(route("humans help")).rejects.toThrow(/Usage:/);
+    await expect(route("humans bogus")).rejects.toThrow(/Unknown humans verb: bogus/);
+  });
+
   it("analytics <type> routes to chat_analytics with the type's default window", async () => {
     expect((await route("analytics messaging_streaks"))[0]).toEqual({
       name: "chat_analytics",
@@ -159,5 +178,23 @@ describe("runConsoleCommand routing", () => {
 
   it("unknown command throws a helpful error", async () => {
     await expect(route("frobnicate")).rejects.toThrow();
+  });
+});
+
+describe("parseWindowDays", () => {
+  it("defaults when absent or empty", () => {
+    expect(parseWindowDays(undefined, 90)).toBe(90);
+    expect(parseWindowDays("", 365)).toBe(365);
+  });
+
+  it("parses a positive number", () => {
+    expect(parseWindowDays("30", 90)).toBe(30);
+    expect(parseWindowDays("1825", 90)).toBe(1825);
+  });
+
+  it("rejects non-numeric / non-positive input with a clear message", () => {
+    expect(() => parseWindowDays("abc", 90)).toThrow(/windowDays must be a positive number/);
+    expect(() => parseWindowDays("0", 90)).toThrow(/positive number/);
+    expect(() => parseWindowDays("-5", 90)).toThrow(/positive number/);
   });
 });

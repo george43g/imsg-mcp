@@ -71,6 +71,20 @@ function pickFormat(opts: { json?: boolean; yaml?: boolean }): "pretty" | "json"
   return "pretty";
 }
 
+/**
+ * Parse a `windowDays` CLI/console arg. Absent → fallback. A non-numeric value
+ * gives a clear error instead of the cryptic "Expected number, received null"
+ * that `Number("abc")` → NaN → JSON `null` produced downstream.
+ */
+export function parseWindowDays(value: string | undefined, fallback: number): number {
+  if (value === undefined || value === "") return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`windowDays must be a positive number of days, got "${value}".`);
+  }
+  return n;
+}
+
 // ── Interactive console ────────────────────────────────────────────────
 
 export function parseConsoleInput(line: string): { cmd: string; args: string[] } {
@@ -206,10 +220,15 @@ export async function runConsoleCommand(
       } else if (verb === "top") {
         await printToolResult(client, "chat_analytics", {
           type: "relationship_leaderboard",
-          windowDays: Number(args[1] ?? 1825),
+          windowDays: parseWindowDays(args[1], 1825),
         });
       } else {
-        throw new Error(`Unknown humans verb: ${verb}. Use init|top.`);
+        // No verb, `help`, or an unknown verb: show usage without leaking
+        // "undefined" (the old `humans` / `humans help` output).
+        const prefix = verb && verb !== "help" ? `Unknown humans verb: ${verb}.\n` : "";
+        throw new Error(
+          `${prefix}Usage:\n  humans init <contact|slug>\n  humans init top [n]\n  humans top [days]`,
+        );
       }
       return;
     }
@@ -719,7 +738,7 @@ humansCommand
       printToolResult(
         c,
         "chat_analytics",
-        { type: "relationship_leaderboard", windowDays: Number(windowDays) },
+        { type: "relationship_leaderboard", windowDays: parseWindowDays(windowDays, 1825) },
         undefined,
         pickFormat(opts),
       ),
@@ -747,7 +766,7 @@ for (const type of IMPLEMENTED_TYPES) {
         printToolResult(
           c,
           "chat_analytics",
-          { type, windowDays: Number(windowDays) },
+          { type, windowDays: parseWindowDays(windowDays, info.defaultWindowDays) },
           undefined,
           pickFormat(opts),
         ),
