@@ -68,7 +68,7 @@ import {
   Tables,
 } from "./db-schema.js";
 import { perf } from "./logger.js";
-import { extractChatSummaryText } from "./plist-text.js";
+import { extractChatSummaryText, isUnsentMessage } from "./plist-text.js";
 import { type SlugRecord, SlugStore } from "./slug-store.js";
 import { generateThreadSlug, isGroupChatIdentifier, isGroupGuid } from "./thread-slug.js";
 import type {
@@ -1826,6 +1826,19 @@ export class IMessageDB {
       richContentSummary = this.parseRichContentSummary(ext.message_summary_info);
     }
 
+    // Unsent detection. `date_retracted` is 0 across the whole DB on current
+    // macOS and unsent messages read as `date_edited > 0`, so both raw columns
+    // lie. Detect via content-absence (see isUnsentMessage) and let it override
+    // the misleading edited flag so an unsent message never shows as "Edited".
+    const isUnsent = isUnsentMessage({
+      text: cleanText,
+      attributedBodyLength: raw.attributedBody?.length ?? 0,
+      hasSummaryInfo: Boolean(ext.message_summary_info && ext.message_summary_info.length > 0),
+      itemType: ext.item_type ?? 0,
+      associatedMessageType: associatedType,
+      hasAttachments,
+    });
+
     return {
       id: raw.ROWID,
       guid: raw.guid,
@@ -1851,8 +1864,8 @@ export class IMessageDB {
       reactions,
       richContentType,
       richContentSummary,
-      isEdited: Boolean(ext.date_edited && ext.date_edited > 0),
-      isRetracted: Boolean(ext.date_retracted && ext.date_retracted > 0),
+      isEdited: !isUnsent && Boolean(ext.date_edited && ext.date_edited > 0),
+      isRetracted: isUnsent || Boolean(ext.date_retracted && ext.date_retracted > 0),
       hasAttachments,
       attachments,
     };

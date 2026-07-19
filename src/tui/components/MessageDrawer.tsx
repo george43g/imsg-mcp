@@ -126,6 +126,16 @@ export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx
           </Box>
         )}
 
+        {/* Unsent / retracted — the sender took this message back. */}
+        {m.isRetracted && (
+          <Box>
+            <Label>Status</Label>
+            <Text color={theme.edited} bold>
+              Unsent (retracted by sender)
+            </Text>
+          </Box>
+        )}
+
         {/* Edited */}
         {m.isEdited && (
           <Box>
@@ -205,7 +215,7 @@ export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx
           <Text color={theme.drawer.label}>Full text:</Text>
           <Box borderStyle="single" borderColor={theme.drawer.border} paddingX={1}>
             <Text color={theme.drawer.value} wrap="wrap">
-              {m.text ?? "(no text)"}
+              {m.text ?? (m.isRetracted ? "(message unsent)" : "(no text)")}
             </Text>
           </Box>
         </Box>

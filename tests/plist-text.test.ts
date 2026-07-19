@@ -4,6 +4,7 @@ import {
   extractChatSummaryText,
   extractNullPaddedAsciiText,
   isPlausibleHumanText,
+  isUnsentMessage,
 } from "../src/plist-text.js";
 
 const STAGE_SUMMARY_ARCHIVE = Buffer.from(
@@ -72,5 +73,41 @@ describe("isPlausibleHumanText", () => {
     for (const real of ["Okay", "Lmao", "Yepp", "LOL", "hello there", "see you at 5", "Text"]) {
       expect(isPlausibleHumanText(real), real).toBe(true);
     }
+  });
+});
+
+describe("isUnsentMessage", () => {
+  // The canonical unsent shape on current macOS: normal message, no text, empty
+  // attributedBody, but a message_summary_info blob is present. `date_edited` /
+  // `date_retracted` are intentionally NOT inputs — both lie (see the helper).
+  const unsent = {
+    text: null,
+    attributedBodyLength: 0,
+    hasSummaryInfo: true,
+    itemType: 0,
+    associatedMessageType: 0,
+    hasAttachments: false,
+  };
+
+  it("flags a content-less normal message that still carries summary info", () => {
+    expect(isUnsentMessage(unsent)).toBe(true);
+    expect(isUnsentMessage({ ...unsent, text: "" })).toBe(true);
+    expect(isUnsentMessage({ ...unsent, text: "   " })).toBe(true);
+  });
+
+  it("does NOT flag an edited message (retains its body text)", () => {
+    // Edited-with-content keeps attributedBody bytes — that is the differentiator.
+    expect(isUnsentMessage({ ...unsent, attributedBodyLength: 322 })).toBe(false);
+    expect(isUnsentMessage({ ...unsent, text: "the final positions" })).toBe(false);
+  });
+
+  it("does NOT flag a plain empty message with no summary info", () => {
+    expect(isUnsentMessage({ ...unsent, hasSummaryInfo: false })).toBe(false);
+  });
+
+  it("does NOT flag attachments, reactions, or system items", () => {
+    expect(isUnsentMessage({ ...unsent, hasAttachments: true })).toBe(false);
+    expect(isUnsentMessage({ ...unsent, associatedMessageType: 2000 })).toBe(false);
+    expect(isUnsentMessage({ ...unsent, itemType: 6 })).toBe(false);
   });
 });

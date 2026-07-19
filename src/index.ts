@@ -208,7 +208,9 @@ function formatMessage(msg: Message, conversationLabel?: string): string {
   }
 
   let status = "";
-  if (!msg.isFromMe && !msg.isRead) {
+  if (msg.isRetracted) {
+    status = " [UNSENT — sender retracted this message]";
+  } else if (!msg.isFromMe && !msg.isRead) {
     status = " [UNREAD]";
   } else if (msg.isFromMe && msg.sendError) {
     status = ` [NOT DELIVERED — send failed (error ${msg.sendError})]`;
@@ -225,7 +227,7 @@ function formatMessage(msg: Message, conversationLabel?: string): string {
   // Wrap user-controlled message bodies in <untrusted> so a downstream LLM
   // treats prompt-injection attempts in the body as data, not instructions.
   // The empty-message placeholder is server-generated and trusted.
-  const text = rawText ? wrapUntrusted(rawText) : "(no text)";
+  const text = rawText ? wrapUntrusted(rawText) : msg.isRetracted ? "(unsent)" : "(no text)";
   return `[${dateStr}] ${direction} ${sender}${svcTag}: ${text}${status}${convCtx}`;
 }
 

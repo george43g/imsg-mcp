@@ -25,6 +25,39 @@ export function isPlausibleHumanText(s: string): boolean {
   return true;
 }
 
+/**
+ * Detect a message the sender unsent ("You unsent a message").
+ *
+ * On current macOS the retract is NOT recorded in `date_retracted` (it stays 0
+ * across the whole DB) — the marker lives in `message_summary_info`, and
+ * `date_edited` is repurposed as a last-modified stamp, so an unsent message
+ * even reads as `date_edited > 0`. Neither column can be trusted on its own.
+ *
+ * The reliable signal is content-absence: a normal message (item_type 0, not a
+ * reaction, no attachments) that still carries a `message_summary_info` blob but
+ * has lost all of its text and every byte of its attributedBody. An *edited*
+ * message, by contrast, always retains its current text in attributedBody
+ * (verified on real data: 407/407 edited-with-content rows keep body bytes),
+ * so requiring an empty body is what separates "unsent" from "edited".
+ */
+export function isUnsentMessage(opts: {
+  text: string | null | undefined;
+  attributedBodyLength: number;
+  hasSummaryInfo: boolean;
+  itemType: number;
+  associatedMessageType: number;
+  hasAttachments: boolean;
+}): boolean {
+  return (
+    opts.itemType === 0 &&
+    opts.associatedMessageType === 0 &&
+    opts.hasSummaryInfo &&
+    !opts.hasAttachments &&
+    opts.attributedBodyLength === 0 &&
+    (opts.text == null || opts.text.trim() === "")
+  );
+}
+
 export function extractNullPaddedAsciiText(blob: Buffer | null): string | undefined {
   if (!blob) return undefined;
 
