@@ -75,6 +75,7 @@ import { generateThreadSlug, isGroupChatIdentifier, isGroupGuid } from "./thread
 import type {
   Attachment,
   Conversation,
+  ConversationAttachment,
   Message,
   Reaction,
   ReplyContext,
@@ -2293,6 +2294,52 @@ export class IMessageDB {
       chatId: r.chat_identifier || "",
     }));
     span.end({ count: out.length });
+    return out;
+  }
+
+  /**
+   * All attachments across EVERY merged leg of one conversation (newest first)
+   * for the TUI per-thread info drawer. Unlike searchAttachments (single
+   * chat_identifier), this resolves the conversation to all its chat ROWIDs
+   * (resolveChatsForConversation) so the SMS and iMessage legs of a merged
+   * identity are both covered. Excludes stickers and Apple plugin payloads.
+   */
+  listConversationAttachments(chatIdentifier: string, limit = 500): ConversationAttachment[] {
+    const span = perf("listConversationAttachments");
+    const chats = this.resolveChatsForConversation(chatIdentifier);
+    if (chats.length === 0) {
+      span.end({ returned: 0 });
+      return [];
+    }
+    const placeholders = chats.map(() => "?").join(",");
+    const lim = limit > 0 ? limit : 500;
+    const sql = `
+      SELECT DISTINCT
+        a.ROWID as rowId,
+        a.filename,
+        a.mime_type,
+        a.transfer_name,
+        a.total_bytes,
+        a.created_date
+      FROM ${Tables.ATTACHMENT} a
+      JOIN ${Tables.MESSAGE_ATTACHMENT_JOIN} maj ON a.ROWID = maj.attachment_id
+      JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON maj.message_id = cmj.message_id
+      WHERE cmj.chat_id IN (${placeholders})
+        AND a.is_sticker = 0
+        AND (a.uti IS NULL OR a.uti NOT LIKE 'com.apple.messages.plugin%')
+      ORDER BY a.created_date DESC
+      LIMIT ?
+    `;
+    const rows = this.raw.prepare(sql).all(...chats.map((c) => c.ROWID), lim) as any[];
+    const out = rows.map((r) => ({
+      rowId: Number(r.rowId),
+      filename: r.filename || "",
+      mimeType: r.mime_type ?? null,
+      transferName: r.transfer_name ?? null,
+      totalBytes: Number(r.total_bytes) || 0,
+      createdDate: macAutoTimestampToDate(Number(r.created_date)) ?? new Date(0),
+    }));
+    span.end({ returned: out.length });
     return out;
   }
 

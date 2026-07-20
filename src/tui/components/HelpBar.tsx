@@ -33,6 +33,7 @@ const THREAD_KEYS = [
   ["V", "select"],
   [":", "date jump"],
   ["Enter", "details"],
+  ["i", "info/att"],
   ["o", "open att"],
   ["O", "open in Msgs"],
   ["S", "send-via"],
@@ -98,6 +99,15 @@ const DRAWER_KEYS = [
   ["Esc/q", "close"],
 ];
 
+const INFO_KEYS = [
+  ["j/k", "select"],
+  ["o", "open"],
+  ["s", "save"],
+  ["y", "copy path"],
+  ["a", "export all"],
+  ["Esc/q", "close"],
+];
+
 export function HelpBar({ mode, focus }: Props) {
   const theme = useTheme();
   let keys: string[][];
@@ -105,6 +115,7 @@ export function HelpBar({ mode, focus }: Props) {
   else if (mode === "compose" || mode === "confirm") keys = COMPOSE_KEYS;
   else if (mode === "filter") keys = FILTER_KEYS;
   else if (mode === "drawer") keys = DRAWER_KEYS;
+  else if (mode === "info") keys = INFO_KEYS;
   else if (mode === "select") keys = SELECT_KEYS;
   else if (mode === "export") keys = EXPORT_KEYS;
   else if (mode === "date-jump") keys = DATE_JUMP_KEYS;
