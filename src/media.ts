@@ -16,7 +16,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { getTranscribeCloudConfig, type TranscribeCloudConfig } from "./config.js";
 
 /**
  * MCP image content blocks should stay well under host tool-result caps
@@ -220,4 +221,72 @@ export function transcribeAudio(path: string, timeoutMs = 60_000): string | null
   } catch {
     return null;
   }
+}
+
+/**
+ * Transcribe via an opt-in OpenAI-compatible cloud endpoint
+ * (`POST {baseUrl}/audio/transcriptions`, multipart). The audio LEAVES the
+ * device — only reached when explicitly configured (see getTranscribeCloudConfig)
+ * and no local transcriber produced text. `fetchImpl` is injectable for tests.
+ * Returns null on any failure (network, non-2xx, timeout, empty).
+ */
+export async function transcribeAudioCloud(
+  path: string,
+  config: TranscribeCloudConfig,
+  opts: { fetchImpl?: typeof globalThis.fetch; timeoutMs?: number } = {},
+): Promise<string | null> {
+  if (!existsSync(path)) return null;
+  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 60_000);
+  try {
+    const form = new FormData();
+    form.append("file", new Blob([readFileSync(path)]), basename(path));
+    form.append("model", config.model);
+    form.append("response_format", "text");
+    const res = await doFetch(`${config.baseUrl}/audio/transcriptions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const text = (await res.text()).trim();
+    return text.length > 0 ? text : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface TranscribeResult {
+  transcript: string;
+  source: "local" | "cloud";
+}
+
+/**
+ * Best-available transcription: local on-device first (privacy-preserving
+ * default), then the opt-in cloud escape-hatch when configured and local
+ * produced nothing. Returns null when neither yields text. `cloudConfig` and
+ * `fetchImpl` are injectable for tests; by default the cloud config is read
+ * from IMSG_TRANSCRIBE_* env.
+ */
+export async function transcribeAudioBest(
+  path: string,
+  opts: {
+    timeoutMs?: number;
+    cloudConfig?: TranscribeCloudConfig | null;
+    fetchImpl?: typeof globalThis.fetch;
+  } = {},
+): Promise<TranscribeResult | null> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const local = transcribeAudio(path, timeoutMs);
+  if (local) return { transcript: local, source: "local" };
+  const cloud = opts.cloudConfig !== undefined ? opts.cloudConfig : getTranscribeCloudConfig();
+  if (cloud) {
+    const t = await transcribeAudioCloud(path, cloud, { timeoutMs, fetchImpl: opts.fetchImpl });
+    if (t) return { transcript: t, source: "cloud" };
+  }
+  return null;
 }

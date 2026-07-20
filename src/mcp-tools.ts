@@ -545,7 +545,13 @@ export const GetAttachmentOutputSchema = z.object({
   transcript: z
     .string()
     .optional()
-    .describe("Audio transcript when an optional transcriber (hear/yap/whisper-cli) is installed."),
+    .describe(
+      "Audio transcript. Local on-device transcriber (hear/yap/whisper-cli) when installed; otherwise the opt-in cloud fallback (IMSG_TRANSCRIBE_PROVIDER + IMSG_TRANSCRIBE_API_KEY) if configured.",
+    ),
+  transcriptSource: z
+    .enum(["local", "cloud"])
+    .optional()
+    .describe("Where the transcript came from: on-device (local) or the opt-in cloud provider."),
   imageBlockIncluded: z
     .boolean()
     .optional()
@@ -1011,7 +1017,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_attachment",
     description:
-      "Fetch an attachment by ROWID (from search_attachments or a message's attachments[].rowId). IMAGES: returned as a real MCP image content block (downscaled ≤1536px, HEIC auto-converted) so the model can SEE it — plus full-size base64 in structuredContent when ≤ inlineMaxBytes (default 5MB). VIDEO: QuickLook poster frame as an image block + duration/resolution metadata + file path. AUDIO (voice memos): metadata + file path, and a transcript when a transcriber (hear, yap, or whisper-cli) is installed on PATH.",
+      "Fetch an attachment by ROWID (from search_attachments or a message's attachments[].rowId). IMAGES: returned as a real MCP image content block (downscaled ≤1536px, HEIC auto-converted) so the model can SEE it — plus full-size base64 in structuredContent when ≤ inlineMaxBytes (default 5MB). VIDEO: QuickLook poster frame as an image block + duration/resolution metadata + file path. AUDIO (voice memos): metadata + file path, and a transcript when a local transcriber (hear, yap, or whisper-cli) is installed on PATH, or via an opt-in OpenAI-compatible cloud endpoint (set IMSG_TRANSCRIBE_PROVIDER + IMSG_TRANSCRIBE_API_KEY — audio leaves the device; local always preferred).",
     annotations: annotations.read,
     inputSchema: {
       type: "object",
