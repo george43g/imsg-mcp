@@ -82,7 +82,9 @@ only when you want that one signal in isolation.
 
 ## TUI (`imsg`)
 
-Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump, `Enter` message details, `o` open attachment, `y` copy slug, `d` toggle dev stats, `Tab` switch panes, `/` filter, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `S` send via other app, `:` date jump, `V` visual select, `q` quit.
+Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump, `Enter` message details, `i` per-thread info + attachment drawer, `o` open attachment, `y` copy slug, `d` toggle dev stats, `Tab` switch panes, `/` filter, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `S` send via other app, `:` date jump, `V` visual select, `q` quit.
+
+**Info / attachment drawer (`i`):** on a selected thread, opens a side column with thread metadata (name, slug, service, group/direct, participant count, message count, date range) + a browsable list of **all** attachments across the merged legs. Drawer keys: `j/k` select, `o` open (Quick Look / mpv), `s` save to `~/Downloads`, `y` copy path, `a` export all to `~/Downloads/imsg-<slug>/`, `Esc/q` close.
 
 ## Native Rust module (optional)
 
@@ -110,6 +112,10 @@ The server honors `notifications/cancelled`. Long-running handlers (`wait_for_re
 
 - `get_messages` returns a footer with `oldestMessageId`. Pass it as `beforeMessageId` to paginate. Hard cap 5000/call.
 - `export_messages` streams a chat to a file (markdown/csv/json/ndjson) — use this instead of huge `get_messages` calls.
+
+## Attachment transcription
+
+`get_attachment` on an audio attachment transcribes on-device by default (`hear` / `yap` / `whisper-cli`, auto-detected). If none is installed **and** `IMSG_TRANSCRIBE_PROVIDER` + `IMSG_TRANSCRIBE_API_KEY` are set (OpenAI-compatible, e.g. `openai` / `groq` / a base URL; optional `IMSG_TRANSCRIBE_MODEL`, default `whisper-1`), it falls back to an **opt-in** cloud endpoint — audio leaves the device only then. `structuredContent.transcriptSource` reports `"local"` or `"cloud"`.
 
 ## TUI date jump + selection + export
 

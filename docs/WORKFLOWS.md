@@ -176,7 +176,7 @@ The MCP `export_messages` / CLI `imsg export` use the same parser for `--since` 
 | `monthly_volume` | Per-month sent + received bars |
 | `recent_activity` | Top N contacts touched in the last N days |
 
-20 more analytic types are reserved as the schema enum but return a validation error in v1.0.0 — see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types). PRs adding 5-at-a-time to `src/analytics.ts` welcome.
+20 more analytic types are reserved as the schema enum but return a validation error until implemented — see [STATUS.md](STATUS.md#1-analytics--20-remaining-types-p2). PRs adding 5-at-a-time to `src/analytics.ts` welcome.
 
 Results are cached per-window for 60s so a chat-of-the-week agent doesn't re-aggregate the same 30-day window on every tick.
 
