@@ -315,8 +315,30 @@ export class IMessageDB {
     return { slug, isGroup, resolvedName, canonicalService };
   }
 
+  /**
+   * Build the per-identity canonical service map (prefer iMessage) if absent.
+   * The background sync populates this eagerly; this lets the cold synchronous
+   * slug path build it on demand. Cheap: one pass over the cached chat list.
+   */
+  private ensureIdentityServiceMap(): void {
+    if (this.identityServiceMap) return;
+    const identityService = new Map<string, "iMessage" | "SMS">();
+    for (const c of this.getAllChatsWithLastDate()) {
+      if (isGroupGuid(c.guid) || isGroupChatIdentifier(c.chat_identifier)) continue;
+      const key = this.getConversationMergeKey(c.chat_identifier, c.guid, false);
+      const svc = this.detectServiceForChat(c);
+      if (svc === "iMessage" || !identityService.has(key)) identityService.set(key, svc);
+    }
+    this.identityServiceMap = identityService;
+  }
+
   /** Generate and cache a slug for a single chat. */
   private syncSlugForChat(chat: ChatWithLastDate): string {
+    // Canonical per-identity service must be known before hashing, or the SMS
+    // leg and iMessage leg of one contact would produce two different slugs.
+    // The background sync sets this up front; on the cold synchronous path
+    // (listConversations / findChatByHandle) we build it here on first use.
+    this.ensureIdentityServiceMap();
     const { slug, isGroup, resolvedName, canonicalService } = this.computeSlugForChat(chat);
 
     const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [chat.chat_identifier];
@@ -886,13 +908,15 @@ export class IMessageDB {
    */
   async listConversations(limit: number = 200): Promise<Conversation[]> {
     const span = perf("listConversations");
-    const chats = this.getAllChats();
+    // Use the with-last-date variant so each row carries service_name — needed
+    // to compute canonical slugs synchronously on the cold-start path below.
+    const chats = this.getAllChatsWithLastDate();
     const lastByChat = this.getLastMessageByChat();
     const unreadByChat = this.getUnreadByChat();
 
     // ── Pass 1: lightweight sort entries for ALL chats (no DB lookups) ──
     type SortEntry = {
-      chat: ChatRow;
+      chat: ChatWithLastDate;
       lastDate: number;
       isGroup: boolean;
       last?: LastConversationRow;
@@ -904,8 +928,9 @@ export class IMessageDB {
       last: lastByChat[chat.ROWID],
     }));
 
-    // Sort by last message date descending
-    sortEntries.sort((a, b) => b.lastDate - a.lastDate);
+    // Sort by last message date descending; ROWID DESC breaks ties so ordering
+    // stays deterministic (matches the old getAllChats ORDER BY ROWID DESC).
+    sortEntries.sort((a, b) => b.lastDate - a.lastDate || b.chat.ROWID - a.chat.ROWID);
 
     // ── Pass 2: enrich lazily in chunks until enough DEDUPED rows exist ──
     // A fixed over-fetch factor (previously limit*3) starves offset paging
@@ -924,9 +949,14 @@ export class IMessageDB {
 
       const participants = isGroup ? this.fetchChatParticipants(chat.ROWID) : [rawIdentifier];
       const mergeKey = this.getConversationMergeKey(rawIdentifier, chat.guid, isGroup);
-      const slug = this.getSlugForChatGuid(chat.guid) ?? rawIdentifier;
+      // Cold start: single-shot CLI runs exit before the background slug sync
+      // persists, so the store lookup misses. Compute + persist the canonical
+      // slug synchronously so `imsg list` shows ~service~hash slugs, not raw ids.
+      const slug = this.getSlugForChatGuid(chat.guid) ?? this.syncSlugForChat(chat);
       const chatData = this.slugMap.get(slug);
-      const serviceType = chatData ? this.detectServiceForChat(chatData) : "iMessage";
+      const serviceType = chatData
+        ? this.detectServiceForChat(chatData)
+        : this.detectServiceForChat(chat);
 
       return {
         last,
@@ -999,9 +1029,11 @@ export class IMessageDB {
       displayName = resolved !== rawIdentifier ? resolved : null;
     }
 
-    const slug = this.getSlugForChatGuid(found.guid) ?? rawIdentifier;
+    const slug = this.getSlugForChatGuid(found.guid) ?? this.syncSlugForChat(found);
     const chatData = this.slugMap.get(slug);
-    const serviceType = chatData ? this.detectServiceForChat(chatData) : "iMessage";
+    const serviceType = chatData
+      ? this.detectServiceForChat(chatData)
+      : this.detectServiceForChat(found);
 
     return {
       chatId: found.guid,
@@ -1699,16 +1731,6 @@ export class IMessageDB {
     return data;
   }
 
-  /** Get all chats (without last_date subquery -- lighter for listing). */
-  private getAllChats(): ChatRow[] {
-    const rows = this.raw
-      .prepare(
-        `SELECT ROWID, guid, chat_identifier, display_name FROM ${Tables.CHAT} ORDER BY ROWID DESC`,
-      )
-      .all() as ChatRow[];
-    return rows;
-  }
-
   /** Resolve a message ROWID to its date (for composite pagination cursors). */
   private dateOfMessage(rowid: number): number | undefined {
     const row = this.raw.prepare(`SELECT date FROM ${Tables.MESSAGE} WHERE ROWID = ?`).get(rowid) as
@@ -1787,15 +1809,15 @@ export class IMessageDB {
   /**
    * From a list of chats with last_date, return the one with the most recent message (sort by last_date desc).
    */
-  private pickMostRecentChat(chats: ChatWithLastDate[]): ChatRow {
+  private pickMostRecentChat(chats: ChatWithLastDate[]): ChatWithLastDate {
     if (chats.length === 0) throw new Error("pickMostRecentChat requires at least one chat");
-    if (chats.length === 1) return toChatRow(chats[0]);
+    if (chats.length === 1) return chats[0];
     const sorted = chats.slice().sort((a, b) => {
       const aDate = a.last_date ?? 0;
       const bDate = b.last_date ?? 0;
       return bDate - aDate;
     });
-    return toChatRow(sorted[0]);
+    return sorted[0];
   }
 
   /**
