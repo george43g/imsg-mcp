@@ -81,12 +81,21 @@ which return a friendly schema error until implemented. Each is a pure
 `quietest_chats`, `loudest_chats`, `weekend_vs_weekday`, `night_owl_score`, `most_edited_messages`,
 `retraction_rate`.
 
-### 2. Tech-debt: @ts-expect-error + god-file decomposition (P2, staged)
-- Clear the **22** `@ts-expect-error` clustered in `src/mcp-tools.ts` (tool-schema typing escapes)
-  where feasible.
-- Decompose the worst god-files **one PR each, full test runs**, split by concern:
-  `src/imessage-db.ts` (~2570), `src/index.ts` (~2000), `src/tui/App.tsx` (~1290),
-  `src/mcp-tools.ts` (~1110). Do these when not simultaneously feature-adding the same files.
+### 2. Tech-debt: god-file decomposition — deep splits (P2, needs greenlight)
+The **safe pass shipped** (A5, PRs #27–#30, 2026-07-21, all zero-behavior-change):
+all 22 `@ts-expect-error` in mcp-tools.ts replaced by one documented `toOutputSchema()` cast;
+schemas → `src/mcp-schemas.ts` (re-exported, import surface unchanged); pure formatters →
+`src/mcp-format.ts`; TUI attachment actions → `src/tui/attachmentActions.ts`; pure
+conversation-merge cascade → `src/conversation-merge.ts` **with first direct unit tests**
+(`tests/conversation-merge.test.ts`). New line counts: imessage-db ~2480, index ~1840,
+App.tsx ~1180, mcp-tools ~520.
+
+**Remaining (deeper, opinionated — separate greenlight each, one PR per split, full test runs):**
+- `src/index.ts` handler-body grouping: split the 22-case switch's handler bodies into domain
+  modules (message/contact/attachment/analytics handlers) taking a context object.
+- `src/tui/App.tsx` input-router → a `useInputRouter` hook (or fuller keymap.ts adoption).
+- Deeper `src/imessage-db.ts` splits: SlugManager / AttachmentRepo-style delegates for the
+  stateful clusters (slug sync, snippet resolvers, attachment queries).
 
 ### 3. tsconfig strict flags (P2, internal)
 Enable one at a time; fix call sites with `?.` / guards, not `@ts-expect-error`.
