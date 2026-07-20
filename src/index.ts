@@ -34,7 +34,13 @@ import {
   sendToChat,
   sendToChatId,
 } from "./applescript.js";
-import { getContactsDbPaths, getHumansDirPath, getImsgDbPath, getSlugsDbPath } from "./config.js";
+import {
+  getContactsDbPaths,
+  getHumansDirPath,
+  getImsgDbPath,
+  getSlugsDbPath,
+  getTranscribeCloudConfig,
+} from "./config.js";
 import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
 import { normalizedPhoneVariants } from "./contacts-db.js";
 import { parseUserDate } from "./date-parse.js";
@@ -90,7 +96,7 @@ import {
   imageBlockFromFile,
   mediaMetadata,
   TRANSCRIBE_MAX_BYTES,
-  transcribeAudio,
+  transcribeAudioBest,
   videoPosterFrame,
 } from "./media.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
@@ -1691,6 +1697,7 @@ export class IMessageMCPServer {
     let finalPath = resolvedPath;
     let mediaInfo: string | undefined;
     let transcript: string | undefined;
+    let transcriptSource: "local" | "cloud" | undefined;
     // A real MCP image content block (base64 ≤ ~1MB, ≤1536px) so the MODEL
     // sees the image, not just JSON metadata. Emitted for images (always a
     // downscaled preview, even when the original exceeds inlineMaxBytes) and
@@ -1729,7 +1736,11 @@ export class IMessageMCPServer {
     } else if (isAudio) {
       mediaInfo = mediaMetadata(resolvedPath) ?? undefined;
       if (sizeBytes <= TRANSCRIBE_MAX_BYTES) {
-        transcript = transcribeAudio(resolvedPath) ?? undefined;
+        const t = await transcribeAudioBest(resolvedPath);
+        if (t) {
+          transcript = t.transcript;
+          transcriptSource = t.source;
+        }
       }
     }
 
@@ -1745,12 +1756,18 @@ export class IMessageMCPServer {
     } else if (isAudio) {
       lines.push(`Audio attachment ${rowId} (${sizeBytes}B${mediaInfo ? `, ${mediaInfo}` : ""}).`);
       if (transcript) {
-        lines.push("", "Transcript:", wrapUntrusted(sanitizeUserText(transcript) ?? ""));
+        lines.push(
+          "",
+          transcriptSource === "cloud" ? "Transcript (via cloud provider):" : "Transcript:",
+          wrapUntrusted(sanitizeUserText(transcript) ?? ""),
+        );
+      } else if (detectTranscriber()) {
+        lines.push("Transcription produced no text.");
+      } else if (getTranscribeCloudConfig()) {
+        lines.push("Cloud transcription produced no text.");
       } else {
         lines.push(
-          detectTranscriber()
-            ? "Transcription produced no text."
-            : "No transcriber installed — `brew install yap` (macOS 26+) or `brew install sveinbjornt/hear/hear` enables on-device transcription.",
+          "No transcriber installed — `brew install yap` (macOS 26+) or `brew install sveinbjornt/hear/hear` enables on-device transcription; or set IMSG_TRANSCRIBE_PROVIDER + IMSG_TRANSCRIBE_API_KEY for an OpenAI-compatible cloud fallback (audio leaves this device).",
         );
       }
       lines.push(`Path: ${resolvedPath}`);
@@ -1786,6 +1803,7 @@ export class IMessageMCPServer {
         converted: convertedNote,
         mediaInfo,
         transcript,
+        transcriptSource,
         imageBlockIncluded: imageBlock != null,
       },
     };

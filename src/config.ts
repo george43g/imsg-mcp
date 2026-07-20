@@ -83,3 +83,37 @@ export function getHumansDirPath(): string {
 export function getVcfPath(): string {
   return resolveEnvPath(process.env.VITE_VCF_PATH, join(process.cwd(), "fixtures", "contacts.vcf"));
 }
+
+export interface TranscribeCloudConfig {
+  /** OpenAI-compatible base URL, e.g. https://api.openai.com/v1 (no trailing slash). */
+  baseUrl: string;
+  apiKey: string;
+  /** Model id sent to the endpoint (default whisper-1). */
+  model: string;
+}
+
+const TRANSCRIBE_PROVIDER_ALIASES: Record<string, string> = {
+  openai: "https://api.openai.com/v1",
+  groq: "https://api.groq.com/openai/v1",
+};
+
+/**
+ * Opt-in cloud transcription escape-hatch (OpenAI-compatible
+ * `/audio/transcriptions`). Returns null unless BOTH `IMSG_TRANSCRIBE_PROVIDER`
+ * and `IMSG_TRANSCRIBE_API_KEY` are set — local on-device transcription
+ * (`hear`/`yap`/`whisper-cli`) always takes precedence (see media.ts).
+ * `IMSG_TRANSCRIBE_PROVIDER` may be a known alias (`openai`, `groq`) or a raw
+ * base URL; `IMSG_TRANSCRIBE_MODEL` overrides the model (default `whisper-1`).
+ * Sending audio to a cloud provider means it leaves this device — opt-in only.
+ */
+export function getTranscribeCloudConfig(): TranscribeCloudConfig | null {
+  const provider = process.env.IMSG_TRANSCRIBE_PROVIDER?.trim();
+  const apiKey = process.env.IMSG_TRANSCRIBE_API_KEY?.trim();
+  if (!provider || !apiKey) return null;
+  const resolved = /^https?:\/\//.test(provider)
+    ? provider
+    : (TRANSCRIBE_PROVIDER_ALIASES[provider.toLowerCase()] ?? provider);
+  const baseUrl = resolved.replace(/\/+$/, "");
+  const model = process.env.IMSG_TRANSCRIBE_MODEL?.trim() || "whisper-1";
+  return { baseUrl, apiKey, model };
+}
