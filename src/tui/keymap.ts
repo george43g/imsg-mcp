@@ -225,6 +225,21 @@ export const CORE_COMMANDS: Command[] = [
     run: ({ dispatch }) => dispatch({ type: "OPEN_DRAWER" }),
   },
   {
+    id: "core.thread-info",
+    title: "Thread info & attachments drawer",
+    description: "Metadata + browse/export all attachments in the thread",
+    category: "Thread",
+    keybinding: "i",
+    when: hasSelection,
+    run: ({ state, dispatch, imsg }) => {
+      const conv = state.conversations[state.selectedIdx];
+      if (!conv) return;
+      const stats = imsg.getChatStats(conv.chatIdentifier);
+      const attachments = imsg.listConversationAttachments(conv.chatIdentifier);
+      dispatch({ type: "OPEN_INFO_DRAWER", stats, attachments });
+    },
+  },
+  {
     id: "core.attachment.open",
     title: "Open attachment",
     category: "Thread",

@@ -79,6 +79,18 @@ export function useImsg() {
     [getDb],
   );
 
+  /** Message count + first/last date for a conversation (per-thread info drawer). */
+  const getChatStats = useCallback(
+    (chatIdentifier: string) => getDb().getChatStats(chatIdentifier),
+    [getDb],
+  );
+
+  /** All attachments across every merged leg of a conversation, newest first. */
+  const listConversationAttachments = useCallback(
+    (chatIdentifier: string) => getDb().listConversationAttachments(chatIdentifier),
+    [getDb],
+  );
+
   const send = useCallback(
     async (threadSlug: string, text: string): Promise<{ success: boolean; error?: string }> => {
       const db = getDb();
@@ -167,6 +179,8 @@ export function useImsg() {
     loadOlderMessages,
     loadMessagesInWindow,
     resolveNames,
+    getChatStats,
+    listConversationAttachments,
     send,
     sendToRecipient,
     resolveRecipientInput,

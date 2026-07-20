@@ -101,6 +101,26 @@ export interface Attachment {
 }
 
 /**
+ * A thread-wide attachment row (across all merged legs of one conversation),
+ * with its send date — used by the TUI per-thread info/attachment drawer.
+ */
+export interface ConversationAttachment {
+  rowId: number;
+  filename: string;
+  mimeType: string | null;
+  transferName: string | null;
+  totalBytes: number;
+  createdDate: Date;
+}
+
+/** Message-count and date-range summary for one conversation. */
+export interface ChatStats {
+  count: number;
+  first: Date | null;
+  last: Date | null;
+}
+
+/**
  * Represents a conversation/chat thread
  */
 export interface Conversation {

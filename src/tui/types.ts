@@ -1,4 +1,10 @@
-import { type Conversation, type Message, minMessageId } from "../types.js";
+import {
+  type ChatStats,
+  type Conversation,
+  type ConversationAttachment,
+  type Message,
+  minMessageId,
+} from "../types.js";
 import type { ModuleInstance } from "./modules/types.js";
 
 export type FocusPane = "sidebar" | "thread";
@@ -9,6 +15,7 @@ export type Mode =
   | "confirm"
   | "filter"
   | "drawer"
+  | "info"
   | "select"
   | "export"
   | "date-jump"
@@ -39,6 +46,11 @@ export interface AppState {
   /** Selected attachment within the drawer's attachment list. */
   drawerAttachmentIdx: number; // for vim-style number prefix (e.g. "12j")
   showDevStats: boolean;
+
+  // Per-thread info/attachment drawer (mode: "info")
+  infoStats: ChatStats | null; // message count + date range for the open thread
+  infoAttachments: ConversationAttachment[]; // ALL attachments in the thread (merged legs)
+  infoAttachmentIdx: number; // cursor within infoAttachments
 
   // Lazy-loading bookkeeping
   conversationLoadedCount: number; // how many we've requested from the DB so far
@@ -97,6 +109,9 @@ export type Action =
   | { type: "OPEN_DRAWER" }
   | { type: "CLOSE_DRAWER" }
   | { type: "SET_DRAWER_ATTACHMENT"; index: number }
+  | { type: "OPEN_INFO_DRAWER"; stats: ChatStats; attachments: ConversationAttachment[] }
+  | { type: "CLOSE_INFO_DRAWER" }
+  | { type: "SET_INFO_ATTACHMENT"; index: number }
   | { type: "SET_NUM_BUFFER"; value: string }
   | { type: "TOGGLE_DEV_STATS" }
   | { type: "APPEND_CONVERSATIONS"; data: Conversation[]; loadedCount: number }
@@ -144,6 +159,9 @@ export const initialState: AppState = {
   numBuffer: "",
   showDevStats: false,
   drawerAttachmentIdx: 0,
+  infoStats: null,
+  infoAttachments: [],
+  infoAttachmentIdx: 0,
   conversationLoadedCount: 0,
   conversationLoadingMore: false,
   messageOldestLoadedId: null,
@@ -496,6 +514,24 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, mode: "browse" };
     case "SET_DRAWER_ATTACHMENT":
       return { ...state, drawerAttachmentIdx: Math.max(0, action.index) };
+    case "OPEN_INFO_DRAWER":
+      return {
+        ...state,
+        mode: "info",
+        infoStats: action.stats,
+        infoAttachments: action.attachments,
+        infoAttachmentIdx: 0,
+      };
+    case "CLOSE_INFO_DRAWER":
+      return { ...state, mode: "browse" };
+    case "SET_INFO_ATTACHMENT":
+      return {
+        ...state,
+        infoAttachmentIdx: Math.max(
+          0,
+          Math.min(action.index, Math.max(0, state.infoAttachments.length - 1)),
+        ),
+      };
     case "SET_NUM_BUFFER":
       return { ...state, numBuffer: action.value };
     case "TOGGLE_DEV_STATS":
