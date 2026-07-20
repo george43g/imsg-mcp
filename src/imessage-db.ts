@@ -51,6 +51,7 @@ export interface UnmergedSiblingChat {
 
 import { extractAttributedBodyText } from "./attributed-body-text.js";
 import { ContactsDB } from "./contacts-db.js";
+import { mergeDuplicateConversations } from "./conversation-merge.js";
 import {
   isMetadataOnlySnippet,
   normalizeRichMetadataText,
@@ -96,12 +97,6 @@ type LastConversationRow = {
   snippet: string | null;
   chatProperties: Buffer | null;
 };
-type PreparedConversationEntry = {
-  last?: LastConversationRow;
-  mergeKey: string;
-  conversation: Conversation;
-};
-
 function toChatRow(c: ChatWithLastDate): ChatRow {
   return {
     ROWID: c.ROWID,
@@ -981,12 +976,12 @@ export class IMessageDB {
     const CHUNK = Math.max(limit, 200);
     const prepared: ReturnType<typeof enrich>[] = [];
     let cursor = 0;
-    let deduped = this.mergeDuplicateConversations(prepared);
+    let deduped = mergeDuplicateConversations(prepared);
     while (deduped.length < limit && cursor < sortEntries.length) {
       const chunk = sortEntries.slice(cursor, cursor + CHUNK);
       cursor += chunk.length;
       for (const entry of chunk) prepared.push(enrich(entry));
-      deduped = this.mergeDuplicateConversations(prepared);
+      deduped = mergeDuplicateConversations(prepared);
     }
     const selected = deduped.slice(0, limit);
 
@@ -1377,89 +1372,6 @@ export class IMessageDB {
     }
 
     return null;
-  }
-
-  private mergeDuplicateConversations(prepared: PreparedConversationEntry[]) {
-    const merged: typeof prepared = [];
-    const indexByKey = new Map<string, number>();
-
-    for (const entry of prepared) {
-      const existingIndex = indexByKey.get(entry.mergeKey);
-      if (existingIndex === undefined) {
-        indexByKey.set(entry.mergeKey, merged.length);
-        merged.push(entry);
-        continue;
-      }
-
-      merged[existingIndex] = this.mergeConversationEntries(merged[existingIndex], entry);
-    }
-
-    return merged;
-  }
-
-  private mergeConversationEntries(
-    left: PreparedConversationEntry,
-    right: PreparedConversationEntry,
-  ) {
-    const preferred = this.pickPreferredConversationEntry(left, right);
-    const other = preferred === left ? right : left;
-    const sameIdentifier =
-      preferred.conversation.chatIdentifier === other.conversation.chatIdentifier;
-
-    return {
-      mergeKey: preferred.mergeKey,
-      last: preferred.last ?? other.last,
-      conversation: {
-        ...preferred.conversation,
-        displayName: preferred.conversation.displayName ?? other.conversation.displayName,
-        participants: [
-          ...new Set([...preferred.conversation.participants, ...other.conversation.participants]),
-        ],
-        unreadCount: sameIdentifier
-          ? Math.max(preferred.conversation.unreadCount, other.conversation.unreadCount)
-          : preferred.conversation.unreadCount + other.conversation.unreadCount,
-      },
-    };
-  }
-
-  private pickPreferredConversationEntry(
-    left: PreparedConversationEntry,
-    right: PreparedConversationEntry,
-  ): PreparedConversationEntry {
-    const leftTime = left.conversation.lastMessageDate?.getTime() ?? 0;
-    const rightTime = right.conversation.lastMessageDate?.getTime() ?? 0;
-    if (leftTime !== rightTime) {
-      return leftTime > rightTime ? left : right;
-    }
-
-    const preferredService = left.last?.lastService ?? right.last?.lastService ?? null;
-    if (preferredService) {
-      const preferredType = preferredService.toLowerCase().includes("sms") ? "SMS" : "iMessage";
-      if (
-        left.conversation.serviceType === preferredType &&
-        right.conversation.serviceType !== preferredType
-      ) {
-        return left;
-      }
-      if (
-        right.conversation.serviceType === preferredType &&
-        left.conversation.serviceType !== preferredType
-      ) {
-        return right;
-      }
-    }
-
-    if (left.conversation.displayName && !right.conversation.displayName) return left;
-    if (right.conversation.displayName && !left.conversation.displayName) return right;
-
-    if (left.conversation.serviceType === "iMessage" && right.conversation.serviceType === "SMS") {
-      return left;
-    }
-    if (right.conversation.serviceType === "iMessage" && left.conversation.serviceType === "SMS") {
-      return right;
-    }
-
-    return left;
   }
 
   private getConversationMergeKey(
