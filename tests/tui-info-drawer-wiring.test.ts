@@ -24,7 +24,8 @@ describe("info drawer wiring in App.tsx", () => {
   });
 
   it("wires the export-all-attachments action", () => {
-    expect(APP).toContain("saveAllAttachmentFiles(state.infoAttachments");
+    // Whitespace-tolerant: the call wraps across lines once formatted.
+    expect(APP).toMatch(/saveAllAttachmentFiles\(\s*state\.infoAttachments/);
   });
 
   it("renders the InfoDrawer for info mode", () => {
