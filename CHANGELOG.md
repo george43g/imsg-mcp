@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+## [1.6.2](https://github.com/george43g/imsg-mcp/compare/v1.6.1...v1.6.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **cli:** compute thread slugs synchronously on the cold-start path ([31df320](https://github.com/george43g/imsg-mcp/commit/31df3200cd01fabb4bac5cf2f8d2ab3d62a64c43))
+
 ## [1.6.1](https://github.com/george43g/imsg-mcp/compare/v1.6.0...v1.6.1) (2026-07-19)
 
 
