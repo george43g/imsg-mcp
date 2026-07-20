@@ -101,7 +101,9 @@ Output is pretty text with color by default; pass `--json` or `--yaml` for machi
 | Tool | Required args | Notes |
 |---|---|---|
 | `search_attachments` | — | `mimePrefix`, `chatIdentifier`, `since`, `until`, `limit`. Returns metadata only. |
-| `get_attachment` | `rowId` | **Images**: real MCP image content block (≤1536px downscale, HEIC→PNG) so the model can see it, plus full-size base64 when ≤5MB. **Video**: QuickLook poster frame image block + duration/resolution + path. **Audio**: metadata + path, transcript when `hear`/`yap`/`whisper-cli` is installed. |
+| `get_attachment` | `rowId` | **Images**: real MCP image content block (≤1536px downscale, HEIC→PNG) so the model can see it, plus full-size base64 when ≤5MB. **Video**: QuickLook poster frame image block + duration/resolution + path. **Audio**: metadata + path, transcript when `hear`/`yap`/`whisper-cli` is installed — or, if none is and `IMSG_TRANSCRIBE_PROVIDER` + `IMSG_TRANSCRIBE_API_KEY` are set, an opt-in OpenAI-compatible cloud fallback. `structuredContent.transcriptSource` is `"local"` or `"cloud"`. |
+
+**Audio transcription** is on-device by default (`hear` / `yap` / `whisper-cli`, auto-detected). Setting `IMSG_TRANSCRIBE_PROVIDER` + `IMSG_TRANSCRIBE_API_KEY` adds an **opt-in** OpenAI-compatible cloud fallback (`POST {baseUrl}/audio/transcriptions`) that runs **only** when no local transcriber produced text. Local always takes precedence; **audio leaves the device only when the cloud fallback actually fires**, and the response labels it "Transcript (via cloud provider):" with `transcriptSource: "cloud"`. See the server env-var table below for `IMSG_TRANSCRIBE_*`.
 
 ### Contacts
 
@@ -122,7 +124,7 @@ Output is pretty text with color by default; pass `--json` or `--yaml` for machi
 | Tool | Notes |
 |---|---|
 | `check_imessage_availability` | Preflight a handle — returns `service: "iMessage"\|"SMS"\|"unknown"` + `hint`. Authoritative when conversation history exists; best-effort for never-messaged handles. |
-| `chat_analytics` | `type` + window. 7 types shipped incl. `relationship_leaderboard` (top relationships by volume × reciprocity × recency); 20 reserved (see [DEFERRED_TASKS.md](DEFERRED_TASKS.md#1-analytics--20-remaining-types)). Cached per-window. |
+| `chat_analytics` | `type` + window. 7 types shipped incl. `relationship_leaderboard` (top relationships by volume × reciprocity × recency); 20 reserved (see [STATUS.md](STATUS.md#1-analytics--20-remaining-types-p2)). Cached per-window. |
 | `init_human` | Scaffold a humans/v1 relationship file (`~/.agents/humans/<person>.md`) for a `contact`, `threadSlug`, or `top: N` relationships. Prefills identity + history stats; never overwrites; the AGENT writes the summaries (see [skills/humans/SKILL.md](../skills/humans/SKILL.md)). |
 
 **Humans-file hints:** once a relationship file exists, tools that touch that person surface it automatically so agents actually use it — `get_messages` and `wait_for_reply` include a `humans` block (file path(s) — one per participant for groups — plus standing guidance: consult before replying, append milestones to the Log, suggest Summary updates to the user for approval, never share contents), `get_contact` includes `humansFile` (or an init_human pointer when none exists), and `list_conversations` rows carry `humansFiles` paths.
@@ -161,6 +163,7 @@ The server exposes resources under two URI schemes for hosts that prefer resourc
 | `Ctrl-d` / `Ctrl-u` | Half-page down / up |
 | `/` | Filter (any substring of name or last message) |
 | `y` | Copy thread slug |
+| `i` | Open per-thread **info / attachment drawer** (see below) |
 | `Enter` / `Tab` / `l` / `→` | Open messages pane |
 | `c` | Compose in current thread (or in new thread if none selected) |
 | `N` | Compose to new recipient — opens picker (phone / email / contact name typeahead, with vanity-letter parsing) |
@@ -184,6 +187,23 @@ The server exposes resources under two URI schemes for hosts that prefer resourc
 | `y` (in select) | Copy selected text |
 | `e` (in select) | Open export modal |
 | `Tab` / `h` / `←` | Back to sidebar |
+
+### Info / attachment drawer (`i`)
+
+Press `i` on a selected thread in the sidebar to open a side-column drawer showing thread metadata
+(name, slug, service, group/direct, participant count, message count, first→last date range) plus a
+browsable list of **every** attachment in the conversation — across all merged legs (phone + email,
+SMS + iMessage), stickers and plugin payloads excluded, newest first.
+
+| Key | Action |
+|---|---|
+| `j` / `k` | Select next / previous attachment |
+| `g` / `G` | First / last attachment |
+| `o` | Open the selected attachment (images → Quick Look, video → mpv) |
+| `s` | Save the selected attachment to `~/Downloads` (collision-safe name) |
+| `y` | Copy the selected attachment's file path |
+| `a` | Export **all** the thread's attachments to `~/Downloads/imsg-<slug>/` |
+| `Esc` / `q` | Close the drawer |
 
 ---
 
@@ -225,6 +245,9 @@ Resolution order: CLI flag → `IMSG_TUI_*` env → config file → defaults.
 | `VITE_SLUGS_DB_PATH` | `~/.imsg-mcp/slugs.db` | Shared multi-user install |
 | `IMSG_DEV` | unset | When `1`, exposes the 5 dev tools (`health_check`, etc) |
 | `IMSG_DISABLE_NATIVE` | `0` | Force the TS-only DB parser (debug) |
+| `IMSG_TRANSCRIBE_PROVIDER` | unset | Opt-in cloud transcription fallback for `get_attachment` audio. Alias (`openai`, `groq`) or a raw OpenAI-compatible base URL. Requires `IMSG_TRANSCRIBE_API_KEY`. Local transcribers always take precedence. |
+| `IMSG_TRANSCRIBE_API_KEY` | unset | Bearer key for the cloud transcription endpoint. Both this **and** `IMSG_TRANSCRIBE_PROVIDER` must be set for cloud to be attempted. |
+| `IMSG_TRANSCRIBE_MODEL` | `whisper-1` | Model id sent to the cloud transcription endpoint. |
 | `IMSG_DEFAULT_COUNTRY` | `AU` | Country for normalizing bare local phone numbers (`AU` or `US`). E.g. AU turns `0401 990 797` → `+61401990797`; US turns `555-010-0100` → `+15550100100`. Used by `send_message`, CLI `imsg send`, and the TUI `N` compose modal. |
 | `IMSG_MAX_RSS_MB` | `1024` | Watchdog: kill self when RSS exceeds this |
 | `IMSG_HEAP_WARN_MB` | `256` | Heartbeat: emit `level:warn` "heap exceeds threshold" when heap exceeds this (soft signal, not a kill). |
