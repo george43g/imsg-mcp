@@ -5,7 +5,7 @@
  * Keep these pure (no fs / no React) — the modal + MCP export tool both
  * call into them.
  */
-import type { Message } from "../types.js";
+import type { Message } from "./types.js";
 
 export interface ExportHeader {
   thread: string;

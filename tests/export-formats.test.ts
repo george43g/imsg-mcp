@@ -2,7 +2,7 @@
  * Pin export formats so future refactors don't silently break round-trips.
  */
 import { describe, expect, it } from "vitest";
-import { extensionFor, toCSV, toJSON, toMarkdown, toNDJSONLine } from "../src/tui/exportFormats.js";
+import { extensionFor, toCSV, toJSON, toMarkdown, toNDJSONLine } from "../src/export-formats.js";
 import type { Message } from "../src/types.js";
 
 const baseMsg = (overrides: Partial<Message>): Message => ({

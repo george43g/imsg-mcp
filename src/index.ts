@@ -37,6 +37,7 @@ import {
 import { getContactsDbPaths, getHumansDirPath, getImsgDbPath, getSlugsDbPath } from "./config.js";
 import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
 import { normalizedPhoneVariants } from "./contacts-db.js";
+import { parseUserDate } from "./date-parse.js";
 import { streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
 import { HUMANS_INIT_HINT, HumansIndex, humansHintText } from "./humans-hints.js";
@@ -105,7 +106,6 @@ import {
   registerCleanup,
   shutdown,
 } from "./shutdown.js";
-import { parseUserDate } from "./tui/dateParse.js";
 import { type Message, minMessageId } from "./types.js";
 import { installWatchdog, noteActivity, readWatchdogState } from "./watchdog.js";
 

@@ -407,7 +407,7 @@ export async function runExportCommand(target: string, opts: ExportOpts): Promis
   const { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } = await import("./config.js");
   const { IMessageDB } = await import("./imessage-db.js");
   const { streamExport } = await import("./exportStream.js");
-  const { parseUserDate } = await import("./tui/dateParse.js");
+  const { parseUserDate } = await import("./date-parse.js");
 
   const format = normalizeFormat(opts.format ?? "md");
   const ext = extForFormat(format);
