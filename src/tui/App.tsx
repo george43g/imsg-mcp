@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { join } from "node:path";
 import { useScreenSize } from "fullscreen-ink";
 import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
@@ -10,6 +10,13 @@ import { extensionFor, toCSV, toJSON, toMarkdown } from "../export-formats.js";
 import { registerCleanup } from "../shutdown.js";
 import { type Conversation, minMessageId } from "../types.js";
 import { getInstalledChatApps } from "../url-schemes.js";
+import {
+  openAttachment,
+  openAttachmentFile,
+  saveAllAttachmentFiles,
+  saveAttachment,
+  saveAttachmentFile,
+} from "./attachmentActions.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { ComposeRecipientModal } from "./components/ComposeRecipientModal.js";
 import { DateJumpModal } from "./components/DateJumpModal.js";
@@ -429,9 +436,9 @@ export function App() {
         dispatch({ type: "SET_DRAWER_ATTACHMENT", index: state.drawerAttachmentIdx - 1 });
       } else if (input === "o" && selectedMsg) {
         // Open the SELECTED attachment in external viewer
-        openAttachment(selectedMsg, state.drawerAttachmentIdx);
+        openAttachment(selectedMsg, state.drawerAttachmentIdx, dispatch);
       } else if (input === "s" && selectedMsg) {
-        saveAttachment(selectedMsg, state.drawerAttachmentIdx);
+        saveAttachment(selectedMsg, state.drawerAttachmentIdx, dispatch);
       } else if (input === "y" && selectedMsg) {
         const att = selectedMsg.attachments?.[state.drawerAttachmentIdx];
         if (att?.filename) {
@@ -462,10 +469,10 @@ export function App() {
       } else if (input === "G" && attCount > 0) {
         dispatch({ type: "SET_INFO_ATTACHMENT", index: attCount - 1 });
       } else if (input === "o") {
-        if (att) openAttachmentFile(att);
+        if (att) openAttachmentFile(att, dispatch);
         else dispatch({ type: "SET_STATUS", status: "No attachment." });
       } else if (input === "s") {
-        if (att) saveAttachmentFile(att);
+        if (att) saveAttachmentFile(att, dispatch);
         else dispatch({ type: "SET_STATUS", status: "No attachment." });
       } else if (input === "y") {
         if (att?.filename) {
@@ -475,7 +482,11 @@ export function App() {
           dispatch({ type: "SET_STATUS", status: "No attachment to copy." });
         }
       } else if (input === "a") {
-        saveAllAttachmentFiles(state.infoAttachments, `imsg-${selected?.threadSlug ?? "thread"}`);
+        saveAllAttachmentFiles(
+          state.infoAttachments,
+          `imsg-${selected?.threadSlug ?? "thread"}`,
+          dispatch,
+        );
       }
       return;
     }
@@ -811,7 +822,7 @@ export function App() {
             status: `${msg.attachments?.length} attachments — j/k select, o open, s save`,
           });
         } else {
-          openAttachment(msg);
+          openAttachment(msg, 0, dispatch);
         }
       }
     }
@@ -927,123 +938,6 @@ export function App() {
   ]);
 
   // ── Open attachment ────────────────────────────────────────────────
-
-  // Bare-attachment file actions — shared by the message drawer (Message
-  // attachments) and the per-thread info drawer (ConversationAttachment rows).
-  type AttFile = { filename: string; mimeType?: string | null; transferName?: string | null };
-
-  /** Open a single attachment file in an external viewer (Quick Look / mpv). */
-  function openAttachmentFile(att: AttFile) {
-    if (!att.filename) {
-      dispatch({ type: "SET_STATUS", status: "Attachment has no file path." });
-      return;
-    }
-    // Expand ~ to home directory
-    const filepath = att.filename.replace(/^~/, process.env.HOME ?? "~");
-    const mime = att.mimeType ?? "";
-
-    // macOS Quick Look (qlmanage -p) handles images, PDFs, audio, docs, and
-    // most archives natively — same UX as Finder spacebar preview. For video,
-    // mpv is preferred when installed (better scrubbing); otherwise fall back
-    // to Quick Look. All spawns are detached + unref'd so the TUI never blocks.
-    import("node:child_process").then(({ spawn }) => {
-      const spawnQuickLook = () =>
-        spawn("qlmanage", ["-p", filepath], { detached: true, stdio: "ignore" }).unref();
-
-      if (mime.startsWith("video/")) {
-        const child = spawn("mpv", [filepath], { detached: true, stdio: "ignore" });
-        child.on("error", spawnQuickLook);
-        child.unref();
-      } else {
-        spawnQuickLook();
-      }
-    });
-  }
-
-  function openAttachment(msg: import("../types.js").Message | undefined, attIdx = 0) {
-    // Surface UX feedback when `o` can't do anything — previously this
-    // silently no-op'd, leaving the user wondering if the key worked.
-    if (!msg) {
-      dispatch({ type: "SET_STATUS", status: "No message selected." });
-      return;
-    }
-    if (!msg.attachments?.length) {
-      dispatch({ type: "SET_STATUS", status: "No attachment on this message." });
-      return;
-    }
-    openAttachmentFile(msg.attachments[attIdx] ?? msg.attachments[0]);
-  }
-
-  /** Copy a single attachment file to ~/Downloads with a collision-safe name. */
-  function saveAttachmentFile(att: AttFile): string | null {
-    if (!att.filename) {
-      dispatch({ type: "SET_STATUS", status: "No attachment to save." });
-      return null;
-    }
-    const src = att.filename.replace(/^~/, process.env.HOME ?? "~");
-    try {
-      const base = att.transferName ?? basename(src);
-      const dir = join(homedir(), "Downloads");
-      const ext = extname(base);
-      const stem = base.slice(0, base.length - ext.length);
-      let dest = join(dir, base);
-      for (let n = 1; existsSync(dest); n++) {
-        dest = join(dir, `${stem}-${n}${ext}`);
-      }
-      copyFileSync(src, dest);
-      dispatch({ type: "SET_STATUS", status: `Saved to ${dest.replace(homedir(), "~")}` });
-      return dest;
-    } catch (e) {
-      dispatch({
-        type: "SET_STATUS",
-        status: `Save failed: ${e instanceof Error ? e.message : String(e)}`,
-      });
-      return null;
-    }
-  }
-
-  function saveAttachment(msg: import("../types.js").Message, attIdx: number) {
-    const att = msg.attachments?.[attIdx];
-    if (!att) {
-      dispatch({ type: "SET_STATUS", status: "No attachment to save." });
-      return;
-    }
-    saveAttachmentFile(att);
-  }
-
-  /** Export ALL of a thread's attachments into ~/Downloads/<folder>/. */
-  function saveAllAttachmentFiles(atts: AttFile[], folder: string) {
-    if (atts.length === 0) {
-      dispatch({ type: "SET_STATUS", status: "No attachments to export." });
-      return;
-    }
-    try {
-      const dir = join(homedir(), "Downloads", folder);
-      mkdirSync(dir, { recursive: true });
-      let saved = 0;
-      for (const att of atts) {
-        if (!att.filename) continue;
-        const src = att.filename.replace(/^~/, process.env.HOME ?? "~");
-        if (!existsSync(src)) continue;
-        const base = att.transferName ?? basename(src);
-        const ext = extname(base);
-        const stem = base.slice(0, base.length - ext.length);
-        let dest = join(dir, base);
-        for (let n = 1; existsSync(dest); n++) dest = join(dir, `${stem}-${n}${ext}`);
-        copyFileSync(src, dest);
-        saved++;
-      }
-      dispatch({
-        type: "SET_STATUS",
-        status: `Exported ${saved}/${atts.length} attachments → ${dir.replace(homedir(), "~")}`,
-      });
-    } catch (e) {
-      dispatch({
-        type: "SET_STATUS",
-        status: `Export failed: ${e instanceof Error ? e.message : String(e)}`,
-      });
-    }
-  }
 
   /** Load thread stats + all attachments (sync DB reads), then open the drawer. */
   function openInfoDrawer() {
