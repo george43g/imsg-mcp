@@ -131,7 +131,11 @@ export function ThreadPane({
   const messagesByGuid = useMemo(() => {
     const map = new Map<string, string>();
     for (const m of messages) {
-      if (m.guid && m.text) map.set(m.guid, m.text);
+      if (!m.guid) continue;
+      // Prefer the message text; fall back to a synced voice-note transcript so
+      // a reply to a voice note resolves to its words, not "(unknown)".
+      if (m.text) map.set(m.guid, m.text);
+      else if (m.appleAudioTranscript) map.set(m.guid, m.appleAudioTranscript);
     }
     return map;
   }, [messages]);

@@ -31,6 +31,12 @@ export interface Reaction {
 export interface ReplyContext {
   replyToGuid: string;
   replyToText?: string | null; // The text of the message being replied to
+  /**
+   * Kind of the message being replied to, when it has no text of its own
+   * (a voice note, image, video, or other file). Lets the UI render
+   * "↩ voice note" instead of a bare "(unknown)" / "image/attachment".
+   */
+  replyToKind?: "voice-note" | "image" | "video" | "file";
 }
 
 /**
@@ -83,6 +89,14 @@ export interface Message {
   isEdited: boolean;
   isRetracted: boolean;
 
+  /**
+   * iPhone-generated voice-note transcript (iOS 17+), extracted from the
+   * `IMAudioTranscription` typedstream attribute. Present only for received/sent
+   * audio messages that Apple has already transcribed on-device; undefined for
+   * older `.caf` voice notes (those fall back to local/cloud transcription).
+   */
+  appleAudioTranscript?: string;
+
   // Attachments
   hasAttachments: boolean;
   attachments?: Attachment[];
@@ -98,6 +112,12 @@ export interface Attachment {
   mimeType: string | null;
   transferName: string | null;
   totalBytes: number;
+  /**
+   * Apple-authored short description of a Genmoji image
+   * (`attachment.emoji_image_short_description`), e.g. "a smiling cactus".
+   * Null/undefined for ordinary attachments.
+   */
+  emojiDescription?: string | null;
 }
 
 /**

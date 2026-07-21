@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { formatReplyPreview } from "../../reply-preview.js";
 import type { Message } from "../../types.js";
 import { TAPBACK_EMOJI } from "../theme.js";
 import { useTheme } from "../themes/ThemeContext.js";
@@ -225,7 +226,7 @@ export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx
           <Box flexDirection="column" marginTop={1}>
             <Text color={theme.drawer.label}>Reply to:</Text>
             <Text color={theme.replyContext} italic wrap="wrap">
-              {m.replyTo.replyToText ?? "(unknown)"}
+              {formatReplyPreview(m.replyTo) ?? "(unknown)"}
             </Text>
           </Box>
         )}

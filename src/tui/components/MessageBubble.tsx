@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import { formatReplyPreview } from "../../reply-preview.js";
 import type { Message, Reaction } from "../../types.js";
 import { TAPBACK_EMOJI } from "../theme.js";
 import { useTheme } from "../themes/ThemeContext.js";
@@ -224,12 +225,13 @@ export function MessageBubble({
           and fall back to a placeholder so the user knows it IS a reply. */}
       {m.isReply &&
         (() => {
-          let replyText: string | null = m.replyTo?.replyToText ?? null;
-          if (!replyText && m.replyTo?.replyToGuid && lookupReplyText) {
-            replyText = lookupReplyText(m.replyTo.replyToGuid);
+          let fallback: string | null = null;
+          if (!m.replyTo?.replyToText && m.replyTo?.replyToGuid && lookupReplyText) {
+            fallback = lookupReplyText(m.replyTo.replyToGuid);
           }
-          const display = replyText
-            ? replyText.slice(0, maxWidth - 12)
+          const preview = formatReplyPreview(m.replyTo, fallback);
+          const display = preview
+            ? preview.slice(0, maxWidth - 12)
             : "(replied to earlier message)";
           return (
             <Box>
