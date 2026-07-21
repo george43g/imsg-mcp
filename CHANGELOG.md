@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.10.0](https://github.com/george43g/imsg-mcp/compare/v1.9.0...v1.10.0) (2026-07-21)
+
+
+### Features
+
+* **core:** media-intel interpretation service, cache & providers ([d6441de](https://github.com/george43g/imsg-mcp/commit/d6441de0248336f9a1fe04a709a8541c13476527))
+
 # [1.9.0](https://github.com/george43g/imsg-mcp/compare/v1.8.0...v1.9.0) (2026-07-21)
 
 
