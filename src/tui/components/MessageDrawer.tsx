@@ -230,6 +230,34 @@ export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx
             </Text>
           </Box>
         )}
+
+        {/* Edit history timeline */}
+        {(() => {
+          const versions = (m.editHistory?.parts ?? []).flatMap((p) => p.versions);
+          const retracted = m.editHistory?.retractedParts ?? [];
+          if (versions.length === 0 && retracted.length === 0) return null;
+          return (
+            <Box flexDirection="column" marginTop={1}>
+              <Text color={theme.drawer.label}>
+                Edit history{versions.length ? ` (${versions.length} versions)` : ""}:
+              </Text>
+              {versions.map((v, i) => (
+                <Box key={`ev-${i}-${v.date?.getTime() ?? i}`} flexDirection="column">
+                  <Text color={theme.help.desc}>
+                    {`${i + 1}. `}
+                    {v.date ? formatFullDate(v.date) : "unknown time"}
+                  </Text>
+                  <Text color={theme.drawer.value} wrap="wrap">
+                    {`   ${v.text ?? "(no text)"}`}
+                  </Text>
+                </Box>
+              ))}
+              {retracted.length > 0 && (
+                <Text color={theme.edited}>{`Retracted part(s): ${retracted.join(", ")}`}</Text>
+              )}
+            </Box>
+          );
+        })()}
       </Box>
 
       {/* Footer hint */}
