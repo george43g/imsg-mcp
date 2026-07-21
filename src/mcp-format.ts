@@ -100,7 +100,13 @@ export function formatMessage(msg: Message, conversationLabel?: string): string 
   // treats prompt-injection attempts in the body as data, not instructions.
   // The empty-message placeholder is server-generated and trusted.
   const text = rawText ? wrapUntrusted(rawText) : msg.isRetracted ? "(unsent)" : "(no text)";
-  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${text}${status}${convCtx}`;
+  // Genmoji: surface Apple's authored short descriptions (server-derived
+  // metadata, not user free-text) so an agent can "see" the custom emoji.
+  const genmoji = (msg.attachments ?? [])
+    .map((a) => a.emojiDescription)
+    .filter((d): d is string => Boolean(d));
+  const genmojiTag = genmoji.length ? ` [genmoji: ${genmoji.map((d) => `"${d}"`).join(", ")}]` : "";
+  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${text}${genmojiTag}${status}${convCtx}`;
 }
 
 export function messageToStructured(msg: Message) {

@@ -49,7 +49,7 @@ export interface UnmergedSiblingChat {
   reason: string;
 }
 
-import { extractAttributedBodyText } from "./attributed-body-text.js";
+import { extractAttributedBodyText, extractAudioTranscription } from "./attributed-body-text.js";
 import { ContactsDB } from "./contacts-db.js";
 import { mergeDuplicateConversations } from "./conversation-merge.js";
 import {
@@ -204,6 +204,8 @@ export class IMessageDB {
    * other clear site. Add one if you introduce a read path that bypasses it.
    */
   private cachedReactionsByChat = new Map<number, { data: Map<string, Reaction[]>; ts: number }>();
+  /** Per-table column-name sets, for optional-column guards (schema drift / synthetic fixtures). */
+  private columnCache = new Map<string, Set<string>>();
   private backgroundSyncNeeded = true;
   private backgroundRefreshScheduled = false;
   /** Set on close() so background chunked work stops touching a closed DB. */
@@ -1820,11 +1822,7 @@ export class IMessageDB {
     const isReply = Boolean(ext.thread_originator_guid);
     let replyTo: ReplyContext | undefined;
     if (isReply && ext.thread_originator_guid) {
-      const originalText = this.getMessageTextByGuid(ext.thread_originator_guid);
-      replyTo = {
-        replyToGuid: ext.thread_originator_guid,
-        replyToText: originalText,
-      };
+      replyTo = this.getReplyContextByGuid(ext.thread_originator_guid);
     }
 
     // Get rich content type
@@ -1878,6 +1876,10 @@ export class IMessageDB {
       hasAttachments,
     });
 
+    // iPhone-generated voice-note transcript (iOS 17+), if Apple synced one.
+    // Marker-gated inside the extractor, so this is a cheap no-op for non-audio.
+    const appleAudioTranscript = extractAudioTranscription(raw.attributedBody ?? null);
+
     return {
       id: raw.ROWID,
       guid: raw.guid,
@@ -1905,6 +1907,7 @@ export class IMessageDB {
       richContentSummary,
       isEdited: !isUnsent && Boolean(ext.date_edited && ext.date_edited > 0),
       isRetracted: isUnsent || Boolean(ext.date_retracted && ext.date_retracted > 0),
+      appleAudioTranscript,
       hasAttachments,
       attachments,
     };
@@ -2045,6 +2048,25 @@ export class IMessageDB {
       }
     }
     return result;
+  }
+
+  /**
+   * Whether `table` has `column` in the current chat.db schema (cached per table).
+   * Guards columns that are absent on older macOS DBs or synthetic fixtures
+   * (e.g. `message.is_audio_message`, `attachment.emoji_image_short_description`).
+   */
+  private hasColumn(table: string, column: string): boolean {
+    let cols = this.columnCache.get(table);
+    if (!cols) {
+      try {
+        const rows = this.raw.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+        cols = new Set(rows.map((r) => r.name));
+      } catch {
+        cols = new Set<string>();
+      }
+      this.columnCache.set(table, cols);
+    }
+    return cols.has(column);
   }
 
   /** Max ROWID currently in the message table — used as a cache key. */
@@ -2284,13 +2306,16 @@ export class IMessageDB {
    * Fetch attachments for a message
    */
   private fetchAttachments(messageRowId: number): Attachment[] {
+    const emojiCol = this.hasColumn("attachment", "emoji_image_short_description")
+      ? ", a.emoji_image_short_description as emoji_desc"
+      : "";
     const stmt = this.raw.prepare(`
-      SELECT 
+      SELECT
         a.ROWID as row_id,
         a.filename,
         a.mime_type,
         a.transfer_name,
-        a.total_bytes
+        a.total_bytes${emojiCol}
       FROM ${Tables.ATTACHMENT} a
       JOIN ${Tables.MESSAGE_ATTACHMENT_JOIN} maj ON a.ROWID = maj.attachment_id
       WHERE maj.message_id = ?
@@ -2302,6 +2327,7 @@ export class IMessageDB {
       mimeType: r.mime_type,
       transferName: r.transfer_name,
       totalBytes: r.total_bytes || 0,
+      emojiDescription: r.emoji_desc ?? null,
     }));
   }
 
@@ -2439,13 +2465,78 @@ export class IMessageDB {
     return this.extractMessageText(row);
   }
 
-  private getMessageTextByGuid(guid: string): string | null {
+  /**
+   * Build reply context for the message being replied to, by GUID. Beyond the
+   * plain text, this resolves what KIND of message it was when it carries no text
+   * of its own — a voice note (surfacing Apple's transcript), image, video, or
+   * file — so the UI renders "↩ voice note: '…'" instead of a bare "(unknown)".
+   */
+  private getReplyContextByGuid(guid: string): ReplyContext {
+    const audioCol = this.hasColumn("message", "is_audio_message")
+      ? "is_audio_message"
+      : "0 AS is_audio_message";
     const row = this.raw
-      .prepare(`SELECT ROWID, text, attributedBody FROM ${Tables.MESSAGE} WHERE guid = ? LIMIT 1`)
+      .prepare(
+        `SELECT ROWID, text, attributedBody, ${audioCol}, cache_has_attachments
+         FROM ${Tables.MESSAGE} WHERE guid = ? LIMIT 1`,
+      )
       .get(guid) as
-      | { ROWID: number; text: string | null; attributedBody: Buffer | null }
+      | {
+          ROWID: number;
+          text: string | null;
+          attributedBody: Buffer | null;
+          is_audio_message: number | null;
+          cache_has_attachments: number | null;
+        }
       | undefined;
-    return this.extractMessageText(row);
+
+    const ctx: ReplyContext = { replyToGuid: guid };
+    if (!row) return ctx;
+
+    // 1. Voice note: an audio message IS a voice note regardless of any loose
+    //    bytes a generic scan might find — surface Apple's synced transcript via
+    //    the dedicated extractor and label the kind.
+    if (row.is_audio_message) {
+      ctx.replyToKind = "voice-note";
+      ctx.replyToText = extractAudioTranscription(row.attributedBody) ?? null;
+      return ctx;
+    }
+
+    // 2. Plain text (or attributedBody text) wins.
+    const text = this.extractMessageText(row);
+    if (text) {
+      ctx.replyToText = text;
+      return ctx;
+    }
+
+    // 3. Attachment-only: derive kind from the original's first attachment.
+    if (row.cache_has_attachments) {
+      ctx.replyToKind = this.deriveAttachmentReplyKind(row.ROWID);
+      ctx.replyToText = null;
+      return ctx;
+    }
+
+    ctx.replyToText = null;
+    return ctx;
+  }
+
+  /** Map a message's first (non-sticker) attachment mime/uti to a reply-kind label. */
+  private deriveAttachmentReplyKind(messageRowId: number): "image" | "video" | "file" {
+    const utiCol = this.hasColumn("attachment", "uti") ? "a.uti" : "NULL AS uti";
+    const row = this.raw
+      .prepare(
+        `SELECT a.mime_type, ${utiCol}
+         FROM ${Tables.ATTACHMENT} a
+         JOIN ${Tables.MESSAGE_ATTACHMENT_JOIN} maj ON a.ROWID = maj.attachment_id
+         WHERE maj.message_id = ? AND a.is_sticker = 0
+         ORDER BY a.ROWID LIMIT 1`,
+      )
+      .get(messageRowId) as { mime_type: string | null; uti: string | null } | undefined;
+    const mime = (row?.mime_type ?? "").toLowerCase();
+    const uti = (row?.uti ?? "").toLowerCase();
+    if (mime.startsWith("image/") || uti.includes("image")) return "image";
+    if (mime.startsWith("video/") || uti.includes("movie") || uti.includes("video")) return "video";
+    return "file";
   }
 
   private extractMessageText(

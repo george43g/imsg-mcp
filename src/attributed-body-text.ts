@@ -111,6 +111,82 @@ function scoreCandidate(text: string): number {
 /** Boost factor for structured NSString candidates over heuristic byte-scan ones. */
 const STRUCTURED_BOOST = 500;
 
+/**
+ * ASCII attribute-name marker for an iPhone-generated voice-note transcript
+ * (iOS 17+). Present in ~102/658 audio blobs on the dev DB; absent on older
+ * `.caf` voice notes that predate on-device transcription.
+ */
+const AUDIO_TRANSCRIPTION_MARKER = Buffer.from("IMAudioTranscription", "ascii");
+
+/**
+ * Fixed typedstream framing observed between the `IMAudioTranscription`
+ * attribute name and the transcript value's length byte, identical across every
+ * sampled iOS 17+ voice-note blob. All five bytes are >= 0x84, which sits above
+ * both the multi-byte length markers (0x81/0x82) and any single-byte length
+ * (<= 0x80) — that clean gap powers the defensive fallback scan below.
+ */
+const AUDIO_VALUE_FRAMING = Buffer.from([0x86, 0x92, 0x84, 0x96, 0x96]);
+
+/**
+ * Extract the iPhone-generated voice-note transcript from a message's
+ * `attributedBody`, if present. Apple stores it as a typedstream ATTRIBUTE keyed
+ * `IMAudioTranscription` whose value string uses a class back-reference — so the
+ * literal-"NSString"-scanning {@link extractAttributedBodyText} never sees it
+ * (it returns only the `￼` audio placeholder). We anchor on the ASCII
+ * marker instead.
+ *
+ * Returns `undefined` when the blob has no synced transcript (the caller then
+ * falls back to on-device / cloud transcription).
+ */
+export function extractAudioTranscription(blob: Buffer | null): string | undefined {
+  if (!blob) return undefined;
+  const markerAt = blob.indexOf(AUDIO_TRANSCRIPTION_MARKER);
+  if (markerAt === -1) return undefined;
+
+  let pos = markerAt + AUDIO_TRANSCRIPTION_MARKER.length;
+
+  // Primary path: consume the known 5-byte value framing.
+  if (blob.subarray(pos, pos + AUDIO_VALUE_FRAMING.length).equals(AUDIO_VALUE_FRAMING)) {
+    pos += AUDIO_VALUE_FRAMING.length;
+  } else {
+    // Fallback (framing drift across macOS versions): the length marker is the
+    // first byte in a small window that is a multi-byte marker (0x81/0x82) or a
+    // single-byte length (<= 0x80); framing bytes are all >= 0x84.
+    const scanEnd = Math.min(pos + 8, blob.length);
+    let found = -1;
+    for (let i = pos; i < scanEnd; i++) {
+      const b = blob[i] as number;
+      if (b === 0x81 || b === 0x82 || b <= 0x80) {
+        found = i;
+        break;
+      }
+    }
+    if (found === -1) return undefined;
+    pos = found;
+  }
+
+  if (pos >= blob.length) return undefined;
+  const lenByte = blob[pos++] as number;
+  let length: number;
+  if (lenByte === 0x81) {
+    if (pos + 2 > blob.length) return undefined;
+    length = blob.readUInt16LE(pos);
+    pos += 2;
+  } else if (lenByte === 0x82) {
+    if (pos + 4 > blob.length) return undefined;
+    length = blob.readUInt32LE(pos);
+    pos += 4;
+  } else {
+    length = lenByte;
+  }
+  if (length <= 0 || pos + length > blob.length) return undefined;
+
+  const text = blob.toString("utf8", pos, pos + length).trim();
+  // Reject mostly-control-byte garbage from a mis-framed read.
+  if (!text || !/[\p{L}\p{N}]/u.test(text)) return undefined;
+  return text;
+}
+
 export function extractAttributedBodyText(blob: Buffer | null): string | undefined {
   if (!blob) return undefined;
 
