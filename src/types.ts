@@ -39,6 +39,22 @@ export interface ReplyContext {
   replyToKind?: "voice-note" | "image" | "video" | "file";
 }
 
+/** One historical version of an edited message part. */
+export interface EditVersion {
+  /** Decoded text of this version (null if the typedstream had none). */
+  text: string | null;
+  /** When this version was written (null if the date was absent/implausible). */
+  date: Date | null;
+}
+
+/** Edit / unsend history parsed from `message_summary_info`. */
+export interface EditHistory {
+  /** Per edited message part, its ordered versions (oldest → newest). */
+  parts: Array<{ part: number; versions: EditVersion[] }>;
+  /** Indices of parts the sender retracted (unsent). */
+  retractedParts: number[];
+}
+
 /**
  * Rich message content types
  */
@@ -88,6 +104,12 @@ export interface Message {
   // Edit/retract status (iOS 16+)
   isEdited: boolean;
   isRetracted: boolean;
+  /**
+   * Prior versions of an edited message (and retracted-part indices), parsed
+   * from `message_summary_info`. Populated for `isEdited` rows; undefined
+   * otherwise. See `src/edit-history.ts`.
+   */
+  editHistory?: EditHistory;
 
   /**
    * iPhone-generated voice-note transcript (iOS 17+), extracted from the

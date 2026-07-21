@@ -68,6 +68,7 @@ import {
   parseAssociatedMessageGuid as schemaParseAssociatedMessageGuid,
   Tables,
 } from "./db-schema.js";
+import { extractEditHistory } from "./edit-history.js";
 import { fuzzyScore } from "./fuzzy.js";
 import { perf } from "./logger.js";
 import { extractChatSummaryText, isUnsentMessage } from "./plist-text.js";
@@ -1880,6 +1881,14 @@ export class IMessageDB {
     // Marker-gated inside the extractor, so this is a cheap no-op for non-audio.
     const appleAudioTranscript = extractAudioTranscription(raw.attributedBody ?? null);
 
+    // Edit history for edited messages (parsed from message_summary_info). Only
+    // ~502 rows carry this DB-wide, so parsing inline for edited rows is cheap.
+    const isEditedMessage = !isUnsent && Boolean(ext.date_edited && ext.date_edited > 0);
+    const editHistory =
+      isEditedMessage && ext.message_summary_info
+        ? (extractEditHistory(ext.message_summary_info) ?? undefined)
+        : undefined;
+
     return {
       id: raw.ROWID,
       guid: raw.guid,
@@ -1905,9 +1914,10 @@ export class IMessageDB {
       reactions,
       richContentType,
       richContentSummary,
-      isEdited: !isUnsent && Boolean(ext.date_edited && ext.date_edited > 0),
+      isEdited: isEditedMessage,
       isRetracted: isUnsent || Boolean(ext.date_retracted && ext.date_retracted > 0),
       appleAudioTranscript,
+      editHistory,
       hasAttachments,
       attachments,
     };
