@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.11.0](https://github.com/george43g/imsg-mcp/compare/v1.10.0...v1.11.0) (2026-07-21)
+
+
+### Features
+
+* **db+tui:** parse message edit history and show it in the drawer ([e4df935](https://github.com/george43g/imsg-mcp/commit/e4df93552f96419bebe50acd241b7d0b74854c9b))
+
 # [1.10.0](https://github.com/george43g/imsg-mcp/compare/v1.9.0...v1.10.0) (2026-07-21)
 
 
