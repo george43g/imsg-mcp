@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.9.0](https://github.com/george43g/imsg-mcp/compare/v1.8.0...v1.9.0) (2026-07-21)
+
+
+### Features
+
+* **db:** extract Apple-native voice-note transcripts, Genmoji & reply kinds ([6b9d715](https://github.com/george43g/imsg-mcp/commit/6b9d715dd6c356a337b8bb0b3ef96ff40419a73a))
+
 # [1.8.0](https://github.com/george43g/imsg-mcp/compare/v1.7.0...v1.8.0) (2026-07-20)
 
 
