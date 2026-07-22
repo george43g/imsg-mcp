@@ -842,51 +842,74 @@ program
   .option("-w, --write <host>", 'Write into a host config: "claude" or "cursor"')
   .option("-r, --runtime <runtime>", 'Runtime command: "npx" (default), "bunx", or "global"')
   .option("--print-only", "Just print the snippet (default behaviour)")
-  .action(async (opts: { write?: string; runtime?: string; printOnly?: boolean }) => {
-    const { probeMachine, buildMcpSnippet, writeHostConfig } = await import("./setup.js");
-    const report = probeMachine();
+  .option("-i, --interactive", "Configure media interpretation (providers, chains, keys)")
+  .action(
+    async (opts: {
+      write?: string;
+      runtime?: string;
+      printOnly?: boolean;
+      interactive?: boolean;
+    }) => {
+      if (opts.interactive) {
+        const { runSetupWizard } = await import("./setup-wizard.js");
+        try {
+          await runSetupWizard();
+        } catch (err) {
+          // inquirer throws ExitPromptError on Ctrl-C — treat as a clean cancel.
+          if (err instanceof Error && err.name === "ExitPromptError") {
+            log("setup cancelled", "warn");
+            return;
+          }
+          throw err;
+        }
+        return;
+      }
+      const { probeMachine, buildMcpSnippet, writeHostConfig } = await import("./setup.js");
+      const report = probeMachine();
 
-    if (!report.imsgDb.readable) {
-      log(`✗ Messages DB is not readable: ${report.imsgDb.path}`, "err");
-      log(`  ${report.imsgDb.error ?? ""}`, "err");
-      log(
-        "  Grant Full Disk Access to the running app: System Settings → Privacy & Security → Full Disk Access",
-        "warn",
-      );
-      process.exitCode = 1;
-      return;
-    }
-
-    log(`✓ Messages DB readable: ${report.imsgDb.path}`, "ok");
-    log(
-      `✓ Address Book: ${report.contactsDbs.length} source(s), ${report.contactsDbs.filter((p) => p.readable).length} readable`,
-      "ok",
-    );
-    log(
-      `  slugs.db: ${report.slugsDb.path} ${report.slugsDb.exists ? "(exists)" : "(will be created on first run)"}`,
-    );
-
-    const runtime = opts.runtime === "bunx" || opts.runtime === "global" ? opts.runtime : "npx";
-    const snippet = buildMcpSnippet(report, { runtime });
-
-    if (opts.write) {
-      if (opts.write !== "claude" && opts.write !== "cursor") {
-        log(`✗ unknown host: ${opts.write} (expected "claude" or "cursor")`, "err");
+      if (!report.imsgDb.readable) {
+        log(`✗ Messages DB is not readable: ${report.imsgDb.path}`, "err");
+        log(`  ${report.imsgDb.error ?? ""}`, "err");
+        log(
+          "  Grant Full Disk Access to the running app: System Settings → Privacy & Security → Full Disk Access",
+          "warn",
+        );
         process.exitCode = 1;
         return;
       }
-      const result = writeHostConfig(opts.write, report, { runtime });
+
+      log(`✓ Messages DB readable: ${report.imsgDb.path}`, "ok");
       log(
-        `✓ wrote ${opts.write} config to ${result.path}${result.replaced ? " (replaced existing imessage entry)" : ""}`,
+        `✓ Address Book: ${report.contactsDbs.length} source(s), ${report.contactsDbs.filter((p) => p.readable).length} readable`,
         "ok",
       );
-      log(`  backup of any prior file at ${result.path}.bak`);
-      return;
-    }
+      log(
+        `  slugs.db: ${report.slugsDb.path} ${report.slugsDb.exists ? "(exists)" : "(will be created on first run)"}`,
+      );
 
-    log("--- snippet ---", "dim");
-    process.stdout.write(snippet);
-  });
+      const runtime = opts.runtime === "bunx" || opts.runtime === "global" ? opts.runtime : "npx";
+      const snippet = buildMcpSnippet(report, { runtime });
+
+      if (opts.write) {
+        if (opts.write !== "claude" && opts.write !== "cursor") {
+          log(`✗ unknown host: ${opts.write} (expected "claude" or "cursor")`, "err");
+          process.exitCode = 1;
+          return;
+        }
+        const result = writeHostConfig(opts.write, report, { runtime });
+        log(
+          `✓ wrote ${opts.write} config to ${result.path}${result.replaced ? " (replaced existing imessage entry)" : ""}`,
+          "ok",
+        );
+        log(`  backup of any prior file at ${result.path}.bak`);
+        return;
+      }
+
+      log("--- snippet ---", "dim");
+      process.stdout.write(snippet);
+      log("tip: run `imsg setup --interactive` to configure media interpretation", "dim");
+    },
+  );
 
 // ── Config ───────────────────────────────────────────────────────────────
 
