@@ -292,3 +292,55 @@ describe("MediaIntelService", () => {
     expect(calls).toBe(1);
   });
 });
+
+describe("MediaIntelService.peek (cache-only / instant, never runs the chain)", () => {
+  beforeEach(() => {
+    _setMediaIntelCachePathForTests(join(tmp(), "peek-cache.db"));
+  });
+
+  it("returns the instant Apple transcript without touching the network or a transcriber", () => {
+    const dir = tmp();
+    const ref = { ...audioRef(dir), appleTranscript: "hey what's up" };
+    let localCalls = 0;
+    let fetchCalls = 0;
+    const svc = new MediaIntelService(cfg(), {
+      transcribeLocal: () => {
+        localCalls++;
+        return "should not run";
+      },
+      fetchImpl: (async () => {
+        fetchCalls++;
+        return new Response("nope", { status: 200 });
+      }) as any,
+    });
+    const r = svc.peek(ref);
+    expect(r?.text).toBe("hey what's up");
+    expect(r?.source).toBe("apple");
+    expect(localCalls).toBe(0);
+    expect(fetchCalls).toBe(0);
+  });
+
+  it("returns a previously-cached result and null when nothing is cached", async () => {
+    const dir = tmp();
+    const ref = audioRef(dir); // no apple transcript
+    const svc = new MediaIntelService(cfg(), { transcribeLocal: () => "cached words" });
+    // Nothing cached yet, no apple transcript → miss.
+    expect(svc.peek(ref)).toBeNull();
+    // Interpret once to populate the cache, then peek hits it (cached: true).
+    await svc.interpret(ref);
+    const r = svc.peek(ref);
+    expect(r?.text).toBe("cached words");
+    expect(r?.cached).toBe(true);
+  });
+
+  it("does not surface a cached FAILURE (only done results inline)", async () => {
+    const dir = tmp();
+    const ref = audioRef(dir);
+    // Everything misses → interpret records a `failed` row.
+    const svc = new MediaIntelService(cfg({ chains: { audio: ["local"], image: [], video: [] } }), {
+      transcribeLocal: () => null,
+    });
+    await svc.interpret(ref);
+    expect(svc.peek(ref)).toBeNull();
+  });
+});
