@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.12.0](https://github.com/george43g/imsg-mcp/compare/v1.11.0...v1.12.0) (2026-07-22)
+
+
+### Features
+
+* **cli:** interactive setup wizard for media interpretation ([0ad7507](https://github.com/george43g/imsg-mcp/commit/0ad75075e08e6cc9db7900a15ba7469b4e91314c))
+
 # [1.11.0](https://github.com/george43g/imsg-mcp/compare/v1.10.0...v1.11.0) (2026-07-21)
 
 
