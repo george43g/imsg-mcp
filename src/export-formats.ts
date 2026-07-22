@@ -47,7 +47,14 @@ export function toMarkdown(messages: Message[], header: ExportHeader): string {
     }
     const ts = `[${fmtDate(m.date)}]`;
     const sender = senderLabel(m);
-    const text = m.text ?? (m.hasAttachments ? "*(attachment)*" : "*(no text)*");
+    let text = m.text ?? (m.hasAttachments ? "*(attachment)*" : "*(no text)*");
+    // Embed a resolved voice-note transcript / image-video caption: replace the
+    // placeholder when the message has no text of its own, else append a tag.
+    const interp = m.interpretedMedia;
+    if (interp) {
+      const label = interp.kind === "audio" ? "voice note" : interp.kind;
+      text = m.text ? `${m.text} _[${label}: ${interp.text}]_` : `_[${label}: ${interp.text}]_`;
+    }
     const flags: string[] = [];
     if (m.isEdited) flags.push("edited");
     if (m.hasAttachments) flags.push("📎");
@@ -84,7 +91,9 @@ export function toCSV(messages: Message[]): string {
       m.isRead ? "1" : "0",
       m.isReply ? "1" : "0",
       escapeCsv(m.replyTo?.replyToText ?? ""),
-      escapeCsv(m.text ?? ""),
+      // For a media-only message (voice note, image), surface the resolved
+      // transcript/caption in the text column so spreadsheets aren't blank.
+      escapeCsv(m.text ?? m.interpretedMedia?.text ?? ""),
       m.hasAttachments ? "1" : "0",
     ];
     lines.push(row.join(","));

@@ -42,6 +42,32 @@ export function openAttachmentFile(att: AttFile, dispatch: Dispatch) {
   });
 }
 
+/** Reveal a single attachment in Finder (`open -R`), selecting it in its folder. */
+export function revealAttachmentFile(att: AttFile, dispatch: Dispatch) {
+  if (!att.filename) {
+    dispatch({ type: "SET_STATUS", status: "Attachment has no file path." });
+    return;
+  }
+  const filepath = att.filename.replace(/^~/, process.env.HOME ?? "~");
+  if (!existsSync(filepath)) {
+    dispatch({ type: "SET_STATUS", status: "Attachment file is not on disk (not downloaded)." });
+    return;
+  }
+  // Detached + unref'd so revealing never blocks the TUI.
+  import("node:child_process").then(({ spawn }) => {
+    spawn("open", ["-R", filepath], { detached: true, stdio: "ignore" }).unref();
+    dispatch({ type: "SET_STATUS", status: `Revealed ${basename(filepath)} in Finder` });
+  });
+}
+
+export function revealAttachment(msg: Message | undefined, attIdx: number, dispatch: Dispatch) {
+  if (!msg?.attachments?.length) {
+    dispatch({ type: "SET_STATUS", status: "No attachment on this message." });
+    return;
+  }
+  revealAttachmentFile(msg.attachments[attIdx] ?? msg.attachments[0], dispatch);
+}
+
 export function openAttachment(msg: Message | undefined, attIdx: number, dispatch: Dispatch) {
   // Surface UX feedback when `o` can't do anything — previously this
   // silently no-op'd, leaving the user wondering if the key worked.

@@ -39,7 +39,7 @@ import {
 import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
 import { normalizedPhoneVariants } from "./contacts-db.js";
 import { parseUserDate } from "./date-parse.js";
-import { streamExport } from "./exportStream.js";
+import { ExportInterpretGuardError, streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
 import { HUMANS_INIT_HINT, HumansIndex, humansHintText } from "./humans-hints.js";
 import { HumansScaffold } from "./humans-scaffold.js";
@@ -104,9 +104,14 @@ import {
   imageBlockFromFile,
   mediaMetadata,
   TRANSCRIBE_MAX_BYTES,
-  transcribeAudioBest,
   videoPosterFrame,
 } from "./media.js";
+import {
+  applyInlineInterpretations,
+  getInterpretRuntime,
+  refForAttachment,
+  transcriptSourceEnum,
+} from "./media-intel-runtime.js";
 import { APP_NAME, APP_VERSION } from "./meta.js";
 import { wrapUntrusted } from "./prompt-injection.js";
 import { defaultCountryFromEnv, resolveRecipient } from "./recipient.js";
@@ -609,6 +614,10 @@ export class IMessageMCPServer {
       });
     }
 
+    // Inline cached/instant voice-note transcripts + captions (never blocks on a
+    // cloud call — interpretation is triggered by get_attachment / TUI / export).
+    applyInlineInterpretations(messages);
+
     const formatted = messages.map((m) => formatMessage(m)).join("\n");
     const oldestId = minMessageId(messages) ?? 0;
     const hasMore = messages.length === limit; // heuristic — full page suggests more
@@ -633,7 +642,7 @@ export class IMessageMCPServer {
   private async handleExportMessages(args: unknown, signal?: AbortSignal) {
     const span = perf("tool:export_messages");
     const parsed = ExportMessagesSchema.parse(args);
-    const { format, outputPath, since, until, pageSize } = parsed;
+    const { format, outputPath, since, until, pageSize, interpret, confirmCloudInterpret } = parsed;
 
     // Resolve target chat
     let chatIdentifier = parsed.chatIdentifier;
@@ -665,16 +674,29 @@ export class IMessageMCPServer {
       return toolError(`Could not parse 'until': ${until}`, { until });
     }
 
-    const result = await streamExport({
-      db: this.db,
-      chatIdentifier,
-      format,
-      outputPath,
-      since: sinceDate,
-      until: untilDate,
-      pageSize,
-      signal,
-    });
+    let result: Awaited<ReturnType<typeof streamExport>>;
+    try {
+      result = await streamExport({
+        db: this.db,
+        chatIdentifier,
+        format,
+        outputPath,
+        since: sinceDate,
+        until: untilDate,
+        pageSize,
+        signal,
+        interpret,
+        confirmCloudInterpret,
+      });
+    } catch (err) {
+      if (err instanceof ExportInterpretGuardError) {
+        return toolError(err.message, {
+          uncachedCloud: err.uncachedCloud,
+          threshold: err.threshold,
+        });
+      }
+      throw err;
+    }
     const durMs = span.end({ format, count: result.count, sizeBytes: result.sizeBytes });
 
     const lines = [
@@ -1505,7 +1527,7 @@ export class IMessageMCPServer {
 
   private async handleGetAttachment(args: unknown) {
     const { readFileSync } = await import("node:fs");
-    const { rowId, inlineMaxBytes } = GetAttachmentSchema.parse(args);
+    const { rowId, inlineMaxBytes, interpret } = GetAttachmentSchema.parse(args);
     const rec = this.db.getAttachmentByRowId(rowId);
     if (!rec) return toolError(`Attachment ROWID ${rowId} not found.`, { rowId });
 
@@ -1535,6 +1557,10 @@ export class IMessageMCPServer {
     let mediaInfo: string | undefined;
     let transcript: string | undefined;
     let transcriptSource: "local" | "cloud" | undefined;
+    // Image/video caption from the vision chain (audio uses transcript above).
+    let interpretation: string | undefined;
+    let interpretSource: string | undefined;
+    let interpretSkipped = false;
     // A real MCP image content block (base64 ≤ ~1MB, ≤1536px) so the MODEL
     // sees the image, not just JSON metadata. Emitted for images (always a
     // downscaled preview, even when the original exceeds inlineMaxBytes) and
@@ -1572,14 +1598,41 @@ export class IMessageMCPServer {
       convertedNote = imageBlock ? "poster frame via QuickLook" : undefined;
     } else if (isAudio) {
       mediaInfo = mediaMetadata(resolvedPath) ?? undefined;
-      if (sizeBytes <= TRANSCRIBE_MAX_BYTES) {
-        const t = await transcribeAudioBest(resolvedPath);
-        if (t) {
-          transcript = t.transcript;
-          transcriptSource = t.source;
+    }
+
+    // Media interpretation via the shared chain (Apple → local → cloud provider).
+    // `interpret:false` skips it; `interpret:true` forces it (bypasses the
+    // auto-mode gate + cached failures). Results are cached forever.
+    if (interpret !== false) {
+      const ref = refForAttachment(rec);
+      const tooBigAudio = ref?.kind === "audio" && sizeBytes > TRANSCRIBE_MAX_BYTES;
+      if (ref && !tooBigAudio) {
+        const r = await getInterpretRuntime().service.interpret(ref, {
+          force: interpret === true,
+        });
+        interpretSkipped = r.status === "skipped";
+        if (r.status === "done" && r.text) {
+          interpretSource = r.source ?? undefined;
+          if (ref.kind === "audio") {
+            transcript = r.text;
+            transcriptSource = transcriptSourceEnum(r.source);
+          } else {
+            interpretation = r.text;
+          }
         }
       }
     }
+
+    // A caption line for image/video, sourced from the vision chain when produced.
+    const captionLines = interpretation
+      ? [
+          "",
+          interpretSource?.startsWith("provider:")
+            ? "Description (via cloud provider):"
+            : "Description:",
+          wrapUntrusted(sanitizeUserText(interpretation) ?? ""),
+        ]
+      : [];
 
     const lines: string[] = [];
     if (isVideo) {
@@ -1588,6 +1641,7 @@ export class IMessageMCPServer {
         imageBlock
           ? "Poster frame attached as an image; full video at the path below."
           : "Poster frame unavailable; use the path below.",
+        ...captionLines,
         `Path: ${resolvedPath}`,
       );
     } else if (isAudio) {
@@ -1598,21 +1652,29 @@ export class IMessageMCPServer {
           transcriptSource === "cloud" ? "Transcript (via cloud provider):" : "Transcript:",
           wrapUntrusted(sanitizeUserText(transcript) ?? ""),
         );
+      } else if (interpretSkipped) {
+        lines.push(
+          "Transcription skipped by the current auto-mode. Pass interpret:true to force it.",
+        );
       } else if (detectTranscriber()) {
         lines.push("Transcription produced no text.");
       } else if (getTranscribeCloudConfig()) {
         lines.push("Cloud transcription produced no text.");
       } else {
         lines.push(
-          "No transcriber installed — `brew install yap` (macOS 26+) or `brew install sveinbjornt/hear/hear` enables on-device transcription; or set IMSG_TRANSCRIBE_PROVIDER + IMSG_TRANSCRIBE_API_KEY for an OpenAI-compatible cloud fallback (audio leaves this device).",
+          "No transcriber installed — `brew install yap` (macOS 26+) or `brew install sveinbjornt/hear/hear` enables on-device transcription; run `imsg setup --interactive` to add a cloud provider (audio leaves this device).",
         );
       }
       lines.push(`Path: ${resolvedPath}`);
     } else if (inline) {
-      lines.push(`Attachment ${rowId} (${sizeBytes}B, ${finalMime ?? "?"}) returned inline.`);
+      lines.push(
+        `Attachment ${rowId} (${sizeBytes}B, ${finalMime ?? "?"}) returned inline.`,
+        ...captionLines,
+      );
     } else if (isImage) {
       lines.push(
         `Attachment ${rowId} too large to inline (${sizeBytes}B > ${inlineMaxBytes}B); a downscaled preview is attached${imageBlock ? "" : " (preview failed)"}. Full file: ${resolvedPath}`,
+        ...captionLines,
       );
     } else {
       lines.push(
@@ -1641,6 +1703,8 @@ export class IMessageMCPServer {
         mediaInfo,
         transcript,
         transcriptSource,
+        interpretation,
+        interpretSource,
         imageBlockIncluded: imageBlock != null,
       },
     };

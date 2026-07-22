@@ -59,6 +59,20 @@ export const MessageSchema = z.object({
   richContentSummary: z.string().optional(),
   isEdited: z.boolean(),
   isRetracted: z.boolean(),
+  appleAudioTranscript: z
+    .string()
+    .optional()
+    .describe("iOS-synced voice-note transcript (instant, on-device) when present."),
+  interpretedMedia: z
+    .object({
+      kind: z.enum(["audio", "image", "video"]),
+      text: z.string(),
+      source: z.string(),
+    })
+    .optional()
+    .describe(
+      "Inline media interpretation (voice-note transcript / caption) from a cached or instant result — never a blocking cloud call.",
+    ),
   hasAttachments: z.boolean(),
   attachments: z.array(AttachmentSchema).optional(),
 });
@@ -132,6 +146,18 @@ export const ExportMessagesSchema = z.object({
   since: nonEmptyString("Earliest date, ISO or relative like '1 year ago'").optional(),
   until: nonEmptyString("Latest date, ISO or relative like 'yesterday'").optional(),
   pageSize: z.number().int().min(100).max(5000).default(1000),
+  interpret: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Actively interpret media during export (transcribe voice notes, caption images/videos) and embed the text. Off by default; already-cached and instant Apple transcripts are ALWAYS embedded regardless. Honors the configured auto-mode + provider chains.",
+    ),
+  confirmCloudInterpret: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Skip the paid-call guard. When `interpret` is true and the export would trigger more than `interpret.exportConfirmThreshold` uncached cloud calls, the tool refuses and reports the count unless this is set.",
+    ),
 });
 
 export const ExportMessagesOutputSchema = z.object({
@@ -530,6 +556,12 @@ export const GetAttachmentSchema = z.object({
     .int()
     .default(5_000_000)
     .describe("If file is ≤ this size, return base64 content inline; otherwise return path only."),
+  interpret: z
+    .boolean()
+    .optional()
+    .describe(
+      "Override media interpretation. `true` forces a run (bypasses the auto-mode gate and any cached failure); `false` skips it; omit for the configured default (honors the `interpret.auto` mode). Interpretation walks the per-media chain (Apple → local → cloud provider) and caches forever.",
+    ),
 });
 export const GetAttachmentOutputSchema = z.object({
   rowId: z.number().int(),
@@ -554,6 +586,14 @@ export const GetAttachmentOutputSchema = z.object({
     .enum(["local", "cloud"])
     .optional()
     .describe("Where the transcript came from: on-device (local) or the opt-in cloud provider."),
+  interpretation: z
+    .string()
+    .optional()
+    .describe("Image/video caption from the media-intel chain (vision provider), when produced."),
+  interpretSource: z
+    .string()
+    .optional()
+    .describe("Granular interpretation source: 'apple' | 'local' | 'provider:<name>'."),
   imageBlockIncluded: z
     .boolean()
     .optional()

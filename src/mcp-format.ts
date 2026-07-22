@@ -98,15 +98,29 @@ export function formatMessage(msg: Message, conversationLabel?: string): string 
   const rawText = sanitizeUserText(msg.text);
   // Wrap user-controlled message bodies in <untrusted> so a downstream LLM
   // treats prompt-injection attempts in the body as data, not instructions.
-  // The empty-message placeholder is server-generated and trusted.
-  const text = rawText ? wrapUntrusted(rawText) : msg.isRetracted ? "(unsent)" : "(no text)";
+  const bodyText = rawText ? wrapUntrusted(rawText) : null;
   // Genmoji: surface Apple's authored short descriptions (server-derived
   // metadata, not user free-text) so an agent can "see" the custom emoji.
   const genmoji = (msg.attachments ?? [])
     .map((a) => a.emojiDescription)
     .filter((d): d is string => Boolean(d));
   const genmojiTag = genmoji.length ? ` [genmoji: ${genmoji.map((d) => `"${d}"`).join(", ")}]` : "";
-  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${text}${genmojiTag}${status}${convCtx}`;
+  // Interpreted media: a voice-note transcript or image/video caption resolved
+  // from a CACHED or INSTANT result (never a blocking cloud call). Like the
+  // body, the transcript is user-derived content, so wrap it <untrusted>.
+  const interp = msg.interpretedMedia;
+  const interpText = interp?.text ? sanitizeUserText(interp.text) : null;
+  let mediaTag = "";
+  if (interpText) {
+    const label =
+      interp?.kind === "audio" ? "voice note" : interp?.kind === "video" ? "video" : "image";
+    mediaTag = ` [${label}: ${wrapUntrusted(interpText)}]`;
+  }
+  // The placeholder is server-generated and trusted; suppress it when an
+  // interpreted transcript already carries the message's content.
+  const text = bodyText ?? (mediaTag ? "" : msg.isRetracted ? "(unsent)" : "(no text)");
+  const body = text ? `${text}${genmojiTag}${mediaTag}` : `${genmojiTag}${mediaTag}`.trimStart();
+  return `[${dateStr}] ${direction} ${sender}${svcTag}: ${body}${status}${convCtx}`;
 }
 
 export function messageToStructured(msg: Message) {

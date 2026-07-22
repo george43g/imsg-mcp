@@ -7,12 +7,15 @@ import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { formatJumpTarget, parseUserDate } from "../date-parse.js";
 import { extensionFor, toCSV, toJSON, toMarkdown } from "../export-formats.js";
+import { getInterpretRuntime, primaryMediaRef } from "../media-intel-runtime.js";
 import { registerCleanup } from "../shutdown.js";
-import { type Conversation, minMessageId } from "../types.js";
+import { type Conversation, type Message, minMessageId } from "../types.js";
 import { getInstalledChatApps } from "../url-schemes.js";
 import {
   openAttachment,
   openAttachmentFile,
+  revealAttachment,
+  revealAttachmentFile,
   saveAllAttachmentFiles,
   saveAttachment,
   saveAttachmentFile,
@@ -109,6 +112,48 @@ export function App() {
     },
     [state.conversations, imsg, recordQueryTime],
   );
+
+  // Interpret (or re-interpret with force) the selected message's media on
+  // demand — the `R` key. Frontends stay render-only: the actual work is in
+  // core (getInterpretRuntime().service). Status feedback flows through the bar;
+  // the resolved transcript lands on the message via SET_MESSAGE_INTERPRET.
+  const interpretMessage = useCallback(async (msg: Message | undefined, force = false) => {
+    if (!msg) return;
+    const ref = primaryMediaRef(msg);
+    if (!ref) {
+      dispatch({ type: "SET_STATUS", status: "No voice note / media on this message." });
+      return;
+    }
+    dispatch({ type: "SET_STATUS", status: force ? "Re-interpreting…" : "Transcribing…" });
+    // Let the ⏳ status paint before the (possibly blocking) local transcription.
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      const result = await getInterpretRuntime().service.interpret(ref, { force });
+      if (result.status === "done" && result.text) {
+        dispatch({
+          type: "SET_MESSAGE_INTERPRET",
+          msgId: msg.id,
+          interpretedMedia: { kind: ref.kind, text: result.text, source: result.source ?? "?" },
+        });
+        dispatch({ type: "SET_STATUS", status: `Interpreted (${result.source ?? "?"}).` });
+      } else if (result.status === "skipped") {
+        dispatch({
+          type: "SET_STATUS",
+          status: "Interpretation is off — enable it with `imsg setup --interactive`.",
+        });
+      } else {
+        dispatch({
+          type: "SET_STATUS",
+          status: `No transcript${result.error ? `: ${result.error}` : "."}`,
+        });
+      }
+    } catch (e) {
+      dispatch({
+        type: "SET_STATUS",
+        status: `Interpretation failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }, []);
 
   const refreshAll = useCallback(async () => {
     dispatch({ type: "SET_LOADING", loading: true, status: "Refreshing..." });
@@ -448,6 +493,10 @@ export function App() {
         } else {
           dispatch({ type: "SET_STATUS", status: "No attachment to copy." });
         }
+      } else if (input === "f" && !key.ctrl && !key.meta && selectedMsg) {
+        revealAttachment(selectedMsg, state.drawerAttachmentIdx, dispatch);
+      } else if (input === "R" && selectedMsg) {
+        void interpretMessage(selectedMsg, true);
       }
       return;
     }
@@ -487,6 +536,9 @@ export function App() {
           `imsg-${selected?.threadSlug ?? "thread"}`,
           dispatch,
         );
+      } else if (input === "f" && !key.ctrl && !key.meta) {
+        if (att) revealAttachmentFile(att, dispatch);
+        else dispatch({ type: "SET_STATUS", status: "No attachment." });
       }
       return;
     }
@@ -824,6 +876,11 @@ export function App() {
         } else {
           openAttachment(msg, 0, dispatch);
         }
+      } else if (input === "R") {
+        // Interpret (transcribe / caption) the selected message's media on
+        // demand. Explicit keypress → force past the auto-mode gate.
+        const msg = state.selectedMsgIdx >= 0 ? state.messages[state.selectedMsgIdx] : undefined;
+        void interpretMessage(msg, true);
       }
     }
   });

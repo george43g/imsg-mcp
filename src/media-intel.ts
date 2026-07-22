@@ -168,6 +168,43 @@ export class MediaIntelService {
   }
 
   /**
+   * Cache-only / instant lookup — NEVER runs the chain (no exec, no network,
+   * no cache writes). Returns a `done` result when a successful interpretation
+   * is already cached, or when the ref carries an instant Apple transcript;
+   * otherwise null. Read surfaces (get_messages, TUI render, export embedding)
+   * call this so they can inline a transcript without ever blocking on a paid
+   * call — interpretation is *triggered* only by `interpret()`.
+   */
+  peek(ref: AttachmentRef): InterpretResult | null {
+    const sig = this.sigFor(ref);
+    if (sig) {
+      const cached = lookupMediaIntel(ref.key, sig, { includeFailed: false });
+      if (cached && cached.status === "done" && cached.text) {
+        return {
+          status: "done",
+          text: cached.text,
+          source: cached.source,
+          model: cached.model,
+          extra: cached.extra,
+          cached: true,
+        };
+      }
+    }
+    // No cached row — but the free/instant Apple transcript needs no file and no
+    // chain run, so surface it directly (matches what `apple`-first chains cache).
+    if (ref.appleTranscript) {
+      return {
+        status: "done",
+        text: ref.appleTranscript,
+        source: "apple",
+        model: null,
+        cached: false,
+      };
+    }
+    return null;
+  }
+
+  /**
    * Interpret one attachment, walking its chain. Returns a cached result when
    * available; otherwise runs the chain (respecting the auto-mode gate) and
    * caches the outcome. Concurrent calls for the same key share one run.

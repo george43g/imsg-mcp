@@ -248,6 +248,15 @@ export const CORE_COMMANDS: Command[] = [
     run: () => {},
   },
   {
+    id: "core.attachment.interpret",
+    title: "Interpret voice note / media",
+    category: "Thread",
+    keybinding: "R",
+    description:
+      "Transcribe a voice note or caption an image/video (on-device or configured cloud)",
+    run: () => {},
+  },
+  {
     id: "core.select.start",
     title: "Visual select messages",
     category: "Thread",

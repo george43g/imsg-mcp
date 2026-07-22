@@ -834,6 +834,54 @@ program
   .option("--page-size <n>", "Messages per DB page (100-5000)", "1000")
   .action(runExportCommand);
 
+program
+  .command("interpret <rowId>")
+  .description("Interpret one attachment (transcribe a voice note / caption an image or video)")
+  .option("--force", "Re-run even if a cached result exists (evicts the cache entry first)")
+  .action(async (rowIdArg: string, opts: { force?: boolean }) => {
+    const rowId = Number(rowIdArg);
+    if (!Number.isInteger(rowId) || rowId <= 0) {
+      log(`Invalid attachment rowId: ${rowIdArg}`, "err");
+      process.exitCode = 1;
+      return;
+    }
+    const { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } = await import("./config.js");
+    const { IMessageDB } = await import("./imessage-db.js");
+    const { getInterpretRuntime, refForAttachment } = await import("./media-intel-runtime.js");
+    const { deleteMediaIntel } = await import("./media-intel-cache.js");
+
+    const db = new IMessageDB(getImsgDbPath(), getContactsDbPaths(), getSlugsDbPath());
+    try {
+      const rec = db.getAttachmentByRowId(rowId);
+      if (!rec) {
+        log(`Attachment ROWID ${rowId} not found.`, "err");
+        process.exitCode = 1;
+        return;
+      }
+      const ref = refForAttachment(rec);
+      if (!ref) {
+        log(
+          `Attachment ${rowId} (${rec.mimeType ?? "?"}) is not interpretable media (audio/image/video).`,
+          "warn",
+        );
+        return;
+      }
+      if (opts.force) deleteMediaIntel(ref.key);
+      const r = await getInterpretRuntime().service.interpret(ref, { force: true });
+      if (r.status === "done" && r.text) {
+        const label = ref.kind === "audio" ? "Transcript" : "Description";
+        log(`${label} (${r.source ?? "?"}${r.cached ? ", cached" : ""}):`, "ok");
+        console.log(r.text);
+      } else if (r.status === "skipped") {
+        log(`No chain configured for ${ref.kind}. Run \`imsg setup --interactive\`.`, "warn");
+      } else {
+        log(`Interpretation produced no text${r.error ? ` (${r.error})` : ""}.`, "warn");
+      }
+    } finally {
+      await db.close();
+    }
+  });
+
 // ── Setup ────────────────────────────────────────────────────────────────
 
 program

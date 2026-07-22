@@ -119,6 +119,15 @@ export interface Message {
    */
   appleAudioTranscript?: string;
 
+  /**
+   * Resolved, inline-safe media interpretation for this message's primary media
+   * attachment — a voice-note transcript or an image/video caption. Populated by
+   * read surfaces (get_messages, export, TUI) from CACHED or INSTANT (Apple)
+   * results ONLY, never a blocking cloud call. Render-only; the mechanism lives
+   * in `src/media-intel-runtime.ts`.
+   */
+  interpretedMedia?: { kind: "audio" | "image" | "video"; text: string; source: string };
+
   // Attachments
   hasAttachments: boolean;
   attachments?: Attachment[];
