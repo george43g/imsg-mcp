@@ -176,6 +176,40 @@ export function applyInlineInterpretations(
   }
 }
 
+/**
+ * Populate `msg.interpretedMedia` for an EXPORT page. Unlike the read-surface
+ * inline path, this is not gated by `inlineTranscripts` — export embedding is
+ * controlled by the export's own `interpret` flag:
+ *   - `active: false` → peek only (cached + instant Apple; never a paid call).
+ *   - `active: true`  → run the chain (honoring the auto-mode gate + limiter),
+ *     caching each result forever.
+ * Idempotent; skips messages that already carry an interpretation.
+ */
+export async function embedInterpretations(
+  messages: Message[],
+  rt: InterpretRuntime,
+  active: boolean,
+): Promise<void> {
+  for (const msg of messages) {
+    if (msg.interpretedMedia) continue;
+    // The instant Apple transcript is free and always preferred — embed it
+    // regardless of `active` (which only gates NEW, possibly paid, calls).
+    if (msg.appleAudioTranscript) {
+      msg.interpretedMedia = { kind: "audio", text: msg.appleAudioTranscript, source: "apple" };
+      continue;
+    }
+    for (const att of msg.attachments ?? []) {
+      const ref = refForAttachment(att, msg.appleAudioTranscript);
+      if (!ref) continue;
+      const r = active ? await rt.service.interpret(ref) : rt.service.peek(ref);
+      if (r?.status === "done" && r.text) {
+        msg.interpretedMedia = { kind: ref.kind, text: r.text, source: r.source ?? "cached" };
+        break;
+      }
+    }
+  }
+}
+
 /** Map a granular interpret source ("apple"|"local"|"provider:x") to the
  *  back-compat local|cloud enum used by `get_attachment.transcriptSource`. */
 export function transcriptSourceEnum(source: string | null): "local" | "cloud" | undefined {

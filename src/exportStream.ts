@@ -16,6 +16,12 @@
 import { createWriteStream, statSync } from "node:fs";
 import { toCSV, toMarkdown, toNDJSONLine } from "./export-formats.js";
 import type { IMessageDB, MessageExportCursor, UnmergedSiblingChat } from "./imessage-db.js";
+import {
+  embedInterpretations,
+  getInterpretRuntime,
+  type InterpretRuntime,
+  refsForMessages,
+} from "./media-intel-runtime.js";
 
 export interface ExportOptions {
   db: IMessageDB;
@@ -26,6 +32,33 @@ export interface ExportOptions {
   until: Date | null;
   pageSize: number;
   signal?: AbortSignal;
+  /**
+   * Actively interpret media during export (transcribe voice notes, caption
+   * images/videos) and embed the text. Cached + instant Apple transcripts are
+   * embedded regardless; this only controls whether NEW (incl. paid) calls run.
+   */
+  interpret?: boolean;
+  /** Skip the paid-call guard (see `exportConfirmThreshold`). */
+  confirmCloudInterpret?: boolean;
+  /** Injectable interpret runtime (defaults to the process singleton). */
+  interpretRuntime?: InterpretRuntime;
+}
+
+/**
+ * Thrown before any output is written when an `interpret` export would trigger
+ * more uncached cloud calls than the configured threshold and the caller has
+ * not confirmed. The handler turns this into an actionable message.
+ */
+export class ExportInterpretGuardError extends Error {
+  constructor(
+    public readonly uncachedCloud: number,
+    public readonly threshold: number,
+  ) {
+    super(
+      `This export would trigger ${uncachedCloud} uncached cloud interpretation call(s) (threshold ${threshold}). Re-run with confirmCloudInterpret:true to proceed, or narrow the range with since/until.`,
+    );
+    this.name = "ExportInterpretGuardError";
+  }
 }
 
 export interface ExportResult {
@@ -72,6 +105,33 @@ function endStream(stream: WritableStream): Promise<void> {
 
 export async function streamExport(opts: ExportOptions): Promise<ExportResult> {
   const { db, chatIdentifier, format, outputPath, since, until, pageSize, signal } = opts;
+  const interpret = opts.interpret ?? false;
+  const runtime = opts.interpretRuntime ?? getInterpretRuntime();
+  const embedActive = interpret;
+
+  // Guard: an ACTIVE-interpret export can fan out into many paid calls. Count
+  // the uncached-cloud work in a metadata-only pre-pass BEFORE truncating the
+  // output file, and refuse (throwing) when it exceeds the threshold unless the
+  // caller confirmed. Cached/instant embedding needs no guard.
+  if (interpret && !opts.confirmCloudInterpret) {
+    const threshold = runtime.config.exportConfirmThreshold;
+    let uncached = 0;
+    let guardCursor: MessageExportCursor | null = null;
+    while (true) {
+      if (signal?.aborted) throw new Error("Export cancelled by client.");
+      const page = await db.getMessagesForChatExportPage(chatIdentifier, pageSize, {
+        afterCursor: guardCursor,
+        since,
+        until,
+      });
+      if (page.messages.length === 0) break;
+      uncached += runtime.service.countUncachedCloud(refsForMessages(page.messages));
+      guardCursor = page.nextCursor;
+      if (!guardCursor || page.rawCount < pageSize) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    if (uncached > threshold) throw new ExportInterpretGuardError(uncached, threshold);
+  }
 
   const stream = createWriteStream(outputPath, { encoding: "utf8" });
 
@@ -119,6 +179,11 @@ export async function streamExport(opts: ExportOptions): Promise<ExportResult> {
         until,
       });
       if (page.messages.length === 0) break;
+
+      // Embed voice-note transcripts / captions: cached + instant always, plus
+      // active (incl. paid) interpretation when requested. The guard above has
+      // already cleared any cloud fan-out.
+      await embedInterpretations(page.messages, runtime, embedActive);
 
       // Track running oldest/newest for the result
       for (const m of page.messages) {

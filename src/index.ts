@@ -39,7 +39,7 @@ import {
 import { rememberSearch, resolveContactSelector } from "./contact-resolver.js";
 import { normalizedPhoneVariants } from "./contacts-db.js";
 import { parseUserDate } from "./date-parse.js";
-import { streamExport } from "./exportStream.js";
+import { ExportInterpretGuardError, streamExport } from "./exportStream.js";
 import { rankFuzzy } from "./fuzzy.js";
 import { HUMANS_INIT_HINT, HumansIndex, humansHintText } from "./humans-hints.js";
 import { HumansScaffold } from "./humans-scaffold.js";
@@ -642,7 +642,7 @@ export class IMessageMCPServer {
   private async handleExportMessages(args: unknown, signal?: AbortSignal) {
     const span = perf("tool:export_messages");
     const parsed = ExportMessagesSchema.parse(args);
-    const { format, outputPath, since, until, pageSize } = parsed;
+    const { format, outputPath, since, until, pageSize, interpret, confirmCloudInterpret } = parsed;
 
     // Resolve target chat
     let chatIdentifier = parsed.chatIdentifier;
@@ -674,16 +674,29 @@ export class IMessageMCPServer {
       return toolError(`Could not parse 'until': ${until}`, { until });
     }
 
-    const result = await streamExport({
-      db: this.db,
-      chatIdentifier,
-      format,
-      outputPath,
-      since: sinceDate,
-      until: untilDate,
-      pageSize,
-      signal,
-    });
+    let result: Awaited<ReturnType<typeof streamExport>>;
+    try {
+      result = await streamExport({
+        db: this.db,
+        chatIdentifier,
+        format,
+        outputPath,
+        since: sinceDate,
+        until: untilDate,
+        pageSize,
+        signal,
+        interpret,
+        confirmCloudInterpret,
+      });
+    } catch (err) {
+      if (err instanceof ExportInterpretGuardError) {
+        return toolError(err.message, {
+          uncachedCloud: err.uncachedCloud,
+          threshold: err.threshold,
+        });
+      }
+      throw err;
+    }
     const durMs = span.end({ format, count: result.count, sizeBytes: result.sizeBytes });
 
     const lines = [
