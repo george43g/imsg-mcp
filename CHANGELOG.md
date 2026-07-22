@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.13.0](https://github.com/george43g/imsg-mcp/compare/v1.12.0...v1.13.0) (2026-07-22)
+
+
+### Features
+
+* **export,cli:** interpret media in exports + `imsg interpret` command ([dcba1da](https://github.com/george43g/imsg-mcp/commit/dcba1dab50f64b41c09f90eeaaa3eb4957093f5a))
+* **mcp:** route get_attachment + get_messages through media-intel ([4f43b99](https://github.com/george43g/imsg-mcp/commit/4f43b99b4ff13e4567dd47e2ad8073bf352635a0))
+* **tui:** voice-note interpretation UX — transcript bubbles, R interpret, f reveal ([55697f7](https://github.com/george43g/imsg-mcp/commit/55697f7670d888b90487efd5207c4eeda33d7d70))
+
 # [1.12.0](https://github.com/george43g/imsg-mcp/compare/v1.11.0...v1.12.0) (2026-07-22)
 
 
