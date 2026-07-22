@@ -103,6 +103,15 @@ export function MessageBubble({
   const timestamp = relativeDate(m.date);
   const reactions = m.reactions ? formatReactions(m.reactions) : "";
   const hasAttachments = m.hasAttachments;
+  // Voice note = an audio attachment or a synced Apple transcript. Drives the
+  // 🎤 transcript row (rendered below the bubble body).
+  const isVoiceNote =
+    Boolean(m.appleAudioTranscript) ||
+    (m.attachments ?? []).some(
+      (a) =>
+        (a.mimeType ?? "").startsWith("audio/") ||
+        /\.(caf|amr|m4a|mp3|wav|aac)$/i.test(a.filename ?? ""),
+    );
 
   // Cursor indicator
   const cursor = selected ? "▸" : " ";
@@ -240,6 +249,37 @@ export function MessageBubble({
               <Text color={theme.replyContext} italic wrap="truncate">
                 {"  ↩ "}
                 {display}
+              </Text>
+            </Box>
+          );
+        })()}
+
+      {/* Voice-note / interpreted-media row. Shows the resolved transcript or
+          caption when one is cached/instant (msg.interpretedMedia), otherwise a
+          hint that `R` will interpret it. Cloud transcription is triggered on
+          demand — never inline in a read. */}
+      {(m.interpretedMedia || isVoiceNote) &&
+        (() => {
+          const interp = m.interpretedMedia;
+          const glyph = interp
+            ? interp.kind === "audio"
+              ? "🎤"
+              : interp.kind === "video"
+                ? "🎬"
+                : "🖼"
+            : "🎤";
+          const body = interp?.text ?? "(voice note — press R to transcribe)";
+          return (
+            <Box>
+              {lineNum !== undefined && <Text>{"    "}</Text>}
+              <Text>{"  "}</Text>
+              <Text
+                color={interp ? theme.receivedText : theme.timestamp}
+                italic={!interp}
+                wrap="wrap"
+              >
+                {`  ${glyph} `}
+                {body}
               </Text>
             </Box>
           );

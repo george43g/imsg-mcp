@@ -180,6 +180,7 @@ export function InfoDrawer({
             <Text color={theme.help.key}>o</Text> open{"  "}
             <Text color={theme.help.key}>s</Text> save{"  "}
             <Text color={theme.help.key}>y</Text> copy{"  "}
+            <Text color={theme.help.key}>f</Text> reveal{"  "}
             <Text color={theme.help.key}>a</Text> export all
           </Text>
         )}

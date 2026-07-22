@@ -205,7 +205,8 @@ export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx
               <Text color={theme.help.desc}>
                 <Text color={theme.help.key}>o</Text>: open{"  "}
                 <Text color={theme.help.key}>s</Text>: save to ~/Downloads{"  "}
-                <Text color={theme.help.key}>y</Text>: copy path
+                <Text color={theme.help.key}>y</Text>: copy path{"  "}
+                <Text color={theme.help.key}>f</Text>: reveal in Finder
               </Text>
             </Box>
           </Box>
@@ -255,6 +256,46 @@ export function MessageDrawer({ message: m, width, height, selectedAttachmentIdx
               {retracted.length > 0 && (
                 <Text color={theme.edited}>{`Retracted part(s): ${retracted.join(", ")}`}</Text>
               )}
+            </Box>
+          );
+        })()}
+
+        {/* Media interpretation — voice-note transcript / image·video caption.
+            Shown from the cached/instant result; `R` (re)interprets on demand. */}
+        {(() => {
+          const interp = m.interpretedMedia;
+          const isVoiceNote =
+            Boolean(m.appleAudioTranscript) ||
+            (m.attachments ?? []).some(
+              (a) =>
+                (a.mimeType ?? "").startsWith("audio/") ||
+                /\.(caf|amr|m4a|mp3|wav|aac)$/i.test(a.filename ?? ""),
+            );
+          if (!interp && !isVoiceNote) return null;
+          const label =
+            interp?.kind === "image"
+              ? "Caption"
+              : interp?.kind === "video"
+                ? "Video caption"
+                : "Transcript";
+          return (
+            <Box flexDirection="column" marginTop={1}>
+              <Text color={theme.drawer.label}>
+                {label}
+                {interp ? ` (${interp.source})` : ""}:
+              </Text>
+              <Box borderStyle="single" borderColor={theme.drawer.border} paddingX={1}>
+                <Text
+                  color={interp ? theme.drawer.value : theme.help.desc}
+                  italic={!interp}
+                  wrap="wrap"
+                >
+                  {interp?.text ?? "Not interpreted yet."}
+                </Text>
+              </Box>
+              <Text color={theme.help.desc}>
+                <Text color={theme.help.key}>R</Text>: {interp ? "re-interpret" : "interpret"}
+              </Text>
             </Box>
           );
         })()}

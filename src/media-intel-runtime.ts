@@ -14,7 +14,7 @@ import { basename } from "node:path";
 import { type ResolvedInterpretConfig, resolveInterpretConfig } from "./app-config.js";
 import { type AttachmentRef, MediaIntelService } from "./media-intel.js";
 import type { MediaKind } from "./media-intel-cache.js";
-import type { Attachment, Message } from "./types.js";
+import type { Message } from "./types.js";
 
 export interface InterpretRuntime {
   service: MediaIntelService;
@@ -124,6 +124,30 @@ export function refForAttachment(
     // Apple only transcribes audio; never claim an image has an Apple transcript.
     appleTranscript: kind === "audio" ? (appleTranscript ?? null) : null,
   };
+}
+
+/**
+ * The single interpretable-media ref for a message (its voice note / image /
+ * video), or null. Prefers an attachment; falls back to a synthetic audio ref
+ * when the message carries only an Apple transcript (no attachment row). Used by
+ * the TUI to trigger/retry interpretation for the focused bubble.
+ */
+export function primaryMediaRef(msg: Message): AttachmentRef | null {
+  for (const att of msg.attachments ?? []) {
+    const ref = refForAttachment(att, msg.appleAudioTranscript);
+    if (ref) return ref;
+  }
+  if (msg.appleAudioTranscript) {
+    return {
+      key: `msg:${msg.id}`,
+      path: "",
+      mime: null,
+      filename: `msg-${msg.id}`,
+      kind: "audio",
+      appleTranscript: msg.appleAudioTranscript,
+    };
+  }
+  return null;
 }
 
 /** Collect refs for every interpretable media attachment across a page of messages. */

@@ -87,6 +87,11 @@ export interface AppState {
 export type Action =
   | { type: "SET_CONVERSATIONS"; data: Conversation[] }
   | { type: "SET_MESSAGES"; data: Message[] }
+  | {
+      type: "SET_MESSAGE_INTERPRET";
+      msgId: number;
+      interpretedMedia: { kind: "audio" | "image" | "video"; text: string; source: string };
+    }
   | { type: "SELECT"; index: number; visibleCount?: number }
   | { type: "SELECT_MSG"; index: number }
   | { type: "MOVE_MSG"; delta: number }
@@ -374,6 +379,17 @@ export function reducer(state: AppState, action: Action): AppState {
         messageLoadingOlder: false,
         gapMarkers: [],
       };
+    }
+    case "SET_MESSAGE_INTERPRET": {
+      // Attach a resolved transcript/caption to one message and return a NEW
+      // messages array so the thread re-renders (bubbles read interpretedMedia).
+      let changed = false;
+      const messages = state.messages.map((m) => {
+        if (m.id !== action.msgId) return m;
+        changed = true;
+        return { ...m, interpretedMedia: action.interpretedMedia };
+      });
+      return changed ? { ...state, messages } : state;
     }
     case "PREPEND_MESSAGES": {
       // Merge older messages at the start; dedup by id; preserve cursor on the

@@ -7,6 +7,7 @@ import {
 } from "../../applescript.js";
 import { getContactsDbPaths, getImsgDbPath, getSlugsDbPath } from "../../config.js";
 import { IMessageDB } from "../../imessage-db.js";
+import { applyInlineInterpretations } from "../../media-intel-runtime.js";
 import {
   defaultCountryFromEnv,
   type RecipientResolution,
@@ -41,6 +42,9 @@ export function useImsg() {
       const messages = await getDb().getMessagesForChat(chatIdentifier, 200, {
         includeReactionDetails: true,
       });
+      // Inline cached/instant transcripts + captions before caching (peek only —
+      // never blocks on a cloud call).
+      applyInlineInterpretations(messages);
       const oldestId = minMessageId(messages) ?? 0;
       setCached(chatIdentifier, messages, oldestId);
       return messages;
@@ -54,6 +58,7 @@ export function useImsg() {
         includeReactionDetails: true,
         beforeMessageId,
       });
+      applyInlineInterpretations(older);
       // Merge into cache so subsequent re-entries see the full loaded history.
       if (older.length > 0) prependCached(chatIdentifier, older);
       return older;
