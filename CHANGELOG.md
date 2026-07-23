@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.14.0](https://github.com/george43g/imsg-mcp/compare/v1.13.0...v1.14.0) (2026-07-23)
+
+
+### Features
+
+* **tui:** settings panel for media-interpretation config ([56f0db0](https://github.com/george43g/imsg-mcp/commit/56f0db01361e558979346d236cfb29b7727a3dae))
+
 # [1.13.0](https://github.com/george43g/imsg-mcp/compare/v1.12.0...v1.13.0) (2026-07-22)
 
 
