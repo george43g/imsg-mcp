@@ -511,10 +511,12 @@ export function validateAvailabilityHandle(handle: string): ImessageAvailability
  * nudge). Opening a conversation is community-verified to make Messages pull
  * that thread's not-yet-downloaded attachments from iCloud.
  *
- * ⚠️ NEEDS SUPERVISED LIVE VERIFICATION: the exact `imessage:` URL shape that
- * reliably opens an EXISTING conversation (vs starting a fresh compose) varies
- * across macOS versions. This is the current best-guess format; confirm it
- * against the real app before relying on Tier 1 (see Stage 7 verification).
+ * ✅ LIVE-VERIFIED 2026-07-23 for a 1:1 phone handle (macOS Sequoia): both
+ * `open "imessage://<handle>"` and the production osascript below brought
+ * Messages to the front and opened the existing conversation (not a fresh
+ * compose). Bare handles and 1:1 GUIDs (trailing-handle extraction) are
+ * confirmed. Still UNVERIFIED: email handles and **group** GUIDs (`iMessage;+;chat…`)
+ * — the group form passes through raw and may need a different shape.
  *
  * `chatId` may be a bare handle (`+15551234567`, `name@icloud.com`) or a chat
  * GUID like `iMessage;-;+15551234567` (1:1) / `iMessage;+;chat123…` (group);

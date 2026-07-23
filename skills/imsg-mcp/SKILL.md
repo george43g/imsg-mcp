@@ -82,9 +82,9 @@ only when you want that one signal in isolation.
 
 ## TUI (`imsg`)
 
-Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump, `Enter` message details, `i` per-thread info + attachment drawer, `o` open attachment, `y` copy slug, `d` toggle dev stats, `Tab` switch panes, `/` filter, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `S` send via other app, `:` date jump, `V` visual select, `q` quit.
+Vim-style keybindings: `j/k` move, `gg/G` top/bottom, `Ctrl-d/u` half-page, `{/}` group-jump, `Enter` message details, `i` per-thread info + attachment drawer, `o` open attachment, `f` reveal in Finder, `R` run/retry media interpretation, `y` copy slug, `,` settings panel (media-interpretation config), `d` toggle dev stats, `Tab` switch panes, `/` filter, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `S` send via other app, `:` date jump, `V` visual select, `q` quit.
 
-**Info / attachment drawer (`i`):** on a selected thread, opens a side column with thread metadata (name, slug, service, group/direct, participant count, message count, date range) + a browsable list of **all** attachments across the merged legs. Drawer keys: `j/k` select, `o` open (Quick Look / mpv), `s` save to `~/Downloads`, `y` copy path, `a` export all to `~/Downloads/imsg-<slug>/`, `Esc/q` close.
+**Info / attachment drawer (`i`):** on a selected thread, opens a side column with thread metadata (name, slug, service, group/direct, participant count, message count, date range) + a browsable list of **all** attachments across the merged legs. Drawer keys: `j/k` select, `o` open (Quick Look / mpv), `s` save to `~/Downloads`, `f` reveal in Finder, `y` copy path, `a` export all to `~/Downloads/imsg-<slug>/`, `Esc/q` close. `o`/`s` best-effort **sync-nudge** a not-yet-downloaded attachment first.
 
 ## Native Rust module (optional)
 
@@ -113,9 +113,18 @@ The server honors `notifications/cancelled`. Long-running handlers (`wait_for_re
 - `get_messages` returns a footer with `oldestMessageId`. Pass it as `beforeMessageId` to paginate. Hard cap 5000/call.
 - `export_messages` streams a chat to a file (markdown/csv/json/ndjson) — use this instead of huge `get_messages` calls.
 
-## Attachment transcription
+## Media interpretation
 
-`get_attachment` on an audio attachment transcribes on-device by default (`hear` / `yap` / `whisper-cli`, auto-detected). If none is installed **and** `IMSG_TRANSCRIBE_PROVIDER` + `IMSG_TRANSCRIBE_API_KEY` are set (OpenAI-compatible, e.g. `openai` / `groq` / a base URL; optional `IMSG_TRANSCRIBE_MODEL`, default `whisper-1`), it falls back to an **opt-in** cloud endpoint — audio leaves the device only then. `structuredContent.transcriptSource` reports `"local"` or `"cloud"`.
+imsg-mcp *understands* media through a configurable **chain** per media type
+(`apple` → `local` → `provider:<cloud>`), all in core (`src/media-intel.ts`); frontends only render.
+
+- **Free & automatic:** iPhone-synced voice-note transcripts (`Message.appleAudioTranscript`) and
+  Genmoji descriptions (`Attachment.emojiDescription`) surface with no setup, no network.
+- **Local (free):** `hear` / `yap` / `whisper-cli`, auto-detected.
+- **Cloud (opt-in):** provider profiles (`openai`/`groq`/`openrouter`/`cloudflare`/`huggingface`/`ollama`/custom) configured via `imsg setup --interactive`; keys in `~/.imsg-mcp/credentials.json` (chmod 600). `interpret.auto` defaults to `free` → **audio/images leave the device only when a configured cloud leg fires.** Legacy `IMSG_TRANSCRIBE_*` env vars still work (mapped to an implicit provider).
+- **Triggers:** `get_attachment {interpret: true}`, `export_messages {interpret: true}` (with a paid-call guard), `imsg interpret <rowId> [--force]`, or TUI `R`. `get_messages` inlines `[voice note: "…"]` only for cached/instant results — never blocks a read on cloud.
+- **Cached forever** in `~/.imsg-mcp/media-intel.db` — the same attachment is never interpreted twice. `structuredContent.interpretation` + `interpretSource` (`apple`｜`local`｜`provider:<name>`) report the result.
+- **Undownloaded media:** the Stage 7 sync nudge (`src/attachment-sync.ts`) best-effort pulls a not-on-disk attachment first (T1 open-chat; T2 "Sync Now" opt-in, needs Accessibility). The SIP/private-API download route was researched → **NO-GO** (`docs/plans/media-intel/spike-sip-findings.md`).
 
 ## TUI date jump + selection + export
 
@@ -183,9 +192,13 @@ Precedence: `.env` → `.env.local` → `.env.[mode]` → `.env.[mode].local`
 
 | Area | Location |
 |------|----------|
-| MCP tools / Zod | `src/index.ts` |
+| MCP tools / Zod | `src/index.ts`, `src/mcp-schemas.ts`, `src/mcp-format.ts` |
 | SQLite messages | `src/imessage-db.ts` |
 | Blob parsing | `src/attributed-body-text.ts`, `src/parsers/typedstream-parser.ts` |
+| Edit history | `src/edit-history.ts` |
+| Media interpretation | `src/media.ts` (primitives), `src/media-intel.ts` (service), `src/media-intel-cache.ts`, `src/media-providers.ts`, `src/media-intel-runtime.ts` |
+| Config / wizard | `src/app-config.ts`, `src/setup-wizard.ts`, `src/config.ts` |
+| Attachment sync nudge | `src/attachment-sync.ts` |
 | Contacts | `src/contacts-db.ts` |
 | Slugs | `src/thread-slug.ts`, `src/slug-store.ts` |
 | Send / mock | `src/applescript.ts`, `src/mock-send-db.ts` |
