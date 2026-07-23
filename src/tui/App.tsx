@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { useScreenSize } from "fullscreen-ink";
 import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import { loadTuiConfig, writeTuiConfig } from "../app-config.js";
+import { loadTuiConfig, resolveInterpretConfig, writeTuiConfig } from "../app-config.js";
 import { formatJumpTarget, parseUserDate } from "../date-parse.js";
 import { extensionFor, toCSV, toJSON, toMarkdown } from "../export-formats.js";
 import { getInterpretRuntime, primaryMediaRef } from "../media-intel-runtime.js";
@@ -13,13 +13,14 @@ import { registerCleanup } from "../shutdown.js";
 import { type Conversation, type Message, minMessageId } from "../types.js";
 import { getInstalledChatApps } from "../url-schemes.js";
 import {
-  openAttachment,
+  nudgeAttachmentDownload,
   openAttachmentFile,
+  openAttachmentWithNudge,
   revealAttachment,
   revealAttachmentFile,
   saveAllAttachmentFiles,
-  saveAttachment,
   saveAttachmentFile,
+  saveAttachmentWithNudge,
 } from "./attachmentActions.js";
 import { CommandPalette } from "./components/CommandPalette.js";
 import { ComposeRecipientModal } from "./components/ComposeRecipientModal.js";
@@ -534,10 +535,23 @@ export function App() {
       } else if ((input === "k" || key.upArrow) && attCount > 1) {
         dispatch({ type: "SET_DRAWER_ATTACHMENT", index: state.drawerAttachmentIdx - 1 });
       } else if (input === "o" && selectedMsg) {
-        // Open the SELECTED attachment in external viewer
-        openAttachment(selectedMsg, state.drawerAttachmentIdx, dispatch);
+        // Open the SELECTED attachment in external viewer. If it isn't on disk
+        // (transfer_state -1), first nudge Messages to download it (Stage 7).
+        void openAttachmentWithNudge(
+          selectedMsg,
+          state.drawerAttachmentIdx,
+          selected?.chatIdentifier,
+          resolveInterpretConfig().nudge,
+          dispatch,
+        );
       } else if (input === "s" && selectedMsg) {
-        saveAttachment(selectedMsg, state.drawerAttachmentIdx, dispatch);
+        void saveAttachmentWithNudge(
+          selectedMsg,
+          state.drawerAttachmentIdx,
+          selected?.chatIdentifier,
+          resolveInterpretConfig().nudge,
+          dispatch,
+        );
       } else if (input === "y" && selectedMsg) {
         const att = selectedMsg.attachments?.[state.drawerAttachmentIdx];
         if (att?.filename) {
@@ -572,11 +586,23 @@ export function App() {
       } else if (input === "G" && attCount > 0) {
         dispatch({ type: "SET_INFO_ATTACHMENT", index: attCount - 1 });
       } else if (input === "o") {
-        if (att) openAttachmentFile(att, dispatch);
-        else dispatch({ type: "SET_STATUS", status: "No attachment." });
+        if (att) {
+          void nudgeAttachmentDownload(
+            att,
+            selected?.chatIdentifier,
+            resolveInterpretConfig().nudge,
+            dispatch,
+          ).then((ok) => ok && openAttachmentFile(att, dispatch));
+        } else dispatch({ type: "SET_STATUS", status: "No attachment." });
       } else if (input === "s") {
-        if (att) saveAttachmentFile(att, dispatch);
-        else dispatch({ type: "SET_STATUS", status: "No attachment." });
+        if (att) {
+          void nudgeAttachmentDownload(
+            att,
+            selected?.chatIdentifier,
+            resolveInterpretConfig().nudge,
+            dispatch,
+          ).then((ok) => ok && saveAttachmentFile(att, dispatch));
+        } else dispatch({ type: "SET_STATUS", status: "No attachment." });
       } else if (input === "y") {
         if (att?.filename) {
           execSync("pbcopy", { input: att.filename.replace(/^~/, process.env.HOME ?? "~") });
@@ -969,7 +995,13 @@ export function App() {
             status: `${msg.attachments?.length} attachments — j/k select, o open, s save`,
           });
         } else {
-          openAttachment(msg, 0, dispatch);
+          void openAttachmentWithNudge(
+            msg,
+            0,
+            selected?.chatIdentifier,
+            resolveInterpretConfig().nudge,
+            dispatch,
+          );
         }
       } else if (input === "R") {
         // Interpret (transcribe / caption) the selected message's media on

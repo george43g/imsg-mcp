@@ -502,6 +502,95 @@ export function validateAvailabilityHandle(handle: string): ImessageAvailability
   };
 }
 
+// ---------------------------------------------------------------------------
+// Attachment sync nudge (Stage 7) — coax Messages into downloading media
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the URL used to open a conversation in Messages.app (Tier-1 sync
+ * nudge). Opening a conversation is community-verified to make Messages pull
+ * that thread's not-yet-downloaded attachments from iCloud.
+ *
+ * ⚠️ NEEDS SUPERVISED LIVE VERIFICATION: the exact `imessage:` URL shape that
+ * reliably opens an EXISTING conversation (vs starting a fresh compose) varies
+ * across macOS versions. This is the current best-guess format; confirm it
+ * against the real app before relying on Tier 1 (see Stage 7 verification).
+ *
+ * `chatId` may be a bare handle (`+15551234567`, `name@icloud.com`) or a chat
+ * GUID like `iMessage;-;+15551234567` (1:1) / `iMessage;+;chat123…` (group);
+ * we extract the trailing handle for the GUID form and pass everything else
+ * through unchanged.
+ */
+export function buildImessageOpenUrl(chatId: string): string {
+  const trimmed = chatId.trim();
+  const guidMatch = trimmed.match(/^[^;]+;[-+];(.+)$/);
+  const handle = guidMatch ? guidMatch[1]! : trimmed;
+  return `imessage://${handle}`;
+}
+
+/**
+ * Tier 1: activate Messages and open the conversation so the app pulls its
+ * media from iCloud. Fire-and-return — the caller polls the filesystem for the
+ * downloaded bytes. Mocked (no-op) under Vitest / `VITE_ENV=ai`.
+ */
+export async function openConversationInMessages(chatId: string): Promise<void> {
+  if (MOCK) return;
+  const url = buildImessageOpenUrl(chatId);
+  const escaped = appleScriptEscape(url);
+  const script = `
+    tell application "Messages"
+      activate
+      open location "${escaped}"
+    end tell
+  `;
+  await runAppleScript(script);
+}
+
+/** Result of the Tier-2 "Sync Now" attempt. */
+export interface SyncNowOutcome {
+  ok: boolean;
+  /** True when the failure was a missing Accessibility permission. */
+  needsAccessibility?: boolean;
+  error?: string;
+}
+
+/**
+ * Tier 2 (opt-in): UI-script Messages ▸ Settings ▸ iMessage ▸ "Sync Now" via
+ * System Events. Fragile across macOS versions and requires Accessibility
+ * permission for the controlling terminal/IDE — we detect the assistive-access
+ * error and flag `needsAccessibility` so the caller can surface remediation
+ * rather than a raw AppleScript failure. Mocked (returns ok) under Vitest.
+ *
+ * ⚠️ NEEDS SUPERVISED LIVE VERIFICATION: the Settings-window element path
+ * differs by macOS release; this is a best-effort script that fails gracefully.
+ */
+export async function syncNowViaSystemEvents(): Promise<SyncNowOutcome> {
+  if (MOCK) return { ok: true };
+  const script = `
+    tell application "Messages" to activate
+    delay 0.3
+    tell application "System Events"
+      tell process "Messages"
+        keystroke "," using command down
+        delay 1
+        set syncButtons to (every button of front window whose name is "Sync Now")
+        if (count of syncButtons) is 0 then error "Sync Now button not found"
+        click item 1 of syncButtons
+      end tell
+    end tell
+  `;
+  try {
+    await runAppleScript(script);
+    return { ok: true };
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    if (/assistive access|not allowed|not authori[sz]ed|-1719|-25211/i.test(msg)) {
+      return { ok: false, needsAccessibility: true, error: msg };
+    }
+    return { ok: false, error: msg };
+  }
+}
+
 export async function checkImessageAvailability(handle: string): Promise<ImessageAvailability> {
   // Reject obviously-invalid input first so we don't get false-positive
   // "reachable: true" from AppleScript's lazy buddy resolution.

@@ -478,6 +478,29 @@ export async function runExportCommand(target: string, opts: ExportOpts): Promis
       if (until) filters.untilMs = until.getTime();
       const attachments = db.searchAttachments(filters);
 
+      // Best-effort sync nudge: if any attachment is missing from disk, open
+      // the conversation ONCE so Messages pulls the thread's media, then wait
+      // up to the configured timeout before copying. Honors `nudge.enabled`;
+      // one open covers the whole thread (opening a conversation syncs all its
+      // attachments), so we never poll per-file here.
+      const { resolveInterpretConfig } = await import("./app-config.js");
+      const nudge = resolveInterpretConfig().nudge;
+      const firstMissing = attachments.find(
+        (a) => a.filename && !existsSync(a.filename.replace(/^~/, homedir())),
+      );
+      if (nudge.enabled && firstMissing && chatIdentifier) {
+        const { ensureAttachmentDownloaded } = await import("./attachment-sync.js");
+        log(`  Nudging Messages to sync missing attachments…`, "dim");
+        await ensureAttachmentDownloaded(
+          { filePath: firstMissing.filename.replace(/^~/, homedir()), chatId: chatIdentifier },
+          {
+            enabled: nudge.enabled,
+            tier2SyncNow: nudge.tier2SyncNow,
+            timeoutSeconds: nudge.timeoutSeconds,
+          },
+        );
+      }
+
       let copied = 0;
       let totalBytes = 0;
       const seen = new Set<string>();

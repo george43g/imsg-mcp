@@ -2313,6 +2313,39 @@ export class IMessageDB {
   }
 
   /**
+   * Download context for the Stage-7 sync nudge: whether the attachment is
+   * marked undownloaded (`transfer_state === -1`) and the identifier of the
+   * chat it belongs to (so Tier-1 can open that conversation). LEFT-joins so an
+   * attachment with no chat linkage still yields its `transferState`
+   * (`chatIdentifier` null). Guards `transfer_state` via `hasColumn` for schema
+   * variants that lack it. Returns null when the ROWID is unknown.
+   */
+  getAttachmentDownloadInfo(
+    rowId: number,
+  ): { transferState: number | null; chatIdentifier: string | null } | null {
+    const transferCol = this.hasColumn("attachment", "transfer_state")
+      ? "a.transfer_state as transferState"
+      : "NULL as transferState";
+    const row = this.raw
+      .prepare(
+        `SELECT ${transferCol}, c.chat_identifier as chatIdentifier
+         FROM ${Tables.ATTACHMENT} a
+         LEFT JOIN ${Tables.MESSAGE_ATTACHMENT_JOIN} maj ON a.ROWID = maj.attachment_id
+         LEFT JOIN ${Tables.MESSAGE} m ON maj.message_id = m.ROWID
+         LEFT JOIN ${Tables.CHAT_MESSAGE_JOIN} cmj ON m.ROWID = cmj.message_id
+         LEFT JOIN ${Tables.CHAT} c ON cmj.chat_id = c.ROWID
+         WHERE a.ROWID = ?
+         LIMIT 1`,
+      )
+      .get(rowId) as any;
+    if (!row) return null;
+    return {
+      transferState: row.transferState == null ? null : Number(row.transferState),
+      chatIdentifier: row.chatIdentifier || null,
+    };
+  }
+
+  /**
    * Fetch attachments for a message
    */
   private fetchAttachments(messageRowId: number): Attachment[] {
