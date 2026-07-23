@@ -18,6 +18,7 @@ const SIDEBAR_KEYS = [
   ["N", "new msg"],
   ["Tab", "→msgs"],
   ["/", "filter"],
+  [",", "settings"],
   ["d", "stats"],
   ["r", "refresh"],
   PALETTE_HINT,
@@ -108,6 +109,14 @@ const INFO_KEYS = [
   ["Esc/q", "close"],
 ];
 
+const SETTINGS_KEYS = [
+  ["j/k", "move"],
+  ["␣", "toggle"],
+  ["←/→", "adjust"],
+  ["K/J", "reorder"],
+  ["Esc/q", "close"],
+];
+
 export function HelpBar({ mode, focus }: Props) {
   const theme = useTheme();
   let keys: string[][];
@@ -116,6 +125,7 @@ export function HelpBar({ mode, focus }: Props) {
   else if (mode === "filter") keys = FILTER_KEYS;
   else if (mode === "drawer") keys = DRAWER_KEYS;
   else if (mode === "info") keys = INFO_KEYS;
+  else if (mode === "settings") keys = SETTINGS_KEYS;
   else if (mode === "select") keys = SELECT_KEYS;
   else if (mode === "export") keys = EXPORT_KEYS;
   else if (mode === "date-jump") keys = DATE_JUMP_KEYS;
