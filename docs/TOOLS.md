@@ -16,7 +16,7 @@ imsg <subcommand> [args] [--flags]
 | `imsg cli` | Interactive REPL — same tools as the MCP server, exposed at a prompt. |
 | `imsg tui` | Full-screen terminal UI (read-only by default). |
 | `imsg doctor` | Verify Full Disk Access + DB readability + Messages.app. |
-| `imsg setup [--write claude\|cursor]` | Autodetect paths, emit (or merge in) the host config snippet. |
+| `imsg setup [--interactive] [--write claude\|cursor]` | `--interactive` (`-i`): guided wizard (`@inquirer/prompts`) to configure media interpretation — provider profiles, per-media chains, masked key entry. Without it: autodetect paths + emit/merge the host config snippet. |
 | `imsg conversations [limit]` | List recent chats. |
 | `imsg messages [chat] [limit]` | Recent messages from a chat. |
 | `imsg unread [limit]` | All unread across chats. |
@@ -26,6 +26,7 @@ imsg <subcommand> [args] [--flags]
 | `imsg send <target> <message>` | Send via Messages.app. |
 | **`imsg export <slug-or-handle>`** | **Stream a conversation to disk (md/csv/json/ndjson) + optional attachments.** See flags below. |
 | **`imsg analytics <type> [windowDays] [--json\|--yaml]`** | **Run any of the 7 analytics** (see below). Pretty text by default; `--json`/`--yaml` for scripting. Aliased as `imsg stats`. |
+| **`imsg interpret <rowId> [--force]`** | **Interpret one attachment** — transcribe a voice note / caption an image or video via the configured chain (Apple → local → cloud provider). Prints the text; result is cached forever. `--force` evicts the cache and re-runs. |
 | `imsg humans top [windowDays] [--json\|--yaml]` | Relationship leaderboard (also `imsg analytics relationship_leaderboard`). |
 | `imsg logs [tail]` | Server debug logs. |
 | `imsg last-error` | Detail on the most recent send failure. |
@@ -47,6 +48,8 @@ imsg export <slug-or-handle>
 ```
 
 `<slug-or-handle>` accepts a `threadSlug` (from `imsg tui` `y` or `list_conversations`), a phone number, an email, or a raw `chat_identifier`.
+
+Cached/instant interpretation (Apple voice-note transcripts, already-cached captions) is embedded automatically in every format via the shared formatter. `--include-attachments` also triggers the Stage 7 **sync nudge** (opens the conversation so Messages pulls any not-yet-downloaded media). The CLI export has **no** active-interpret flag — to actively transcribe/caption uncached media during export, use the MCP `export_messages` tool's `interpret` arg, or pre-run `imsg interpret`.
 
 ### `imsg analytics` types
 
@@ -83,6 +86,8 @@ Output is pretty text with color by default; pass `--json` or `--yaml` for machi
 
 `get_messages` response footer includes `oldestMessageId` + `hasMore`. To page deeper, pass `oldestMessageId` as `beforeMessageId` in the next call. Hard cap of 5000 messages per call to prevent OOM — use `export_messages` for larger ranges.
 
+**Inline media interpretation:** messages carrying a voice note / image / video are annotated with a short `[voice note: "…"]` / `[image: "…"]` marker (in the text and `structuredContent.interpretedMedia`) **only when a cached or instant (Apple-synced) result exists** — `get_messages` never blocks a read on a cloud call. To actively interpret uncached media, use `get_attachment` with `interpret: true` or `imsg interpret`. New per-message fields: `appleAudioTranscript` (iPhone-synced voice-note transcript), `editHistory` (prior versions of edited messages), and `replyToKind` (`voice-note`｜`image`｜`video`｜`file`, so a reply to a voice note renders "↩ voice note: '…'"). Genmoji attachments carry `emojiDescription` (Apple's authored text).
+
 ### Writing
 
 | Tool | Required args | Notes |
@@ -94,16 +99,29 @@ Output is pretty text with color by default; pass `--json` or `--yaml` for machi
 
 | Tool | Required args | Notes |
 |---|---|---|
-| `export_messages` | `chatIdentifier` or `threadSlug`, `outputPath` | `format` (md/csv/json/ndjson), `since`, `until`, `pageSize`. Streams to disk page-by-page — won't OOM on 100k-message histories. |
+| `export_messages` | `chatIdentifier` or `threadSlug`, `outputPath` | `format` (md/csv/json/ndjson), `since`, `until`, `pageSize`. Streams to disk page-by-page — won't OOM on 100k-message histories. **`interpret`** (default false): actively transcribe voice notes / caption images+videos and embed the text (cached + instant Apple transcripts are always embedded regardless). **`interpretForce`**: skip the paid-call guard — when `interpret` would trigger more than `interpret.exportConfirmThreshold` uncached cloud calls, the tool refuses and reports the count unless this is set. |
 
 ### Attachments
 
 | Tool | Required args | Notes |
 |---|---|---|
 | `search_attachments` | — | `mimePrefix`, `chatIdentifier`, `since`, `until`, `limit`. Returns metadata only. |
-| `get_attachment` | `rowId` | **Images**: real MCP image content block (≤1536px downscale, HEIC→PNG) so the model can see it, plus full-size base64 when ≤5MB. **Video**: QuickLook poster frame image block + duration/resolution + path. **Audio**: metadata + path, transcript when `hear`/`yap`/`whisper-cli` is installed — or, if none is and `IMSG_TRANSCRIBE_PROVIDER` + `IMSG_TRANSCRIBE_API_KEY` are set, an opt-in OpenAI-compatible cloud fallback. `structuredContent.transcriptSource` is `"local"` or `"cloud"`. |
+| `get_attachment` | `rowId` | **Images**: real MCP image content block (≤1536px downscale, HEIC→PNG) so the model can see it, plus full-size base64 when ≤5MB. **Video**: QuickLook poster frame image block + duration/resolution + path. **Audio**: metadata + path + transcript. **`interpret`**: `true` forces an interpretation run (bypasses the auto-mode gate + any cached failure), `false` skips it, omit for the configured default. Interpretation walks the per-media **chain** (Apple → local → cloud provider) and caches forever; `structuredContent.interpretation` + `interpretSource` (`apple`｜`local`｜`provider:<name>`) report the result. If the file isn't on disk, the Stage 7 sync nudge best-effort pulls it first. |
 
-**Audio transcription** is on-device by default (`hear` / `yap` / `whisper-cli`, auto-detected). Setting `IMSG_TRANSCRIBE_PROVIDER` + `IMSG_TRANSCRIBE_API_KEY` adds an **opt-in** OpenAI-compatible cloud fallback (`POST {baseUrl}/audio/transcriptions`) that runs **only** when no local transcriber produced text. Local always takes precedence; **audio leaves the device only when the cloud fallback actually fires**, and the response labels it "Transcript (via cloud provider):" with `transcriptSource: "cloud"`. See the server env-var table below for `IMSG_TRANSCRIBE_*`.
+**Media interpretation (chains & providers).** Interpretation walks a configured **chain** per media
+type (`interpret.chains.{audio,image,video}` in `config.json`). Chain legs are `apple` (Apple-synced
+voice-note transcript — instant, free), `local` (on-device `hear`/`yap`/`whisper-cli`, auto-detected),
+and `provider:<name>` (an OpenAI-compatible cloud profile). The default chain is **free-first** and
+`interpret.auto` defaults to **`free`** — so cloud legs run only when you opt in via the wizard or
+config, and **audio/images leave the device only then, never by default**. Provider profiles
+(`openai`, `groq`, `openrouter`, `cloudflare`, `huggingface`, `ollama`, or a custom base URL) are
+configured with `imsg setup --interactive`; keys live in `~/.imsg-mcp/credentials.json` (chmod 600).
+Results are cached forever in `~/.imsg-mcp/media-intel.db` — the same attachment is never interpreted
+twice (evict + re-run with `imsg interpret <rowId> --force` or `get_attachment {interpret:true}`).
+
+**Back-compat:** the legacy `IMSG_TRANSCRIBE_PROVIDER` / `IMSG_TRANSCRIBE_API_KEY` / `IMSG_TRANSCRIBE_MODEL`
+env vars are still honored — they map to an implicit provider profile appended to the audio chain. See
+the server env-var table below.
 
 ### Contacts
 
@@ -169,6 +187,7 @@ The server exposes resources under two URI schemes for hosts that prefer resourc
 | `N` | Compose to new recipient — opens picker (phone / email / contact name typeahead, with vanity-letter parsing) |
 | `S` | Send via other app (URL-scheme picker) |
 | `r` | Refresh |
+| `,` | Open the **settings panel** (media-interpretation config — see below) |
 | `d` | Toggle dev stats panel |
 | `q` | Quit |
 
@@ -181,7 +200,9 @@ The server exposes resources under two URI schemes for hosts that prefer resourc
 | `Ctrl-d` / `Ctrl-u` | Half-page down / up |
 | `{` / `}` | Previous / next sender group |
 | `Enter` | Open drawer |
-| `o` | Open first attachment in Quick Look |
+| `o` | Open first attachment in Quick Look (nudges a download first if the file isn't on disk) |
+| `f` | Reveal the attachment in Finder (`open -R`) |
+| `R` | Run / retry media interpretation for the selected message (transcribe voice note, caption image/video) |
 | `:` | Date jump modal |
 | `V` | Visual select mode |
 | `y` (in select) | Copy selected text |
@@ -199,26 +220,66 @@ SMS + iMessage), stickers and plugin payloads excluded, newest first.
 |---|---|
 | `j` / `k` | Select next / previous attachment |
 | `g` / `G` | First / last attachment |
-| `o` | Open the selected attachment (images → Quick Look, video → mpv) |
+| `o` | Open the selected attachment (images → Quick Look, video → mpv); nudges a download first if not on disk |
 | `s` | Save the selected attachment to `~/Downloads` (collision-safe name) |
+| `f` | Reveal the selected attachment in Finder (`open -R`) |
 | `y` | Copy the selected attachment's file path |
 | `a` | Export **all** the thread's attachments to `~/Downloads/imsg-<slug>/` |
 | `Esc` / `q` | Close the drawer |
+
+### Settings panel (`,`)
+
+Press `,` from the sidebar to open the media-interpretation settings panel (also reachable from the
+command palette). It reads/writes the `interpret` block of `config.json` live.
+
+| Key | Action |
+|---|---|
+| `j` / `k` (or arrows) | Move between settings rows |
+| `g` / `G` | First / last row |
+| `Space` / `Enter` | Toggle the selected row (auto-mode, inline transcripts, nudge tiers) |
+| `h` / `l` (or ← / →) | Cycle the selected value left / right (e.g. export threshold, auto-mode) |
+| `K` / `J` | Move the selected chain leg up / down (reorder the chain) |
+| `Esc` / `q` | Close the panel (does **not** quit the app) |
+
+Provider **profiles** are shown with a key-present indicator but are **not** edited here — key entry
+is wizard/file only (`imsg setup --interactive` or `~/.imsg-mcp/credentials.json`), so keys never
+touch the TUI.
 
 ---
 
 ## TUI configuration
 
-Persist via `~/.config/imsg-mcp/config.json` (or `~/.imsg-mcp/config.json`):
+Persist via `~/.config/imsg-mcp/config.json` (or `~/.imsg-mcp/config.json`). Flat theme keys stay at
+the top level (back-compat); media interpretation lives under `interpret`:
 
-```json
+```jsonc
 {
   "theme": "powerline",
-  "accentColor": "#FF6B35"
+  "accentColor": "#FF6B35",
+  "interpret": {
+    "auto": "free",                    // "all" | "free" | "off"  (default "free")
+    "inlineTranscripts": true,
+    "exportConfirmThreshold": 25,      // guard: confirm above N uncached cloud calls
+    "chains": {
+      "audio": ["apple", "local", "provider:openrouter"],
+      "image": ["provider:openrouter"],
+      "video": ["provider:openrouter"]
+    },
+    "providers": [
+      { "name": "openrouter", "preset": "openrouter",
+        "models": { "transcribe": "…", "vision": "…" } }
+    ],
+    "nudge": { "enabled": true, "tier2SyncNow": false, "timeoutSeconds": 30 }
+  }
 }
 ```
 
-Or override per-launch: `imsg tui --theme=powerline --accent=#FF6B35`.
+Provider **keys are NOT stored here** — they live in `~/.imsg-mcp/credentials.json` (chmod 600),
+keyed by provider name. Use `imsg setup --interactive` to configure both. Setting
+`nudge.tier2SyncNow: true` opts into the UI-scripted "Sync Now" escalation, which requires the
+macOS **Accessibility** permission (see README).
+
+Theme override per-launch: `imsg tui --theme=powerline --accent=#FF6B35`.
 
 Resolution order: CLI flag → `IMSG_TUI_*` env → config file → defaults.
 

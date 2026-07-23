@@ -5,7 +5,7 @@
 [![Release](https://github.com/george43g/imsg-mcp/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/george43g/imsg-mcp/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**MCP server, CLI, and terminal UI for iMessage on macOS.** Let AI agents read your iMessage / SMS, search history, send messages, and export conversations — without ever leaving your machine. Includes a self-healing watchdog so a wedged query can't take your agent down.
+**MCP server, CLI, and terminal UI for iMessage on macOS.** Let AI agents read your iMessage / SMS, search history, send messages, export conversations, and *understand* media — transcribe voice notes, caption images & video — without ever leaving your machine by default. Includes a self-healing watchdog so a wedged query can't take your agent down.
 
 ![TUI overview](docs/screenshots/tui-overview.png)
 
@@ -41,6 +41,7 @@ Prefer the canonical `npx -y` config above. If you'd rather install the MCPB ext
 ```bash
 npx -y imsg-mcp setup --write claude   # or --write cursor
 npx -y imsg-mcp doctor                  # verify Full Disk Access + DB
+npx -y imsg-mcp setup --interactive     # (optional) configure media interpretation
 ```
 
 ---
@@ -85,7 +86,7 @@ Full walkthrough with screenshots: [**docs/WORKFLOWS.md**](docs/WORKFLOWS.md).
 | `wait_for_reply` | Poll for the next reply — includes the user's own interjections from other devices. |
 | `export_messages` | Stream a chat to file (md/csv/json/ndjson). |
 | `search_attachments` | Find attachments by mime/date/chat. |
-| `get_attachment` | Fetch attachment bytes (inline or path). |
+| `get_attachment` | Fetch an attachment (image block / poster / audio) + optional AI interpretation (`interpret`). |
 | `check_imessage_availability` | Pre-flight iMessage vs SMS reachability. |
 | `chat_analytics` | Pre-aggregated stats (heatmaps, leaderboards, etc). |
 | `list_contacts` / `search_contacts` | Browse/search contacts (name, phone, email). |
@@ -108,18 +109,47 @@ Full reference (CLI subcommands + MCP tools + every flag): [**docs/TOOLS.md**](d
 imsg tui
 ```
 
-Vim-style: `j/k` move, `gg/G` jump, `Enter` drawer, `i` per-thread info + attachment browser, `o` Quick Look an attachment, `:` jump to date, `V` visual select, `e` export, `S` send via other app, `y` copy slug, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `q` quit.
+Vim-style: `j/k` move, `gg/G` jump, `Enter` drawer, `i` per-thread info + attachment browser, `o` Quick Look an attachment, `f` reveal in Finder, `R` run/retry media interpretation, `:` jump to date, `V` visual select, `e` export, `S` send via other app, `y` copy slug, `c` compose in current thread, `N` compose to new recipient (phone / email / contact name), `,` settings panel, `q` quit.
 
 Themes (`safe` / `powerline`) and a single accent color drive the whole palette. See [docs/TOOLS.md#tui-configuration](docs/TOOLS.md#tui-configuration).
+
+---
+
+## Media interpretation
+
+imsg-mcp reads what Apple already computed **for free, on-device**: iPhone-synced voice-note
+transcripts and Genmoji descriptions surface automatically with zero setup and zero network. For
+everything else it runs a configurable **chain** per media type:
+
+```
+apple  →  local (hear / yap / whisper-cli)  →  provider:<cloud>
+```
+
+- **Free-first & opt-in.** `interpret.auto` defaults to `free`, so only Apple + local legs run
+  unless you deliberately add a cloud provider. **Audio and images leave your device only when a
+  cloud leg you configured actually fires** — never by default.
+- **Local tools** (optional, free): `brew install sveinbjornt/hear/hear` · `brew install yap` ·
+  `brew install whisper-cpp`. Optional `brew install ffmpeg mpv` improves video framing/playback.
+- **Cloud providers** (optional): presets for `openai`, `groq`, `openrouter`, `cloudflare`,
+  `huggingface`, `ollama` (local, no key), or a custom OpenAI-compatible base URL. Configure with
+  `imsg setup --interactive`; keys are stored in `~/.imsg-mcp/credentials.json` (chmod 600), never
+  in the shared config.
+- **Cached forever.** Every result is cached in `~/.imsg-mcp/media-intel.db` — the same attachment
+  is never interpreted (or paid for) twice. Bulk exports confirm before making more than
+  `exportConfirmThreshold` (default 25) uncached cloud calls.
+
+Trigger it via `get_attachment` (`interpret`), `export_messages` (`interpret`), `imsg interpret
+<rowId>`, or the TUI (`R`). Full config reference: [docs/TOOLS.md](docs/TOOLS.md).
 
 ---
 
 ## Permissions
 
 - **Full Disk Access** — required to read `chat.db` and Address Book. System Settings → Privacy & Security → Full Disk Access → add the terminal/IDE you actually run from.
-- **Automation** — required only for sending. macOS prompts on first send.
+- **Automation** — required only for sending, and for the attachment **sync nudge** (opening a conversation so Messages downloads its media). macOS prompts on first use.
+- **Accessibility** *(opt-in, off by default)* — only if you enable the Tier-2 "Sync Now" nudge (`interpret.nudge.tier2SyncNow`), which UI-scripts the Messages ▸ Settings ▸ Sync Now button. Leave it off unless you need it. System Settings → Privacy & Security → Accessibility.
 
-Privacy: only ever reads your **local** `~/Library/Messages/chat.db`. Nothing is uploaded. The connected MCP host (Claude / Cursor / Warp / …) sees whatever messages the agent fetches — treat those hosts the same way you treat any app with Full Disk Access.
+Privacy: reads only your **local** `~/Library/Messages/chat.db` — nothing is uploaded by default. Cloud media interpretation is strictly opt-in (see above) and only sends the specific attachment you interpret to the provider you configured. The connected MCP host (Claude / Cursor / Warp / …) sees whatever messages the agent fetches — treat those hosts the same way you treat any app with Full Disk Access.
 
 ---
 

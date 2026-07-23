@@ -4,7 +4,7 @@ _Single source of truth for where the project stands and what's still open. Read
 first when resuming work. Supersedes the retired `HANDOFF_v1.4.x.md`, `DEFERRED_TASKS.md`,
 and the untracked `.tui-audit-notes.md` scratch files (folded in here, shipped items dropped)._
 
-_Last updated 2026-07-21 · current release **v1.8.0** (npm)._
+_Last updated 2026-07-23 · current release **v1.15.0** (npm)._
 
 ---
 
@@ -12,10 +12,13 @@ _Last updated 2026-07-21 · current release **v1.8.0** (npm)._
 
 `imsg-mcp` is feature-complete for its v1 goal: an MCP server + CLI + TUI that lets an agent
 read, search, send, analyse, and export iMessage/SMS entirely on-device, behind a self-healing
-watchdog. The **finalise cycle (v1.6.0 → v1.8.0)** closed every remaining v1.4.2-plan feature.
-The **monorepo/turborepo migration is deliberately deferred** — it is a corpus-consumer concern
-for the future relationship-analytics app, captured in full in
-[`MONOREPO_MIGRATION.md`](MONOREPO_MIGRATION.md).
+watchdog. The **finalise cycle (v1.6.0 → v1.8.0)** closed every remaining v1.4.2-plan feature, and
+the **Media-Intel cycle (v1.9.0 → v1.15.0)** made the tool *understand* media — Apple-native
+transcripts/Genmoji text, a provider-agnostic AI interpretation layer with permanent caching
+exposed uniformly across MCP/CLI/TUI, an `imsg setup` wizard + TUI settings panel, edit-history,
+and a best-effort attachment sync nudge. The **monorepo/turborepo migration is deliberately
+deferred** — it is a corpus-consumer concern for the future relationship-analytics app, captured
+in full in [`MONOREPO_MIGRATION.md`](MONOREPO_MIGRATION.md).
 
 ### Shipped in the finalise cycle (v1.6.0 → v1.8.0)
 
@@ -28,6 +31,29 @@ for the future relationship-analytics app, captured in full in
 | **Per-thread info / attachment drawer** | v1.8.0 | TUI **`i`** opens a side-column drawer: thread metadata (name, slug, service, group/direct, participant count, message count, first→last range) + a browsable list of **all** attachments across the merged legs (stickers/plugin UTIs excluded). Drawer keys: `j/k` select · `o` open (Quick Look / mpv) · `s` save to `~/Downloads` · `y` copy path · `a` export all to `~/Downloads/imsg-<slug>/` · `Esc/q` close. |
 | **Analytics on CLI + console** | v1.4.1 | All 7 analytic types via `imsg analytics <type> [days] [--json\|--yaml]` (alias `imsg stats`) + console `analytics` verb (was leaderboard-only outside the TUI). Shared renderer with ASCII heatmap + phone-safe YAML. |
 | **Core-seam cleanup** | v1.8.0 prep | Moved the only two core→frontend edges into core: `src/export-formats.ts` (was `tui/exportFormats.ts`, used by `exportStream.ts`) and `src/date-parse.ts` (was `tui/dateParse.ts`, used by `index.ts`). Future-proofs the deferred migration. |
+
+### Shipped in the Media-Intel cycle (v1.9.0 → v1.15.0)
+
+Architecture rule for the whole cycle: **all processing lives in core (`src/`); frontends only
+render.** New core modules: `media-intel.ts` (service), `media-intel-cache.ts` (SQLite at
+`~/.imsg-mcp/media-intel.db`), `media-providers.ts` (OpenAI-compatible client + presets),
+`app-config.ts` (wider config schema, absorbs `tui-config.ts`), `edit-history.ts`,
+`attachment-sync.ts`, `setup-wizard.ts`.
+
+| Feature | Release | Notes |
+|---|---|---|
+| **Apple-native media text** | v1.9.0 | Reads `IMAudioTranscription` out of `attributedBody` typedstream attributes (iPhone-synced voice-note transcripts → `Message.appleAudioTranscript`); surfaces Genmoji `emoji_image_short_description` → `Attachment.emojiDescription`; reply-context kind fix → `ReplyContext.replyToKind` (`voice-note`/`image`/`video`/`file`) so a reply to a voice note reads "↩ voice note: '…'" instead of "(unknown)". Zero network. |
+| **Media-intel core** | v1.10.0 | Provider-agnostic interpretation service + permanent cache. Per-media-type **chains** (`apple` → `local` → `provider:<name>`), OpenAI-compatible client (2 shapes: `/audio/transcriptions` multipart + `/chat/completions` multimodal), concurrency limiter + in-flight dedupe, video pipeline (poster + optional sparse `ffmpeg` frames + `avconvert` audio-track transcript). Results cached forever — never interprets the same media twice. |
+| **Edit history** | v1.11.0 | Parses `message.message_summary_info` bplist (`"ec"` prior versions, `"rp"` retracted) → `Message.editHistory`; TUI drawer shows the "Edited N times" timeline. |
+| **Setup wizard** | v1.12.0 | `imsg setup --interactive` (`@inquirer/prompts`): doctor probe + `brew install` one-liners, add/edit provider profiles (preset or custom base URL, masked key paste, Cloudflare account id), per-media chain ordering, toggles. Config in `config.json`; keys in `~/.imsg-mcp/credentials.json` (chmod 600). |
+| **Surfaces everywhere** | v1.13.0 | `get_attachment.interpret`, `export_messages.interpret` (+ paid-call guard), `get_messages` inline `[voice note: "…"]` (cached/instant only — never blocks reads on cloud), `imsg interpret <rowId> [--force]` CLI, TUI interpret states + `R` retry + `f` reveal-in-Finder. |
+| **TUI settings panel** | v1.14.0 | Mode `"settings"` via `,` (and the palette): view/reorder chains, toggle auto-mode/inline/threshold/nudge, provider list with key-present indicators (no key entry in the TUI — wizard/file only). |
+| **Attachment sync nudge** | v1.15.0 | `ensureAttachmentDownloaded` (`src/attachment-sync.ts`): **T1** (default) opens the conversation (`imessage://`) + polls; **T2** (opt-in, new **Accessibility** permission) UI-scripts "Sync Now". Wired into `get_attachment`, TUI open/save, and `imsg export --include-attachments`. **T3** documented only (see backlog). |
+
+**Media-intel config** lives under `interpret` in `config.json`: `auto` (`all`｜`free`｜`off`, default
+**`free`**), `inlineTranscripts`, `exportConfirmThreshold` (default 25), `chains`, `providers[]`,
+`nudge {enabled, tier2SyncNow, timeoutSeconds}`. Cloud calls happen **only** per the configured
+chain/auto-mode — audio/images leave the device solely on explicit opt-in, never by default.
 
 **Analytics:** 7 of 27 enum types are implemented (`IMPLEMENTED_TYPES` in `src/analytics.ts`);
 the other 20 return a friendly schema error until built (see Backlog §1).
@@ -127,6 +153,22 @@ still exposed. Thread it through `messageToStructured` behind an opt-in flag. Se
   CI drift check. Today we rely on commander's `--help`.
 - **`contact:N` cross-session persistence** — the disambiguation LRU is process-wide and resets on
   restart; persist to `~/.imsg-mcp/contact-resolver.db` (TTL ~1 day) + a `forgetContactSelector()`.
+
+### 8. Media-Intel follow-ups (P2/P3)
+Cycle shipped v1.9.0 → v1.15.0; these are the deliberately-out-of-scope tails.
+- **Analytics over interpreted media (P3)** — now that transcripts/captions are cached, media-aware
+  analytic types (e.g. `media_share_breakdown`, `most_used_words` incl. voice) become cheap. Folds
+  into Backlog §1.
+- **Attachment sync — T3 bulk download (P3, documented only)** — the conversation-info pane has a
+  per-thread "download all attachments" affordance; UI-scriptable but brittle across macOS versions.
+  Not shipped; keep as researched-only. The addressable set is tiny on a fully-synced Full-Disk-Access
+  Mac (Stage 7 live test: server-purged media is unrecoverable by any client).
+- **Private-API / SIP attachment-download route — NO-GO (closed)** — spike concluded against it:
+  BlueBubbles' IMCore hooks expose no attachment-download method, and the injection route needs full
+  `csrutil disable` + system-wide Library Validation off (heavier than yabai's partial SIP). Full
+  rationale + revisit triggers in
+  [`docs/plans/media-intel/spike-sip-findings.md`](plans/media-intel/spike-sip-findings.md). Revisit
+  only if Apple ships a public download API or prior art adds a battle-tested re-download hook.
 
 ### Declined
 - **Semantic / vector search** — explicitly declined for v1 (fuzzy `WRatio` + literal `LIKE` cover
