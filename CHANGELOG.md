@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and follows [Semantic Versioning](https://semver.org/).
 
+# [1.15.0](https://github.com/george43g/imsg-mcp/compare/v1.14.0...v1.15.0) (2026-07-23)
+
+
+### Features
+
+* **attachments:** tiered sync nudge for undownloaded media ([beb9a75](https://github.com/george43g/imsg-mcp/commit/beb9a755faa20f4acce6221a9f7a344f4d0e1b51))
+
 # [1.14.0](https://github.com/george43g/imsg-mcp/compare/v1.13.0...v1.14.0) (2026-07-23)
 
 
