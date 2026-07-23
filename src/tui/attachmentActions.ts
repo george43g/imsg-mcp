@@ -7,6 +7,7 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
+import { type AttachmentSyncConfig, ensureAttachmentDownloaded } from "../attachment-sync.js";
 import type { Message } from "../types.js";
 import type { Action } from "./types.js";
 
@@ -117,6 +118,78 @@ export function saveAttachment(msg: Message, attIdx: number, dispatch: Dispatch)
     return;
   }
   saveAttachmentFile(att, dispatch);
+}
+
+/**
+ * When an attachment isn't on disk, best-effort nudge Messages to download it
+ * (Stage 7 sync nudge), reporting progress via `dispatch`. Resolves true iff
+ * the file is present afterward. Returns true immediately (no status noise)
+ * when the file already exists, so callers can gate a follow-up open/save.
+ */
+export async function nudgeAttachmentDownload(
+  att: AttFile,
+  chatId: string | null | undefined,
+  config: AttachmentSyncConfig,
+  dispatch: Dispatch,
+): Promise<boolean> {
+  if (!att.filename) {
+    dispatch({ type: "SET_STATUS", status: "Attachment has no file path." });
+    return false;
+  }
+  const filePath = att.filename.replace(/^~/, process.env.HOME ?? "~");
+  if (existsSync(filePath)) return true;
+  if (!config.enabled) {
+    dispatch({ type: "SET_STATUS", status: "Attachment not on disk (sync nudge disabled)." });
+    return false;
+  }
+  dispatch({
+    type: "SET_STATUS",
+    status: "Attachment not downloaded — opening in Messages to sync…",
+  });
+  const res = await ensureAttachmentDownloaded({ filePath, chatId }, config);
+  dispatch({
+    type: "SET_STATUS",
+    status: res.downloaded
+      ? "Attachment synced."
+      : `Attachment still not on disk${res.hint ? ` — ${res.hint}` : "."}`,
+  });
+  return res.downloaded;
+}
+
+/** Nudge (if needed) then open the selected attachment in an external viewer. */
+export async function openAttachmentWithNudge(
+  msg: Message | undefined,
+  attIdx: number,
+  chatId: string | null | undefined,
+  config: AttachmentSyncConfig,
+  dispatch: Dispatch,
+): Promise<void> {
+  if (!msg?.attachments?.length) {
+    openAttachment(msg, attIdx, dispatch);
+    return;
+  }
+  const att = msg.attachments[attIdx] ?? msg.attachments[0];
+  if (att && (await nudgeAttachmentDownload(att, chatId, config, dispatch))) {
+    openAttachmentFile(att, dispatch);
+  }
+}
+
+/** Nudge (if needed) then save the selected attachment to ~/Downloads. */
+export async function saveAttachmentWithNudge(
+  msg: Message,
+  attIdx: number,
+  chatId: string | null | undefined,
+  config: AttachmentSyncConfig,
+  dispatch: Dispatch,
+): Promise<void> {
+  const att = msg.attachments?.[attIdx];
+  if (!att) {
+    dispatch({ type: "SET_STATUS", status: "No attachment to save." });
+    return;
+  }
+  if (await nudgeAttachmentDownload(att, chatId, config, dispatch)) {
+    saveAttachmentFile(att, dispatch);
+  }
 }
 
 /** Export ALL of a thread's attachments into ~/Downloads/<folder>/. */

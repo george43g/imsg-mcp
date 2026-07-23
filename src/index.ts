@@ -19,6 +19,7 @@ import {
 import { checkLocalAccess, formatAccessReport } from "./access-check.js";
 import { computeRelationshipLeaderboard, dispatchAnalytic } from "./analytics.js";
 import { lookupCache, storeCache } from "./analytics-cache.js";
+import { resolveInterpretConfig } from "./app-config.js";
 import {
   checkImessageAvailability,
   checkMessagesAvailable,
@@ -29,6 +30,7 @@ import {
   sendToChat,
   sendToChatId,
 } from "./applescript.js";
+import { type EnsureDownloadedResult, ensureAttachmentDownloaded } from "./attachment-sync.js";
 import {
   getContactsDbPaths,
   getHumansDirPath,
@@ -1533,10 +1535,36 @@ export class IMessageMCPServer {
 
     const resolvedPath = rec.filename.replace(/^~/, process.env.HOME ?? "~");
     if (!existsSync(resolvedPath)) {
-      return toolError(`Attachment file does not exist: ${resolvedPath}`, {
-        rowId,
-        resolvedPath,
-      });
+      // Not on disk (transfer_state -1 / purged). Best-effort sync nudge: open
+      // the conversation in Messages so it pulls the file from iCloud, then
+      // re-check. Honors the `nudge` config; skipped entirely when disabled.
+      let sync: EnsureDownloadedResult | undefined;
+      const nudge = resolveInterpretConfig().nudge;
+      if (nudge.enabled) {
+        const info = this.db.getAttachmentDownloadInfo(rowId);
+        sync = await ensureAttachmentDownloaded(
+          {
+            filePath: resolvedPath,
+            chatId: info?.chatIdentifier,
+            transferState: info?.transferState,
+          },
+          {
+            enabled: nudge.enabled,
+            tier2SyncNow: nudge.tier2SyncNow,
+            timeoutSeconds: nudge.timeoutSeconds,
+          },
+        );
+      }
+      if (!existsSync(resolvedPath)) {
+        return toolError(
+          sync
+            ? `Attachment not downloaded after sync nudge (tier ${sync.tier}): ${resolvedPath}.${
+                sync.hint ? ` ${sync.hint}` : ""
+              }`
+            : `Attachment file does not exist: ${resolvedPath}`,
+          { rowId, resolvedPath, sync },
+        );
+      }
     }
 
     const stat = statSync(resolvedPath);
