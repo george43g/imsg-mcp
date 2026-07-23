@@ -12,6 +12,7 @@
  */
 import type { Dispatch } from "react";
 import type { useImsg } from "./hooks/useImsg.js";
+import { openSettings } from "./settings-model.js";
 import type { Action, AppState } from "./types.js";
 
 export interface CommandContext {
@@ -303,6 +304,14 @@ export const CORE_COMMANDS: Command[] = [
     keybinding: "Ctrl-P / ?",
     description: "This window",
     run: ({ dispatch }) => dispatch({ type: "OPEN_PALETTE" }),
+  },
+  {
+    id: "core.settings",
+    title: "Settings — media interpretation",
+    category: "App",
+    keybinding: ",",
+    description: "Chains, toggles, providers",
+    run: ({ dispatch }) => openSettings(dispatch),
   },
   { id: "core.quit", title: "Quit", category: "App", keybinding: "q / Ctrl-C", run: () => {} },
 ];

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { useScreenSize } from "fullscreen-ink";
 import { Box, useApp, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { loadTuiConfig, writeTuiConfig } from "../app-config.js";
 import { formatJumpTarget, parseUserDate } from "../date-parse.js";
 import { extensionFor, toCSV, toJSON, toMarkdown } from "../export-formats.js";
 import { getInterpretRuntime, primaryMediaRef } from "../media-intel-runtime.js";
@@ -29,6 +30,7 @@ import { HelpBar } from "./components/HelpBar.js";
 import { InfoDrawer } from "./components/InfoDrawer.js";
 import { MessageDrawer } from "./components/MessageDrawer.js";
 import { SendViaModal } from "./components/SendViaModal.js";
+import { SettingsPanel } from "./components/SettingsPanel.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { nextGroupBoundary, prevGroupBoundary, ThreadPane } from "./components/ThreadPane.js";
@@ -37,6 +39,15 @@ import { useDevStats } from "./hooks/useDevStats.js";
 import { useImsg } from "./hooks/useImsg.js";
 import { useMouse } from "./hooks/useMouse.js";
 import { allCommands, findModule } from "./modules/registry.js";
+import {
+  applySettingsKey,
+  buildSettingsRows,
+  firstSelectableIndex,
+  lastSelectableIndex,
+  openSettings,
+  type SettingsKeyAction,
+  stepSelectable,
+} from "./settings-model.js";
 import { initialState, reducer, sidebarRowCount } from "./types.js";
 
 export function App() {
@@ -154,6 +165,49 @@ export function App() {
       });
     }
   }, []);
+
+  // ── Settings panel ─────────────────────────────────────────────────
+  // Flattened, navigable rows for the current interpret block. Recomputed as
+  // the user edits so cursor math + rendering stay in sync.
+  const settingsRows = useMemo(
+    () =>
+      state.settingsInterpret
+        ? buildSettingsRows(state.settingsInterpret, state.settingsKeyPresence)
+        : [],
+    [state.settingsInterpret, state.settingsKeyPresence],
+  );
+
+  // Apply one key action to the selected settings row, persist to disk, and
+  // move the cursor to follow a reordered chain item. Writes stay in the
+  // frontend (side effect); the mutation itself is pure (settings-model).
+  const applySettings = useCallback(
+    (action: SettingsKeyAction) => {
+      const cur = state.settingsInterpret;
+      if (!cur) return;
+      const row = settingsRows[state.settingsCursor];
+      const next = applySettingsKey(cur, row, action);
+      if (!next) return;
+      try {
+        const loaded = loadTuiConfig();
+        writeTuiConfig({ ...loaded.config, interpret: next }, state.settingsConfigPath);
+        dispatch({ type: "SET_SETTINGS_INTERPRET", interpret: next });
+        // A reorder moves the item; keep the cursor on it so repeated K/J walk it.
+        if (action === "moveUp") {
+          dispatch({ type: "SET_SETTINGS_CURSOR", index: Math.max(0, state.settingsCursor - 1) });
+        } else if (action === "moveDown") {
+          dispatch({ type: "SET_SETTINGS_CURSOR", index: state.settingsCursor + 1 });
+        }
+        dispatch({ type: "SET_STATUS", status: "Settings saved." });
+        setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 2000);
+      } catch (e) {
+        dispatch({
+          type: "SET_STATUS",
+          status: `Settings write failed: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    },
+    [state.settingsInterpret, state.settingsCursor, state.settingsConfigPath, settingsRows],
+  );
 
   const refreshAll = useCallback(async () => {
     dispatch({ type: "SET_LOADING", loading: true, status: "Refreshing..." });
@@ -543,6 +597,41 @@ export function App() {
       return;
     }
 
+    // Settings panel — dedicated early-return guard (input-guard law): `q`
+    // closes the PANEL, not the app. j/k move over selectable rows; space/←/→
+    // edit the selected setting; K/J reorder a chain link. Providers are
+    // read-only (no key entry in the TUI — wizard/file only).
+    if (state.mode === "settings") {
+      if (key.escape || input === "q") {
+        dispatch({ type: "CLOSE_SETTINGS" });
+      } else if (input === "j" || key.downArrow) {
+        dispatch({
+          type: "SET_SETTINGS_CURSOR",
+          index: stepSelectable(settingsRows, state.settingsCursor, 1),
+        });
+      } else if (input === "k" || key.upArrow) {
+        dispatch({
+          type: "SET_SETTINGS_CURSOR",
+          index: stepSelectable(settingsRows, state.settingsCursor, -1),
+        });
+      } else if (input === "g") {
+        dispatch({ type: "SET_SETTINGS_CURSOR", index: firstSelectableIndex(settingsRows) });
+      } else if (input === "G") {
+        dispatch({ type: "SET_SETTINGS_CURSOR", index: lastSelectableIndex(settingsRows) });
+      } else if (input === " " || key.return) {
+        applySettings("toggle");
+      } else if (input === "h" || key.leftArrow) {
+        applySettings("left");
+      } else if (input === "l" || key.rightArrow) {
+        applySettings("right");
+      } else if (input === "K") {
+        applySettings("moveUp");
+      } else if (input === "J") {
+        applySettings("moveDown");
+      }
+      return;
+    }
+
     // Date-jump modal mode — Esc cancels; Enter handled by TextInput.onSubmit
     if (state.mode === "date-jump") {
       if (key.escape) {
@@ -646,6 +735,12 @@ export function App() {
     // i — per-thread info / attachment drawer for the selected conversation.
     if (input === "i" && !key.ctrl && !key.meta && state.mode === "browse" && selected) {
       openInfoDrawer();
+      return;
+    }
+    // , — open the settings panel (media-interpretation config). Also reachable
+    // from the palette (core.settings). Loads config + credential presence.
+    if (input === "," && !key.ctrl && !key.meta && state.mode === "browse") {
+      openSettings(dispatch);
       return;
     }
     if (input === "V" && state.focus === "thread" && state.selectedMsgIdx >= 0) {
@@ -1078,77 +1173,90 @@ export function App() {
     <Box flexDirection="column" height={rows} width={columns}>
       {/* Main layout */}
       <Box flexGrow={1} height={bodyHeight}>
-        <Sidebar
-          conversations={state.conversations}
-          moduleInstances={state.moduleInstances}
-          selectedIdx={state.selectedIdx}
-          selectedModuleIdx={state.selectedModuleIdx}
-          scrollOffset={state.sidebarScroll}
-          filterQuery={state.filterQuery}
-          focused={state.focus === "sidebar"}
-          width={sidebarWidth}
-          height={bodyHeight}
-        />
-        {selectedModule && ModulePane ? (
-          <ModulePane
-            instance={selectedModule}
-            imsg={imsg}
-            width={threadWidth}
+        {state.mode === "settings" ? (
+          <SettingsPanel
+            rows={settingsRows}
+            cursor={state.settingsCursor}
+            configPath={state.settingsConfigPath}
+            warnings={state.settingsWarnings}
+            width={columns}
             height={bodyHeight}
-            focused={state.focus === "thread"}
-            onUpdateState={(next) =>
-              dispatch({
-                type: "UPDATE_MODULE_INSTANCE_STATE",
-                instanceId: selectedModule.id,
-                state: next,
-              })
-            }
-            onClose={() =>
-              dispatch({ type: "CLOSE_MODULE_INSTANCE", instanceId: selectedModule.id })
-            }
-            setStatus={(s) => {
-              dispatch({ type: "SET_STATUS", status: s });
-              setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 2500);
-            }}
           />
         ) : (
-          <ThreadPane
-            conversation={selected}
-            messages={state.messages}
-            pending={state.pending}
-            resolvedNames={resolvedNames}
-            scrollOffset={state.threadScroll}
-            selectedMsgIdx={state.selectedMsgIdx}
-            selectionAnchor={state.selectionAnchor}
-            gapMarkers={state.gapMarkers}
-            focused={state.focus === "thread"}
-            width={threadWidth}
-            height={bodyHeight}
-            mode={state.mode}
-            onChangeCompose={(text) => dispatch({ type: "UPDATE_COMPOSE", text })}
-            onSubmitCompose={(text) => text.trim() && dispatch({ type: "CONFIRM_SEND" })}
-          />
+          <>
+            <Sidebar
+              conversations={state.conversations}
+              moduleInstances={state.moduleInstances}
+              selectedIdx={state.selectedIdx}
+              selectedModuleIdx={state.selectedModuleIdx}
+              scrollOffset={state.sidebarScroll}
+              filterQuery={state.filterQuery}
+              focused={state.focus === "sidebar"}
+              width={sidebarWidth}
+              height={bodyHeight}
+            />
+            {selectedModule && ModulePane ? (
+              <ModulePane
+                instance={selectedModule}
+                imsg={imsg}
+                width={threadWidth}
+                height={bodyHeight}
+                focused={state.focus === "thread"}
+                onUpdateState={(next) =>
+                  dispatch({
+                    type: "UPDATE_MODULE_INSTANCE_STATE",
+                    instanceId: selectedModule.id,
+                    state: next,
+                  })
+                }
+                onClose={() =>
+                  dispatch({ type: "CLOSE_MODULE_INSTANCE", instanceId: selectedModule.id })
+                }
+                setStatus={(s) => {
+                  dispatch({ type: "SET_STATUS", status: s });
+                  setTimeout(() => dispatch({ type: "SET_STATUS", status: "" }), 2500);
+                }}
+              />
+            ) : (
+              <ThreadPane
+                conversation={selected}
+                messages={state.messages}
+                pending={state.pending}
+                resolvedNames={resolvedNames}
+                scrollOffset={state.threadScroll}
+                selectedMsgIdx={state.selectedMsgIdx}
+                selectionAnchor={state.selectionAnchor}
+                gapMarkers={state.gapMarkers}
+                focused={state.focus === "thread"}
+                width={threadWidth}
+                height={bodyHeight}
+                mode={state.mode}
+                onChangeCompose={(text) => dispatch({ type: "UPDATE_COMPOSE", text })}
+                onSubmitCompose={(text) => text.trim() && dispatch({ type: "CONFIRM_SEND" })}
+              />
+            )}
+            {state.mode === "drawer" && selectedMsg && (
+              <MessageDrawer
+                message={selectedMsg}
+                width={drawerWidth}
+                height={bodyHeight}
+                selectedAttachmentIdx={state.drawerAttachmentIdx}
+              />
+            )}
+            {state.mode === "info" && selected && (
+              <InfoDrawer
+                conversation={selected}
+                resolvedNames={resolvedNames}
+                stats={state.infoStats}
+                attachments={state.infoAttachments}
+                selectedAttachmentIdx={state.infoAttachmentIdx}
+                width={drawerWidth}
+                height={bodyHeight}
+              />
+            )}
+            {state.showDevStats && <DevStats stats={devStats} width={devStatsWidth} />}
+          </>
         )}
-        {state.mode === "drawer" && selectedMsg && (
-          <MessageDrawer
-            message={selectedMsg}
-            width={drawerWidth}
-            height={bodyHeight}
-            selectedAttachmentIdx={state.drawerAttachmentIdx}
-          />
-        )}
-        {state.mode === "info" && selected && (
-          <InfoDrawer
-            conversation={selected}
-            resolvedNames={resolvedNames}
-            stats={state.infoStats}
-            attachments={state.infoAttachments}
-            selectedAttachmentIdx={state.infoAttachmentIdx}
-            width={drawerWidth}
-            height={bodyHeight}
-          />
-        )}
-        {state.showDevStats && <DevStats stats={devStats} width={devStatsWidth} />}
       </Box>
 
       {/* Date-jump modal */}

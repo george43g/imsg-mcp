@@ -1,3 +1,4 @@
+import type { InterpretConfigInput } from "../app-config.js";
 import {
   type ChatStats,
   type Conversation,
@@ -20,6 +21,7 @@ export type Mode =
   | "export"
   | "date-jump"
   | "send-via"
+  | "settings"
   | "palette";
 
 export interface PendingMessage {
@@ -82,6 +84,15 @@ export interface AppState {
   // Command palette state
   paletteQuery: string;
   paletteCursor: number;
+
+  // Settings panel (mode: "settings") — the editable `interpret` block plus the
+  // provider key-presence map (never the keys themselves). null until opened.
+  settingsInterpret: InterpretConfigInput | null;
+  settingsKeyPresence: Record<string, boolean>;
+  settingsCursor: number;
+  /** File the panel persists edits to. */
+  settingsConfigPath: string;
+  settingsWarnings: string[];
 }
 
 export type Action =
@@ -142,6 +153,16 @@ export type Action =
   | { type: "SET_PALETTE_QUERY"; query: string }
   | { type: "MOVE_PALETTE_CURSOR"; delta: number }
   | { type: "SET_PALETTE_CURSOR"; index: number }
+  | {
+      type: "OPEN_SETTINGS";
+      interpret: InterpretConfigInput;
+      keyPresence: Record<string, boolean>;
+      configPath: string;
+      warnings: string[];
+    }
+  | { type: "CLOSE_SETTINGS" }
+  | { type: "SET_SETTINGS_CURSOR"; index: number }
+  | { type: "SET_SETTINGS_INTERPRET"; interpret: InterpretConfigInput }
   | { type: "OPEN_MODULE_INSTANCE"; instance: ModuleInstance }
   | { type: "CLOSE_MODULE_INSTANCE"; instanceId: string }
   | { type: "UPDATE_MODULE_INSTANCE_STATE"; instanceId: string; state: unknown }
@@ -182,6 +203,11 @@ export const initialState: AppState = {
   selectedModuleIdx: null,
   paletteQuery: "",
   paletteCursor: 0,
+  settingsInterpret: null,
+  settingsKeyPresence: {},
+  settingsCursor: 0,
+  settingsConfigPath: "",
+  settingsWarnings: [],
 };
 
 /** Clamp message cursor and ensure it's visible by adjusting scroll */
@@ -566,6 +592,24 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, paletteCursor: Math.max(0, state.paletteCursor + action.delta) };
     case "SET_PALETTE_CURSOR":
       return { ...state, paletteCursor: Math.max(0, action.index) };
+
+    // ── Settings panel ─────────────────────────────────────────────────
+    case "OPEN_SETTINGS":
+      return {
+        ...state,
+        mode: "settings",
+        settingsInterpret: action.interpret,
+        settingsKeyPresence: action.keyPresence,
+        settingsConfigPath: action.configPath,
+        settingsWarnings: action.warnings,
+        settingsCursor: 0,
+      };
+    case "CLOSE_SETTINGS":
+      return { ...state, mode: "browse" };
+    case "SET_SETTINGS_CURSOR":
+      return { ...state, settingsCursor: Math.max(0, action.index) };
+    case "SET_SETTINGS_INTERPRET":
+      return { ...state, settingsInterpret: action.interpret };
 
     // ── Module instances ───────────────────────────────────────────────
     case "OPEN_MODULE_INSTANCE": {
